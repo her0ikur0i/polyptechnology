@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+data/
+artifacts/
+logs/
+coverage/
+playwright-report/
+test-results/
+*.log
+*.pid
+*.sqlite*
+*.db*
