@@ -27,3 +27,10 @@ This contract does not configure a webhook or send a live message. A later
 deployment capability must resolve the owner `TELEGRAM_USER_ID`, configure an
 authenticated HTTPS webhook with secret-header validation, send one canary
 approval, and confirm its immutable audit trail.
+
+## Future Master Dashboard configuration
+
+The dashboard contract must expose connection health, masked bot identity,
+authorized chat/user IDs, webhook status, last callback, canary testing, pending
+and historical decisions, audit links, and approval-gated secret-reference
+rotation/revocation. Bot tokens are never returned to or stored by the browser.

@@ -30,12 +30,13 @@ outside source control without reading or printing them.
 
 ## Current contract
 
-`CONTRACT-002 — Durable approvals and Telegram gateway`.
+`CONTRACT-003 — Provider registry, evaluation, and routing`.
 
-CONTRACT-001 completed as the clean canonical baseline at commit `b648b4c`.
-Implement the durable event/audit/approval foundation and secure Telegram remote
-Approve/Deny flow defined by the active contract. Do not mutate production or
-send live Telegram messages during deterministic verification.
+CONTRACT-001 completed at `b648b4c`; CONTRACT-002 completed at `c45ac1f`.
+Implement the provider-neutral catalog and deterministic routing foundation. The
+owner authorized sequential contracts: after each scoped commit/push, continue
+to the next roadmap contract and collect owner-only blockers into one final
+Owner Action Bundle rather than interrupting ordinary work.
 
 ## Resume instruction
 
