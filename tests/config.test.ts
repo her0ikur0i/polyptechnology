@@ -17,8 +17,12 @@ test("production fails closed without access authentication", () => {
 });
 
 test("production accepts Cloudflare Access mode", () => {
-  const config = loadConfig({ NODE_ENV: "production", ACCESS_AUTH_MODE: "cloudflare" });
+  const config = loadConfig({ NODE_ENV: "production", ACCESS_AUTH_MODE: "cloudflare", TELEGRAM_BOT_TOKEN: "test", TELEGRAM_CHAT_ID: "chat", TELEGRAM_USER_ID: "user" });
   assert.equal(config.accessAuthMode, "cloudflare");
+});
+
+test("production fails closed without Telegram identity restrictions", () => {
+  assert.throws(() => loadConfig({ NODE_ENV: "production", ACCESS_AUTH_MODE: "cloudflare" }), /TELEGRAM_USER_ID/);
 });
 
 test("rejects invalid ports and proxy hop counts", () => {

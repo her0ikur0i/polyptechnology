@@ -16,10 +16,12 @@
     "contract:verify": "node --import tsx scripts/verify-contract.ts"
   },
   "dependencies": {
-    "dotenv": "^17.4.2"
+    "dotenv": "^17.4.2",
+    "pg": "^8.22.0"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
+    "@types/pg": "^8.20.4",
     "tsx": "^4.23.9",
     "typescript": "^7.0.2"
   }

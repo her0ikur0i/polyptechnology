@@ -30,17 +30,12 @@ outside source control without reading or printing them.
 
 ## Current contract
 
-`CONTRACT-001 — Product truth and safe foundation`.
+`CONTRACT-002 — Durable approvals and Telegram gateway`.
 
-New work already present: strict project manifest/config tests, agent policy,
-product/architecture/security docs, contract verifier, and this canonical system
-specification. Complete cleanup, generate a fresh lockfile/dependency installation,
-run all Contract 001 gates, commit, and push only when green.
-
-The GitHub remote still contains legacy history. On successful CONTRACT-001,
-publish the new orphan `main` as the clean canonical baseline (a destructive
-history replacement explicitly requested by the owner), then continue with the
-durable approval/Telegram contract.
+CONTRACT-001 completed as the clean canonical baseline at commit `b648b4c`.
+Implement the durable event/audit/approval foundation and secure Telegram remote
+Approve/Deny flow defined by the active contract. Do not mutate production or
+send live Telegram messages during deterministic verification.
 
 ## Resume instruction
 

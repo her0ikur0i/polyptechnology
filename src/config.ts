@@ -9,6 +9,9 @@ export interface AppConfig {
   accessAuthMode: AccessAuthMode;
   trustedProxyHops: number;
   logLevel: "debug" | "info" | "warn" | "error";
+  telegramBotToken?: string;
+  telegramChatId?: string;
+  telegramUserId?: string;
 }
 
 function enumValue<T extends string>(name: string, value: string, allowed: readonly T[]): T {
@@ -31,14 +34,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (environment === "production" && accessAuthMode === "disabled") {
     throw new Error("ACCESS_AUTH_MODE cannot be disabled in production");
   }
+  const telegramBotToken = env.TELEGRAM_BOT_TOKEN;
+  const telegramChatId = env.TELEGRAM_CHAT_ID;
+  const telegramUserId = env.TELEGRAM_USER_ID;
+  if (environment === "production" && [telegramBotToken, telegramChatId, telegramUserId].some((value) => value === undefined || value.length === 0)) {
+    throw new Error("production requires TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, and TELEGRAM_USER_ID");
+  }
 
   return {
     environment,
     host: env.HOST ?? "127.0.0.1",
     port: integer("PORT", env.PORT ?? "4173", 1, 65535),
-    databaseUrl: env.DATABASE_URL ?? "file:./data/polyp.db",
+    databaseUrl: env.DATABASE_URL ?? "postgresql://polyp@127.0.0.1:5432/polyp",
     accessAuthMode,
     trustedProxyHops: integer("TRUSTED_PROXY_HOPS", env.TRUSTED_PROXY_HOPS ?? "0", 0, 8),
     logLevel: enumValue("LOG_LEVEL", env.LOG_LEVEL ?? "info", ["debug", "info", "warn", "error"] as const),
+    ...(telegramBotToken === undefined ? {} : { telegramBotToken }),
+    ...(telegramChatId === undefined ? {} : { telegramChatId }),
+    ...(telegramUserId === undefined ? {} : { telegramUserId }),
   };
 }

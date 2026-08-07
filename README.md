@@ -18,3 +18,7 @@ npm run verify
 ```
 
 No production mutation is permitted from a development command.
+
+Current durable approval and Telegram gateway operations are documented in
+`docs/operations/telegram-approvals.md`. Deterministic tests never send live
+Telegram messages.
