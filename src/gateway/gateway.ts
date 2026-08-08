@@ -1,0 +1,195 @@
+import { createHash, randomUUID } from "node:crypto";
+import { MODEL_POLICY_VERSION, modelRoutes } from "./model-policy.js";
+import type {
+  AttemptLedger,
+  GatewayAttempt,
+  GatewayRequest,
+  GatewayResult,
+  ManagedProviderAdapter,
+  ModelRoute,
+} from "./types.js";
+import { ManagedInvocationError } from "./types.js";
+const stable = (value: unknown) =>
+  JSON.stringify(value, (_key, item) =>
+    item instanceof Set ? [...item].sort() : item,
+  );
+export class GatewayInvocationError extends Error {
+  constructor(
+    message: string,
+    readonly attempt: GatewayAttempt,
+  ) {
+    super(message);
+  }
+}
+export class AiGateway {
+  private readonly adapters = new Map<string, ManagedProviderAdapter>();
+  constructor(
+    private readonly ledger: AttemptLedger,
+    adapters: ReadonlyArray<ManagedProviderAdapter>,
+  ) {
+    for (const adapter of adapters) {
+      if (this.adapters.has(adapter.provider))
+        throw new Error("duplicate provider adapter");
+      this.adapters.set(adapter.provider, adapter);
+    }
+  }
+  async execute(request: GatewayRequest): Promise<GatewayResult> {
+    if (request.policyVersion !== MODEL_POLICY_VERSION)
+      throw new Error("unknown model policy version");
+    this.validate(request);
+    const route =
+      request.routeOverride ?? (await this.resolve(request.taskClass));
+    if (
+      request.routeOverride !== undefined &&
+      !modelRoutes(request.taskClass).some(
+        (candidate) =>
+          JSON.stringify(candidate) === JSON.stringify(request.routeOverride),
+      )
+    )
+      throw new Error("route override is outside policy");
+    const requestHash = createHash("sha256")
+      .update(
+        stable({
+          taskClass: request.taskClass,
+          attribution: request.attribution,
+          messages: request.messages,
+          maxOutputTokens: request.maxOutputTokens,
+          maxCostUsdMicros: request.maxCostUsdMicros,
+          policyVersion: request.policyVersion,
+          route,
+        }),
+      )
+      .digest("hex");
+    const initial: GatewayAttempt = {
+      id: randomUUID(),
+      idempotencyKey: request.idempotencyKey,
+      requestHash,
+      outcome: "reserved",
+      route: { ...route },
+      attribution: { ...request.attribution },
+      policyVersion: request.policyVersion,
+      reservedCostUsdMicros: request.maxCostUsdMicros,
+      createdAt: new Date(),
+    };
+    const reservation = await this.ledger.reserve(initial);
+    if (!reservation.created)
+      throw new GatewayInvocationError(
+        "attempt already exists",
+        reservation.attempt,
+      );
+    const adapter = this.adapters.get(route.provider);
+    if (adapter === undefined) {
+      const failed = await this.ledger.fail(
+        initial.id,
+        "provider_unavailable",
+        false,
+      );
+      throw new GatewayInvocationError("provider unavailable", failed);
+    }
+    await this.ledger.dispatched(initial.id);
+    try {
+      const result = await adapter.invoke(
+        route,
+        request.messages,
+        request.maxOutputTokens,
+        request.signal,
+      );
+      let rejection: string | undefined;
+      if (result.resolvedModelId !== route.requestedModelId)
+        rejection = "resolved_model_mismatch";
+      else if (
+        result.resolutionSource === "pinned_request" &&
+        route.provider !== "codex"
+      )
+        rejection = "untrusted_model_resolution";
+      else if (
+        result.providerRequestId.length === 0 ||
+        result.content.trim().length === 0 ||
+        result.usage.inputTokens < 0 ||
+        result.usage.outputTokens < 0 ||
+        result.usage.costUsdMicros < 0 ||
+        result.usage.costUsdMicros > request.maxCostUsdMicros
+      )
+        rejection = "invalid_provider_accounting";
+      else if (
+        result.modelUsage.length === 0 ||
+        !result.modelUsage.some(
+          (usage) => usage.resolvedModelId === result.resolvedModelId,
+        ) ||
+        result.modelUsage.reduce(
+          (sum, usage) => sum + usage.costUsdMicros,
+          0,
+        ) !== result.usage.costUsdMicros
+      )
+        rejection = "invalid_per_model_accounting";
+      if (rejection !== undefined) {
+        const failed = await this.ledger.reject(initial.id, result, rejection);
+        throw new GatewayInvocationError(rejection, failed);
+      }
+      const outputSha256 = createHash("sha256")
+        .update(result.content)
+        .digest("hex");
+      return {
+        attempt: await this.ledger.succeed(initial.id, result, outputSha256),
+        content: result.content,
+      };
+    } catch (error) {
+      if (error instanceof GatewayInvocationError) throw error;
+      const unknown =
+        error instanceof ManagedInvocationError
+          ? error.outcomeUnknown || error.providerRequestId !== undefined
+          : !(
+              error instanceof Error &&
+              (error.message.startsWith("resolved model mismatch") ||
+                error.message.startsWith("invalid provider") ||
+                error.message.startsWith("invalid per-model"))
+            );
+      const failed = await this.ledger.fail(
+        initial.id,
+        error instanceof ManagedInvocationError
+          ? error.code
+          : error instanceof Error
+            ? error.message
+            : "provider failure",
+        unknown,
+        ...(error instanceof ManagedInvocationError &&
+        error.providerRequestId !== undefined
+          ? [error.providerRequestId]
+          : []),
+      );
+      throw new GatewayInvocationError(
+        error instanceof Error ? error.message : "provider failure",
+        failed,
+      );
+    }
+  }
+  private async resolve(
+    taskClass: GatewayRequest["taskClass"],
+  ): Promise<ModelRoute> {
+    for (const route of modelRoutes(taskClass)) {
+      const adapter = this.adapters.get(route.provider);
+      if (
+        adapter !== undefined &&
+        (await adapter.listModels()).includes(route.requestedModelId)
+      )
+        return route;
+    }
+    throw new Error("no concrete managed model available");
+  }
+  private validate(request: GatewayRequest) {
+    if (
+      request.idempotencyKey.length < 8 ||
+      request.messages.length === 0 ||
+      !Number.isSafeInteger(request.maxOutputTokens) ||
+      request.maxOutputTokens < 1 ||
+      !Number.isSafeInteger(request.maxCostUsdMicros) ||
+      request.maxCostUsdMicros < 0 ||
+      !Number.isSafeInteger(request.attribution.taskAttemptOrdinal) ||
+      request.attribution.taskAttemptOrdinal < 1
+    )
+      throw new Error("invalid gateway request");
+    for (const value of Object.values(request.attribution))
+      if (typeof value === "string" && value.length === 0)
+        throw new Error("incomplete gateway attribution");
+  }
+}
