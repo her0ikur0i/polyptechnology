@@ -125,4 +125,40 @@ describe("dashboard", () => {
     expect(aside).not.toHaveAttribute("inert");
     expect(menu).toHaveAttribute("aria-expanded", "true");
   });
+  it("submits a dynamic project blueprint through the authenticated CSRF command boundary", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          projectId: "project-generated",
+          state: "blueprint",
+          repositoryRef: "repo://projects/generated",
+        }),
+      }),
+    );
+    render(<DashboardApp initialSnapshot={snapshot} />);
+    await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
+    await userEvent.type(
+      screen.getByLabelText("Project name"),
+      "Generated Product",
+    );
+    await userEvent.type(screen.getByLabelText("Slug"), "generated-product");
+    await userEvent.type(
+      screen.getByLabelText(/Requirements/),
+      "Owner-defined workflow",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Generate project blueprint" }),
+    );
+    expect(await screen.findByText(/project-generated/)).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/v1/factory/projects",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "same-origin",
+        headers: expect.objectContaining({ "X-CSRF-Token": "test-csrf" }),
+      }),
+    );
+  });
 });

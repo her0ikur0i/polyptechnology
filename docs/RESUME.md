@@ -30,16 +30,15 @@ outside source control without reading or printing them.
 
 ## Current contract
 
-`CONTRACT-010 — CI/CD, observability, backup/restore, hardening, acceptance, and cutover`.
+`CONTRACT-010 — CI/CD, observability, backup/restore, hardening, acceptance, and
+cutover` is accepted and awaiting its single final-gate publication commit.
 
 CONTRACT-001 completed at `b648b4c`; CONTRACT-002 at `c45ac1f`; CONTRACT-003 at
 `6ed9e8d`; CONTRACT-004 at `dc1acba`; CONTRACT-005 at `0bdff3c`; CONTRACT-006 at
-`abf282b`; CONTRACT-007 at `58f33e0`; CONTRACT-008 at `4dd268e`; CONTRACT-009 is
-accepted and awaiting its single publication commit. Execute final hardening,
-acceptance, and cutover preparation next. The
-owner authorized sequential contracts: after each scoped commit/push, continue
-to the next roadmap contract and collect owner-only blockers into one final
-Owner Action Bundle rather than interrupting ordinary work.
+`abf282b`; CONTRACT-007 at `58f33e0`; CONTRACT-008 at `4dd268e`; CONTRACT-009 at
+`1fc64a2`. After CONTRACT-010 publication, perform the roadmap evidence audit and
+report the single consolidated Owner Action Bundle. Do not interpret repository
+acceptance as production service, DNS, Telegram, or external-backup activation.
 
 ## Resume instruction
 

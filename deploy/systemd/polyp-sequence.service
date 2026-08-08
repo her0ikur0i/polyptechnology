@@ -9,7 +9,8 @@ User=polyp-factory
 Group=polyp-factory
 WorkingDirectory=/opt/polyp-ai-factory/current
 EnvironmentFile=/etc/polyp-ai-factory/sequence.env
-ExecStart=/usr/bin/node dist/src/orchestrator/sequence-main.js
+ExecStartPre=/usr/bin/node --jitless dist/src/operations/readiness-main.js
+ExecStart=/usr/bin/node --jitless dist/src/orchestrator/sequence-main.js
 Restart=on-failure
 RestartSec=10s
 WatchdogSec=45s
@@ -18,6 +19,8 @@ KillSignal=SIGTERM
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
+ProtectClock=true
+ProtectHostname=true
 ProtectSystem=strict
 ProtectHome=true
 ProtectKernelTunables=true
@@ -35,6 +38,8 @@ ReadWritePaths=/var/lib/polyp-ai-factory /var/log/polyp-ai-factory
 MemoryMax=512M
 CPUQuota=100%
 TasksMax=64
+StateDirectory=polyp-ai-factory
+LogsDirectory=polyp-ai-factory
 UMask=0077
 
 [Install]

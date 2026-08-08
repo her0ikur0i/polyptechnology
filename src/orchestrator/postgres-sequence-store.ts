@@ -55,6 +55,29 @@ export class PostgresSequenceStore implements SequenceStore {
     );
     if (result.rowCount !== 1) throw new Error("stale sequence lease");
   }
+  async operationCheckpoint(
+    lease: SupervisorLease,
+    value: {
+      taskId: string;
+      attemptOrdinal: number;
+      state: string;
+      summaryId: string;
+    },
+  ) {
+    if (
+      !/^[a-f0-9-]{36}$/.test(value.taskId) ||
+      !Number.isSafeInteger(value.attemptOrdinal) ||
+      value.attemptOrdinal < 1 ||
+      !/^[a-z_]{2,40}$/.test(value.state) ||
+      !/^[a-f0-9-]{36}$/.test(value.summaryId)
+    )
+      throw new Error("invalid operation checkpoint");
+    const result = await this.pool.query(
+      "UPDATE sequence_supervisor SET checkpoint=jsonb_set(checkpoint,'{lastOperation}',$3::jsonb,true),version=version+1 WHERE singleton AND lease_owner=$1 AND fencing_token=$2 AND lease_expires_at>CURRENT_TIMESTAMP",
+      [lease.owner, lease.fencingToken, JSON.stringify(value)],
+    );
+    if (result.rowCount !== 1) throw new Error("stale sequence lease");
+  }
   async release(lease: SupervisorLease) {
     await this.pool.query(
       "UPDATE sequence_supervisor SET lease_owner=NULL,fencing_token=NULL,heartbeat_at=NULL,lease_expires_at=NULL WHERE singleton AND lease_owner=$1 AND fencing_token=$2",

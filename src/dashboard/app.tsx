@@ -34,6 +34,7 @@ import type { DashboardSnapshot, ModelAttempt } from "./types.js";
 import { useSnapshot } from "./use-snapshot.js";
 import { saveTelegramSettings } from "./api.js";
 import { FactoryLivePage } from "./factory-live/FactoryLive.js";
+import { FactoryControlPage } from "./factory-control.js";
 import "./styles.css";
 const nav = [
   { to: "/", label: "Overview", icon: Factory },
@@ -196,9 +197,8 @@ function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
             <Route
               path="/orchestrator"
               element={
-                <Placeholder
-                  title="Orchestrator"
-                  detail="Conversation workspaces and reviewed contract proposals."
+                <FactoryControlPage
+                  csrfToken={snapshot.commandPolicy.csrfToken}
                 />
               }
             />

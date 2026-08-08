@@ -62,3 +62,89 @@ export async function saveTelegramSettings(
     );
   return response.json() as Promise<TelegramSettings>;
 }
+export interface FactoryProjectCommand {
+  slug: string;
+  displayName: string;
+  runtime: string;
+  framework: string;
+  database: string;
+  requirements: ReadonlyArray<string>;
+}
+export async function createFactoryProject(
+  command: FactoryProjectCommand,
+  csrfToken: string,
+  signal?: AbortSignal,
+) {
+  if (
+    !/^[a-z][a-z0-9-]{0,62}$/.test(command.slug) ||
+    command.displayName.trim().length < 1 ||
+    command.requirements.length < 1
+  )
+    throw new Error("Project blueprint is incomplete.");
+  return commandRequest<{
+    projectId: string;
+    state: string;
+    repositoryRef: string;
+  }>(
+    "/api/v1/factory/projects",
+    {
+      ...command,
+      idempotencyKey: crypto.randomUUID(),
+      occurredAt: new Date().toISOString(),
+    },
+    csrfToken,
+    signal,
+  );
+}
+export async function createConversationProposal(
+  command: { projectId: string; title: string; objective: string },
+  csrfToken: string,
+  signal?: AbortSignal,
+) {
+  if (
+    !/^[a-f0-9-]{36}$/.test(command.projectId) ||
+    command.title.trim().length < 1 ||
+    command.objective.trim().length < 10
+  )
+    throw new Error("Conversation proposal is incomplete.");
+  return commandRequest<{
+    conversationId: string;
+    proposalId: string;
+    state: string;
+  }>(
+    "/api/v1/orchestrator/proposals",
+    {
+      ...command,
+      idempotencyKey: crypto.randomUUID(),
+      occurredAt: new Date().toISOString(),
+    },
+    csrfToken,
+    signal,
+  );
+}
+async function commandRequest<T>(
+  path: string,
+  command: unknown,
+  csrfToken: string,
+  signal?: AbortSignal,
+): Promise<T> {
+  const response = await fetch(path, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "X-CSRF-Token": csrfToken,
+    },
+    body: JSON.stringify(command),
+    ...(signal ? { signal } : {}),
+  });
+  if (!response.ok)
+    throw new DashboardApiError(
+      response.status,
+      response.status === 401 || response.status === 403
+        ? "Owner authorization is required."
+        : "The command was not accepted.",
+    );
+  return response.json() as Promise<T>;
+}
