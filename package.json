@@ -11,18 +11,35 @@
     "start": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test 'tests/**/*.test.ts'",
-    "verify": "npm run typecheck && npm test",
-    "contract:verify": "node --import tsx scripts/verify-contract.ts"
+    "test": "node --import tsx --test 'tests/*.test.ts'",
+    "verify": "npm run typecheck && npm test && npm run dashboard:test && npm run dashboard:build",
+    "contract:verify": "node --import tsx scripts/verify-contract.ts",
+    "dashboard:dev": "vite",
+    "dashboard:build": "vite build",
+    "dashboard:test": "vitest run"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
-    "pg": "^8.22.0"
+    "lucide-react": "1.30.0",
+    "pg": "^8.22.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-router-dom": "7.18.2"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.2",
+    "@testing-library/user-event": "14.6.1",
     "@types/node": "^26.1.2",
     "@types/pg": "^8.20.4",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.5",
+    "axe-core": "4.13.0",
+    "jsdom": "30.0.1",
     "tsx": "^4.23.9",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vite": "8.2.1",
+    "vitest": "4.1.10"
   }
 }
