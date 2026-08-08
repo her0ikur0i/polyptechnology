@@ -2,13 +2,13 @@
 
 ## Active objective
 
-`CONTRACT-011` is functionally complete (M0-M3, descoped by its own
-Amendment 2 on 2026-08-09) and ready to close with one commit + push once the
-owner gives the final go-ahead (see "Commit/push checkpoint" below). The
-remaining original scope (M4-M10: Control API server, owner policy UI,
-factory-to-executor wiring, staging, acceptance) is drafted as
-`CONTRACT-012` (status: draft, not started) --
-`docs/contracts/CONTRACT-012/contract.md`.
+`CONTRACT-011` is **committed and pushed** (`a564bf8`, 2026-08-09,
+`main` on `origin`, owner-approved). Its scope was M0-M3 only, descoped by
+its own Amendment 2. The remaining original scope (M4-M10: Control API
+server, owner policy UI, factory-to-executor wiring, staging, acceptance) is
+drafted as `CONTRACT-012` (status: draft, not started) --
+`docs/contracts/CONTRACT-012/contract.md`. **The next action in a fresh
+session is starting CONTRACT-012 M4, not more CONTRACT-011 work.**
 
 Read this file, `AGENTS.md`, `docs/SYSTEM-SPECIFICATION.md`, and the active
 contract's `contract.md` (with Amendments) before taking action. Check
@@ -83,16 +83,14 @@ disposable database; any real pinned image works.
 Full suite: 128 tests, 128 pass, 0 fail, 0 skip (standing invocation above).
 `scripts/verify-contract.ts CONTRACT-011` passes (scope/ownership check).
 
-### Commit/push checkpoint (do not push without a final owner go-ahead)
+### Commit/push checkpoint -- done
 
-Everything is staged (`git add -A` was run 2026-08-09) but **not committed**.
-Per the project's own rule, commit happens exactly once after all of a
-contract's gates pass -- they do. Before the actual `git commit && git push`:
-re-run the standing test invocation above one more time, confirm
-`scripts/verify-contract.ts CONTRACT-011` still passes, then pause for one
-explicit confirmation before `git push` specifically (it touches shared
-remote state) -- this was already agreed with the owner as the one
-non-negotiable pause point even under otherwise-autonomous execution.
+Committed and pushed 2026-08-09 at owner's explicit "push it" go-ahead:
+`a564bf8`, `main` on `origin` (`https://github.com/her0ikur0i/polyptechnology.git`).
+Working tree is clean. This checkpoint is historical -- do not re-commit or
+re-push CONTRACT-011 work; the next commit belongs to CONTRACT-012 and
+follows the same pattern (all gates green, scope check clean, one pause for
+explicit confirmation before the actual `git push`).
 
 ## CONTRACT-012 status: drafted, not started
 
@@ -157,8 +155,7 @@ needed -- `src/operations/verification-image-policy.ts`.
 
 Launch Claude Code in `/root/polyptechnology-next` and say "resume per
 docs/RESUME.md". Read this file, `AGENTS.md`, `docs/SYSTEM-SPECIFICATION.md`,
-and the active contract's `contract.md` (with Amendments) first. Check
-`git status` and `evidence/*.md` before doing anything else. If CONTRACT-011
-is still uncommitted, the next action is the commit/push checkpoint above,
-not new work. If it has already been committed and pushed, the next action
-is starting CONTRACT-012 M4.
+and `docs/contracts/CONTRACT-012/contract.md` (with Amendments, if any) first.
+Check `git status` and `docs/contracts/CONTRACT-012/evidence/*.md` before
+doing anything else. CONTRACT-011 is closed (`a564bf8`) -- the next action is
+starting CONTRACT-012 M4 (Control API server), not more CONTRACT-011 work.
