@@ -122,6 +122,95 @@ export async function createConversationProposal(
     signal,
   );
 }
+export interface PolicyStateResult {
+  id: string;
+  version: number;
+  state: string;
+}
+export async function createPolicyDraft(
+  command: { policyKey: string; policy: unknown },
+  csrfToken: string,
+  signal?: AbortSignal,
+) {
+  if (command.policyKey.trim().length < 1)
+    throw new Error("Policy key is required.");
+  return commandRequest<PolicyStateResult>(
+    "/api/v1/policy/draft",
+    command,
+    csrfToken,
+    signal,
+  );
+}
+export async function validatePolicyDraft(
+  command: { id: string; expectedVersion: number },
+  csrfToken: string,
+  signal?: AbortSignal,
+) {
+  return commandRequest<PolicyStateResult>(
+    "/api/v1/policy/validate",
+    command,
+    csrfToken,
+    signal,
+  );
+}
+export async function approvePolicyDraft(
+  command: { id: string; expectedVersion: number },
+  csrfToken: string,
+  signal?: AbortSignal,
+) {
+  return commandRequest<PolicyStateResult>(
+    "/api/v1/policy/approve",
+    command,
+    csrfToken,
+    signal,
+  );
+}
+export async function activatePolicyDraft(
+  command: { id: string; expectedVersion: number },
+  csrfToken: string,
+  signal?: AbortSignal,
+) {
+  return commandRequest<PolicyStateResult>(
+    "/api/v1/policy/activate",
+    command,
+    csrfToken,
+    signal,
+  );
+}
+export async function rollbackPolicy(
+  command: { policyKey: string; targetVersion: number },
+  csrfToken: string,
+  signal?: AbortSignal,
+) {
+  return commandRequest<PolicyStateResult>(
+    "/api/v1/policy/rollback",
+    command,
+    csrfToken,
+    signal,
+  );
+}
+export async function loadActivePolicy(
+  policyKey: string,
+  signal?: AbortSignal,
+): Promise<
+  { id: string; version: number; state: string; policy: unknown } | undefined
+> {
+  const response = await fetch(
+    `/api/v1/policy/${encodeURIComponent(policyKey)}/active`,
+    {
+      headers: { Accept: "application/json" },
+      credentials: "same-origin",
+      ...(signal ? { signal } : {}),
+    },
+  );
+  if (response.status === 404) return undefined;
+  if (!response.ok)
+    throw new DashboardApiError(
+      response.status,
+      "Active policy is unavailable.",
+    );
+  return response.json();
+}
 async function commandRequest<T>(
   path: string,
   command: unknown,

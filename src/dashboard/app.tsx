@@ -14,6 +14,7 @@ import {
   ServerCog,
   Settings2,
   ShieldCheck,
+  SlidersHorizontal,
   X,
 } from "lucide-react";
 import {
@@ -35,10 +36,12 @@ import { useSnapshot } from "./use-snapshot.js";
 import { saveTelegramSettings } from "./api.js";
 import { FactoryLivePage } from "./factory-live/FactoryLive.js";
 import { FactoryControlPage } from "./factory-control.js";
+import { PolicyControlPage } from "./policy-control.js";
 import "./styles.css";
 const nav = [
   { to: "/", label: "Overview", icon: Factory },
   { to: "/orchestrator", label: "Orchestrator", icon: BrainCircuit },
+  { to: "/policy", label: "Policy", icon: SlidersHorizontal },
   { to: "/factory-live", label: "Factory Live", icon: Activity },
   { to: "/projects", label: "Projects", icon: FolderKanban },
   { to: "/contracts", label: "Contracts / Runs", icon: GitPullRequestArrow },
@@ -198,6 +201,14 @@ function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
               path="/orchestrator"
               element={
                 <FactoryControlPage
+                  csrfToken={snapshot.commandPolicy.csrfToken}
+                />
+              }
+            />
+            <Route
+              path="/policy"
+              element={
+                <PolicyControlPage
                   csrfToken={snapshot.commandPolicy.csrfToken}
                 />
               }

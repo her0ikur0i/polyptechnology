@@ -161,4 +161,33 @@ describe("dashboard", () => {
       }),
     );
   });
+  it("drafts a policy through the authenticated CSRF command boundary", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (url.endsWith("/active"))
+          return Promise.resolve({ ok: false, status: 404 });
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            id: "policy-1",
+            version: 1,
+            state: "draft",
+          }),
+        });
+      }),
+    );
+    render(<DashboardApp initialSnapshot={snapshot} />);
+    await userEvent.click(screen.getByRole("link", { name: /Policy/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Create draft" }));
+    expect(await screen.findByText(/policy-1/)).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/v1/policy/draft",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "same-origin",
+        headers: expect.objectContaining({ "X-CSRF-Token": "test-csrf" }),
+      }),
+    );
+  });
 });
