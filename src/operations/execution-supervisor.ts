@@ -5,13 +5,26 @@ import type { Lease } from "../work/types.js";
 
 export interface OperationTaskSpec {
   taskId: string;
-  driver: "deterministic_sha256";
+  driver: "deterministic_sha256" | "ai_patch_executor";
   input: unknown;
-  expectedOutputSha256: string;
+  // null only for a self-verifying driver (ai_patch_executor): its own
+  // returned { verified: boolean } decides success instead of a precomputed
+  // hash comparison. deterministic_sha256 always has this set (DB-enforced).
+  expectedOutputSha256: string | null;
   providerId?: string;
   requestedModelId?: string;
   resolvedModelId?: string;
   role: string;
+}
+export function isSelfVerifyingResult(
+  output: unknown,
+): output is { verified: boolean } {
+  return (
+    typeof output === "object" &&
+    output !== null &&
+    "verified" in output &&
+    typeof (output as { verified: unknown }).verified === "boolean"
+  );
 }
 export interface OperationDriver {
   execute(input: unknown, signal: AbortSignal): Promise<unknown>;
@@ -97,8 +110,11 @@ export class ExecutableTaskSupervisor {
         "running",
         "verifying",
       );
-      if (outputSha256 !== spec.expectedOutputSha256)
-        return this.fail(current, "verification");
+      const passed =
+        spec.expectedOutputSha256 === null
+          ? isSelfVerifyingResult(output) && output.verified
+          : outputSha256 === spec.expectedOutputSha256;
+      if (!passed) return this.fail(current, "verification");
       await this.evidence(current, 3, "verification", {
         passed: true,
         outputSha256,
@@ -203,9 +219,9 @@ export class ExecutableTaskSupervisor {
 }
 type SpecRow = {
   task_id: string;
-  driver: "deterministic_sha256";
+  driver: "deterministic_sha256" | "ai_patch_executor";
   input: unknown;
-  expected_output_sha256: string;
+  expected_output_sha256: string | null;
   provider_id: string | null;
   requested_model_id: string | null;
   resolved_model_id: string | null;

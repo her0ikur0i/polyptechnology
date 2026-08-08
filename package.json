@@ -14,6 +14,8 @@
     "test": "node --import tsx --test 'tests/*.test.ts'",
     "verify": "npm run typecheck && npm test && npm run dashboard:test && npm run dashboard:build",
     "contract:verify": "node --import tsx scripts/verify-contract.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "dashboard:dev": "vite",
     "dashboard:build": "vite build",
     "dashboard:test": "vitest run"
@@ -37,6 +39,7 @@
     "@vitejs/plugin-react": "6.0.5",
     "axe-core": "4.13.0",
     "jsdom": "30.0.1",
+    "prettier": "^3.9.6",
     "tsx": "^4.23.9",
     "typescript": "^7.0.2",
     "vite": "8.2.1",

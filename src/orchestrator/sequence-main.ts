@@ -9,6 +9,18 @@ import {
   ExecutableTaskSupervisor,
   digest,
 } from "../operations/execution-supervisor.js";
+import type { OperationDriver } from "../operations/execution-supervisor.js";
+import { AiPatchExecutorDriver } from "../operations/ai-patch-driver.js";
+import { AiPatchOperationDriver } from "../operations/ai-patch-operation-driver.js";
+import { GitPatchApplier } from "../operations/git-patch-applier.js";
+import { GitIgnoringWorkspaceCopier } from "../operations/workspace-copy.js";
+import { PostgresProviderArtifactStore } from "../operations/provider-artifact-store.js";
+import { AiGateway } from "../gateway/gateway.js";
+import { PostgresAttemptLedger } from "../gateway/postgres-ledger.js";
+import { DeepSeekAdapter } from "../gateway/deepseek-adapter.js";
+import { CodexCliAdapter, ClaudeCliAdapter } from "../gateway/cli-adapters.js";
+import { FileSecretResolver } from "../gateway/file-secret-resolver.js";
+import { SpawnWorkerRunner } from "../worker/spawn-runner.js";
 const databaseUrl = process.env.DATABASE_URL,
   workerId = process.env.SEQUENCE_WORKER_ID ?? `${hostname()}:${process.pid}`;
 if (!databaseUrl) throw new Error("DATABASE_URL is required");
@@ -16,10 +28,31 @@ const ttlMs = 30_000,
   pool = new pg.Pool({ connectionString: databaseUrl, max: 6 }),
   sequence = new PostgresSequenceStore(pool),
   work = new PostgresWorkRepository(pool),
+  aiGateway = new AiGateway(new PostgresAttemptLedger(pool), [
+    new DeepSeekAdapter(
+      process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
+      "secret://polyp/deepseek/api-key",
+      new FileSecretResolver("/root/.config/polyp/provider-secrets.env"),
+    ),
+    new CodexCliAdapter(),
+    new ClaudeCliAdapter(),
+  ]),
+  aiPatchDriver = new AiPatchOperationDriver(
+    new AiPatchExecutorDriver(
+      aiGateway,
+      new GitPatchApplier(),
+      new SpawnWorkerRunner(),
+      new PostgresProviderArtifactStore(pool),
+      new GitIgnoringWorkspaceCopier(),
+    ),
+  ),
   operation = new ExecutableTaskSupervisor(
     pool,
     work,
-    new Map([["deterministic_sha256", new DeterministicSha256Driver()]]),
+    new Map<string, OperationDriver>([
+      ["deterministic_sha256", new DeterministicSha256Driver()],
+      ["ai_patch_executor", aiPatchDriver],
+    ]),
     workerId,
     ttlMs,
   ),

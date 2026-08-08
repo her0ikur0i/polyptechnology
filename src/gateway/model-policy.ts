@@ -1,29 +1,42 @@
 import type { ModelRoute, TaskClass } from "./types.js";
-export const MODEL_POLICY_VERSION = "2026-08-08.1";
+export const MODEL_POLICY_VERSION = "2026-08-09.1";
+// Owner-authorized role exchange (2026-08-09): Claude is strategic
+// orchestrator; Codex retains integrator/verifier/final-gate duties and is
+// now also the automatic technical-fallback tier (see
+// docs/contracts/CONTRACT-011/contract.md amendment). Programming task
+// classes escalate deepseek -> codex -> claude, cheapest viable tier first;
+// escalation past deepseek requires verified failure evidence
+// (src/policy/execution-permission.ts), never a bare retry count.
 const routes: Record<TaskClass, ReadonlyArray<ModelRoute>> = {
   bulk_code: [
     {
       provider: "deepseek",
       requestedModelId: "deepseek-v4-flash",
-      role: "bulk-coder",
+      role: "primary-executor",
       mode: "non-thinking",
     },
     {
       provider: "deepseek",
-      requestedModelId: "deepseek-v4-flash",
-      role: "bulk-coder",
-      mode: "thinking",
-    },
-    {
-      provider: "deepseek",
       requestedModelId: "deepseek-v4-pro",
-      role: "bulk-coder",
+      role: "primary-executor-retry",
       mode: "thinking",
     },
     {
       provider: "codex",
+      requestedModelId: "gpt-5.6-terra",
+      role: "technical-fallback",
+      effort: "medium",
+    },
+    {
+      provider: "codex",
       requestedModelId: "gpt-5.6-sol",
-      role: "hard-fallback",
+      role: "technical-fallback-retry",
+      effort: "high",
+    },
+    {
+      provider: "claude",
+      requestedModelId: "claude-sonnet-5",
+      role: "technical-fallback-final",
       effort: "high",
     },
   ],
@@ -31,36 +44,78 @@ const routes: Record<TaskClass, ReadonlyArray<ModelRoute>> = {
     {
       provider: "deepseek",
       requestedModelId: "deepseek-v4-pro",
-      role: "backend-coder",
+      role: "primary-executor",
       mode: "thinking",
     },
     {
-      provider: "codex",
-      requestedModelId: "gpt-5.6-sol",
-      role: "integrator",
-      effort: "high",
+      provider: "deepseek",
+      requestedModelId: "deepseek-v4-flash",
+      role: "primary-executor-retry",
+      mode: "non-thinking",
     },
-  ],
-  bounded_repair: [
     {
       provider: "codex",
       requestedModelId: "gpt-5.6-terra",
-      role: "repair",
+      role: "technical-fallback",
       effort: "medium",
     },
     {
       provider: "codex",
       requestedModelId: "gpt-5.6-sol",
-      role: "repair-fallback",
+      role: "technical-fallback-retry",
+      effort: "high",
+    },
+    {
+      provider: "claude",
+      requestedModelId: "claude-sonnet-5",
+      role: "technical-fallback-final",
+      effort: "high",
+    },
+  ],
+  bounded_repair: [
+    {
+      provider: "deepseek",
+      requestedModelId: "deepseek-v4-flash",
+      role: "primary-executor",
+      mode: "non-thinking",
+    },
+    {
+      provider: "deepseek",
+      requestedModelId: "deepseek-v4-pro",
+      role: "primary-executor-retry",
+      mode: "thinking",
+    },
+    {
+      provider: "codex",
+      requestedModelId: "gpt-5.6-terra",
+      role: "technical-fallback",
+      effort: "medium",
+    },
+    {
+      provider: "codex",
+      requestedModelId: "gpt-5.6-sol",
+      role: "technical-fallback-retry",
+      effort: "high",
+    },
+    {
+      provider: "claude",
+      requestedModelId: "claude-sonnet-5",
+      role: "technical-fallback-final",
       effort: "high",
     },
   ],
   orchestration: [
     {
-      provider: "codex",
-      requestedModelId: "gpt-5.6-sol",
+      provider: "claude",
+      requestedModelId: "claude-sonnet-5",
       role: "orchestrator",
       effort: "high",
+    },
+    {
+      provider: "claude",
+      requestedModelId: "claude-opus-5",
+      role: "orchestrator-escalation",
+      effort: "xhigh",
     },
   ],
   light_review: [
@@ -102,6 +157,16 @@ const routes: Record<TaskClass, ReadonlyArray<ModelRoute>> = {
       provider: "claude",
       requestedModelId: "claude-opus-5",
       role: "exceptional-escalation",
+      effort: "high",
+    },
+    {
+      // Non-Claude escalation so critical_review is never a Claude single
+      // point of failure (docs/SYSTEM-SPECIFICATION.md #3). Callers must also
+      // enforce that this route is never selected for a task Codex itself
+      // executed as a technical-fallback tier (anti self-review).
+      provider: "codex",
+      requestedModelId: "gpt-5.6-sol",
+      role: "hard-fallback-reviewer",
       effort: "high",
     },
   ],

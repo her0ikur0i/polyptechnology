@@ -92,6 +92,52 @@ test("policy contains concrete models for all providers and task roles", () => {
     ),
   );
 });
+test("programming routes are DeepSeek-first, escalating deepseek -> codex -> claude", () => {
+  const expectations = {
+    bulk_code: ["deepseek", "deepseek", "codex", "codex", "claude"],
+    complex_backend: ["deepseek", "deepseek", "codex", "codex", "claude"],
+    bounded_repair: ["deepseek", "deepseek", "codex", "codex", "claude"],
+  } as const;
+  const tierRank: Record<string, number> = { deepseek: 0, codex: 1, claude: 2 };
+  for (const [taskClass, providers] of Object.entries(expectations)) {
+    const actual = modelRoutes(taskClass as keyof typeof expectations);
+    assert.deepEqual(
+      actual.map((route) => route.provider),
+      providers,
+    );
+    assert.equal(actual[0]?.provider, "deepseek");
+    let highestSeen = -1;
+    for (const route of actual) {
+      const rank = tierRank[route.provider] ?? -1;
+      assert.ok(
+        rank >= highestSeen,
+        `${taskClass}: ${route.provider} must not follow a more expensive tier`,
+      );
+      highestSeen = Math.max(highestSeen, rank);
+    }
+  }
+});
+test("orchestration is Claude-led with a tiered escalation, not Codex", () => {
+  assert.deepEqual(
+    modelRoutes("orchestration").map((route) => [
+      route.provider,
+      route.requestedModelId,
+    ]),
+    [
+      ["claude", "claude-sonnet-5"],
+      ["claude", "claude-opus-5"],
+    ],
+  );
+});
+test("critical_review is not a Claude single point of failure", () => {
+  const providers = modelRoutes("critical_review").map(
+    (route) => route.provider,
+  );
+  assert.ok(
+    providers.some((provider) => provider !== "claude"),
+    "critical_review must have a non-Claude escalation route",
+  );
+});
 test("gateway records resolved model usage and immutable output digest", async () => {
   const ledger = new MemoryAttemptLedger(),
     gateway = new AiGateway(ledger, [new Fake()]);

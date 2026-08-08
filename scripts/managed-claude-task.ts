@@ -3,17 +3,21 @@ import { ClaudeCliAdapter } from "../src/gateway/cli-adapters.js";
 import { AiGateway } from "../src/gateway/gateway.js";
 import { MODEL_POLICY_VERSION } from "../src/gateway/model-policy.js";
 import { PostgresAttemptLedger } from "../src/gateway/postgres-ledger.js";
+import type { TaskClass } from "../src/gateway/types.js";
+const allowed = new Set<TaskClass>(["specialist_review", "critical_review"]);
 async function main() {
   const databaseUrl = process.env.TEST_DATABASE_URL,
     contractId = process.env.MANAGED_CONTRACT_ID,
     milestoneId = process.env.MANAGED_MILESTONE_ID,
-    prompt = process.argv[2];
+    taskClass = process.argv[2] as TaskClass,
+    prompt = process.argv[3];
   if (
     databaseUrl === undefined ||
     contractId === undefined ||
     !/^CONTRACT-[0-9]{3}$/.test(contractId) ||
     milestoneId === undefined ||
     !/^M[0-9]+$/.test(milestoneId) ||
+    !allowed.has(taskClass) ||
     prompt === undefined ||
     prompt.length > 100_000
   )
@@ -21,18 +25,18 @@ async function main() {
   const pool = new pg.Pool({ connectionString: databaseUrl });
   try {
     const gateway = new AiGateway(new PostgresAttemptLedger(pool), [
-      new ClaudeCliAdapter(undefined, 3),
+      new ClaudeCliAdapter(undefined, 10),
     ]);
     const result = await gateway.execute({
       idempotencyKey: `${contractId}-${milestoneId}-review-${Date.now()}`,
-      taskClass: "specialist_review",
+      taskClass,
       attribution: {
         projectId: "polyp-ai-factory",
         contractId,
         milestoneId,
-        taskId: "gateway-security-review",
+        taskId: "managed-claude-task",
         taskAttemptOrdinal: 1,
-        agentId: "claude-specialist-reviewer",
+        agentId: "claude-managed-worker",
       },
       messages: [
         {
@@ -42,8 +46,8 @@ async function main() {
         },
         { role: "user", content: prompt },
       ],
-      maxOutputTokens: 3000,
-      maxCostUsdMicros: 400_000,
+      maxOutputTokens: 8000,
+      maxCostUsdMicros: 2_000_000,
       policyVersion: MODEL_POLICY_VERSION,
     });
     console.log(
