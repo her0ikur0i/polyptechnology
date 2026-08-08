@@ -2,15 +2,13 @@
 
 ## Active objective
 
-`CONTRACT-011` is **committed and pushed** (`a564bf8`, 2026-08-09, `main` on
-`origin`, owner-approved), scoped to M0-M3 (Amendment 2). `CONTRACT-012` is
-scoped to **M4 only** (Amendment 1, 2026-08-09) -- Control API server + owner
-policy UI foundation, done, not yet committed. Everything after M4, plus
-every concrete gap found while building and reviewing it, is queued as
-`CONTRACT-013` (`docs/contracts/CONTRACT-013/contract.md`, not started).
-**The next action in a fresh session is CONTRACT-012's commit/push
-checkpoint (M4 is its only milestone and it's done), then starting
-CONTRACT-013 M5.**
+`CONTRACT-011` (`a564bf8`) and `CONTRACT-012` (`4342ca2`) are both
+**committed and pushed** to `main` on `origin`, owner-approved. CONTRACT-011
+was scoped to M0-M3 (Amendment 2); CONTRACT-012 to M4 only (Amendment 1).
+Everything after M4, plus every concrete gap found while building and
+reviewing it, is queued as `CONTRACT-013`
+(`docs/contracts/CONTRACT-013/contract.md`, not started). **The next action
+in a fresh session is starting CONTRACT-013 M5 in a clean working tree.**
 
 Read this file, `AGENTS.md`, `docs/SYSTEM-SPECIFICATION.md`, and the active
 contract's `contract.md` (with Amendments) before taking action. Check
@@ -94,7 +92,7 @@ re-push CONTRACT-011 work; the next commit belongs to CONTRACT-012 and
 follows the same pattern (all gates green, scope check clean, one pause for
 explicit confirmation before the actual `git push`).
 
-## CONTRACT-012 status: M4 done and its only milestone (Amendment 1) -- ready to commit
+## CONTRACT-012 status: closed (`4342ca2`)
 
 | Milestone | Status | Evidence |
 |---|---|---|
@@ -104,9 +102,9 @@ explicit confirmation before the actual `git push`).
 Full backend suite: 136 tests, 136 pass, 0 fail, 0 skip (standing invocation
 above, now includes migration 0010). Dashboard suite: 18/18 pass.
 `npm run dashboard:build` succeeds. `scripts/verify-contract.ts CONTRACT-012`
-passes. **Not yet committed** -- same commit/push checkpoint pattern as
-CONTRACT-011: all gates green, scope check clean, one pause for explicit
-confirmation before the actual `git push`.
+passed. Committed and pushed 2026-08-09 at owner's explicit "push it"
+go-ahead: `4342ca2`, `main` on `origin`. This checkpoint is historical -- do
+not re-commit or re-push CONTRACT-012 work.
 
 **Owner decision recorded (2026-08-09):** verification for every generated
 project uses a single pinned Node image (`node:22-bookworm-slim`) and the
@@ -177,9 +175,7 @@ these are fixed yet -- they're deliberately queued, not silently dropped.
 
 Launch Claude Code in `/root/polyptechnology-next` and say "resume per
 docs/RESUME.md". Read this file, `AGENTS.md`, `docs/SYSTEM-SPECIFICATION.md`,
-`docs/contracts/CONTRACT-012/contract.md` (with Amendments), and
-`docs/contracts/CONTRACT-013/contract.md` first. Check `git status` and both
-contracts' `evidence/*.md` before doing anything else. CONTRACT-011 is
-closed (`a564bf8`). If CONTRACT-012 (M4 only) is still uncommitted, the next
-action is its commit/push checkpoint, not new work. Once committed, the next
-action is CONTRACT-013 M5 in a fresh working tree.
+and `docs/contracts/CONTRACT-013/contract.md` first. Check `git status` and
+`docs/contracts/CONTRACT-013/evidence/*.md` before doing anything else.
+CONTRACT-011 (`a564bf8`) and CONTRACT-012 (`4342ca2`) are both closed -- the
+next action is starting CONTRACT-013 M5 in a clean working tree.
