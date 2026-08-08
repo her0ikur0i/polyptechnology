@@ -30,10 +30,13 @@ outside source control without reading or printing them.
 
 ## Current contract
 
-`CONTRACT-003 — Provider registry, evaluation, and routing`.
+`CONTRACT-005 — Managed AI Gateway and isolated worker execution` is next after
+publication of the accepted CONTRACT-004.
 
-CONTRACT-001 completed at `b648b4c`; CONTRACT-002 completed at `c45ac1f`.
-Implement the provider-neutral catalog and deterministic routing foundation. The
+CONTRACT-001 completed at `b648b4c`; CONTRACT-002 at `c45ac1f`; CONTRACT-003 at
+`6ed9e8d`. CONTRACT-004 has passed its implementation gates and awaits its single
+publication commit. Implement the mandatory managed AI Gateway, concrete model
+resolution, usage tracking, isolated execution, capabilities, and artifacts next. The
 owner authorized sequential contracts: after each scoped commit/push, continue
 to the next roadmap contract and collect owner-only blockers into one final
 Owner Action Bundle rather than interrupting ordinary work.
