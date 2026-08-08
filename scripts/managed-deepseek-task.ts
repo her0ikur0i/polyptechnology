@@ -12,10 +12,16 @@ const allowed = new Set<TaskClass>([
 ]);
 async function main() {
   const databaseUrl = process.env.TEST_DATABASE_URL,
+    contractId = process.env.MANAGED_CONTRACT_ID,
+    milestoneId = process.env.MANAGED_MILESTONE_ID,
     taskClass = process.argv[2] as TaskClass,
     prompt = process.argv[3];
   if (
     databaseUrl === undefined ||
+    contractId === undefined ||
+    !/^CONTRACT-[0-9]{3}$/.test(contractId) ||
+    milestoneId === undefined ||
+    !/^M[0-9]+$/.test(milestoneId) ||
     !allowed.has(taskClass) ||
     prompt === undefined ||
     prompt.length > 100_000
@@ -31,12 +37,12 @@ async function main() {
       ),
     ]);
     const result = await gateway.execute({
-      idempotencyKey: `contract005-${taskClass}-${Date.now()}`,
+      idempotencyKey: `${contractId}-${milestoneId}-${taskClass}-${Date.now()}`,
       taskClass,
       attribution: {
         projectId: "polyp-ai-factory",
-        contractId: "CONTRACT-005",
-        milestoneId: "M5",
+        contractId,
+        milestoneId,
         taskId: "managed-deepseek-analysis",
         taskAttemptOrdinal: 1,
         agentId: "deepseek-bulk-coder",

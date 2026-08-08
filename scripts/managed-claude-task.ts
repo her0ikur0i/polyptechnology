@@ -5,9 +5,15 @@ import { MODEL_POLICY_VERSION } from "../src/gateway/model-policy.js";
 import { PostgresAttemptLedger } from "../src/gateway/postgres-ledger.js";
 async function main() {
   const databaseUrl = process.env.TEST_DATABASE_URL,
+    contractId = process.env.MANAGED_CONTRACT_ID,
+    milestoneId = process.env.MANAGED_MILESTONE_ID,
     prompt = process.argv[2];
   if (
     databaseUrl === undefined ||
+    contractId === undefined ||
+    !/^CONTRACT-[0-9]{3}$/.test(contractId) ||
+    milestoneId === undefined ||
+    !/^M[0-9]+$/.test(milestoneId) ||
     prompt === undefined ||
     prompt.length > 100_000
   )
@@ -18,12 +24,12 @@ async function main() {
       new ClaudeCliAdapter(undefined, 3),
     ]);
     const result = await gateway.execute({
-      idempotencyKey: `contract005-review-${Date.now()}`,
+      idempotencyKey: `${contractId}-${milestoneId}-review-${Date.now()}`,
       taskClass: "specialist_review",
       attribution: {
         projectId: "polyp-ai-factory",
-        contractId: "CONTRACT-005",
-        milestoneId: "M5",
+        contractId,
+        milestoneId,
         taskId: "gateway-security-review",
         taskAttemptOrdinal: 1,
         agentId: "claude-specialist-reviewer",
