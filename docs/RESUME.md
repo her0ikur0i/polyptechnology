@@ -30,11 +30,13 @@ outside source control without reading or printing them.
 
 ## Current contract
 
-`CONTRACT-007 — React operational dashboard and design system`.
+`CONTRACT-009 — Knowledge curation, blueprints, and generated-project lifecycle`.
 
 CONTRACT-001 completed at `b648b4c`; CONTRACT-002 at `c45ac1f`; CONTRACT-003 at
 `6ed9e8d`; CONTRACT-004 at `dc1acba`; CONTRACT-005 at `0bdff3c`; CONTRACT-006 at
-`abf282b`. Implement the React operational dashboard and design system next. The
+`abf282b`; CONTRACT-007 at `58f33e0`; CONTRACT-008 is accepted and awaiting its
+single publication commit. Implement knowledge curation, blueprints, and the
+generated-project lifecycle next. The
 owner authorized sequential contracts: after each scoped commit/push, continue
 to the next roadmap contract and collect owner-only blockers into one final
 Owner Action Bundle rather than interrupting ordinary work.

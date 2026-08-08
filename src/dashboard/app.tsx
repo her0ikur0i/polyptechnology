@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  Activity,
   Bot,
   Boxes,
   BrainCircuit,
@@ -32,10 +33,12 @@ import {
 import type { DashboardSnapshot, ModelAttempt } from "./types.js";
 import { useSnapshot } from "./use-snapshot.js";
 import { saveTelegramSettings } from "./api.js";
+import { FactoryLivePage } from "./factory-live/FactoryLive.js";
 import "./styles.css";
 const nav = [
   { to: "/", label: "Overview", icon: Factory },
   { to: "/orchestrator", label: "Orchestrator", icon: BrainCircuit },
+  { to: "/factory-live", label: "Factory Live", icon: Activity },
   { to: "/projects", label: "Projects", icon: FolderKanban },
   { to: "/contracts", label: "Contracts / Runs", icon: GitPullRequestArrow },
   { to: "/agents", label: "Agents", icon: Bot },
@@ -151,6 +154,7 @@ function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
         <main id="main-content">
           <Routes>
             <Route path="/" element={<Overview snapshot={snapshot} />} />
+            <Route path="/factory-live" element={<FactoryLivePage />} />
             <Route
               path="/providers"
               element={<Providers snapshot={snapshot} />}

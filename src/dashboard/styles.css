@@ -409,6 +409,112 @@ code {
   filter: grayscale(1);
   opacity: 0.55;
 }
+.live-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 0.72fr);
+  gap: 20px;
+}
+.live-stage,
+.live-inspector {
+  min-width: 0;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel);
+}
+.live-stage header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.live-stage h1,
+.live-inspector h2 {
+  margin: 0;
+}
+.live-stage canvas {
+  display: block;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #07101d;
+  cursor: crosshair;
+}
+.live-caption {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.live-tree ul {
+  margin: 8px 0;
+  padding-left: 16px;
+  list-style: none;
+  border-left: 1px solid var(--border);
+}
+.live-tree > ul {
+  padding-left: 0;
+  border-left: 0;
+}
+.live-tree button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.live-tree button:hover,
+.live-tree button[aria-pressed="true"] {
+  background: #14243a;
+}
+.live-tree small {
+  grid-column: 2;
+  color: var(--muted);
+}
+.node-state {
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #8fa3ba;
+}
+.node-state--busy {
+  background: #53d5ff;
+}
+.node-state--approval {
+  background: #f4b95f;
+}
+.node-state--success {
+  background: #45d49a;
+}
+.node-state--failure {
+  background: #ff6f7f;
+}
+.node-state--stale {
+  background: #718096;
+}
+.inspection {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.inspection dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.inspection dt {
+  color: var(--muted);
+}
+.inspection dd {
+  margin: 0;
+}
 .state-page {
   min-height: 100vh;
   display: grid;
@@ -442,7 +548,8 @@ code {
     grid-template-columns: repeat(2, 1fr);
   }
   .dashboard-grid,
-  .settings-grid {
+  .settings-grid,
+  .live-grid {
     grid-template-columns: 1fr;
   }
 }
