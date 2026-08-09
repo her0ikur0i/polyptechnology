@@ -2,19 +2,19 @@
 
 ## Active objective
 
-`CONTRACT-011` (`a564bf8`) and `CONTRACT-012` (`4342ca2`) are both
-**committed and pushed** to `main` on `origin`, owner-approved. CONTRACT-011
-was scoped to M0-M3 (Amendment 2); CONTRACT-012 to M4 only (Amendment 1).
-Everything after M4, plus every concrete gap found while building and
-reviewing it, was queued as `CONTRACT-013`
-(`docs/contracts/CONTRACT-013/contract.md`), **all 12 milestones (M5-M12)
-now done, all gates green, working tree not yet committed**. **The next
-action in a fresh session is either: (a) if the working tree still has
-CONTRACT-013's uncommitted changes, get the owner's explicit "push it"
-go-ahead and perform the single final commit/push per M12; or (b) if
-`git log` shows CONTRACT-013 already committed and pushed, start planning
-the next contract from scratch (M9's private-staging decisions and M11's
-queued dead-code/duplication findings are good candidates for its scope).**
+`CONTRACT-011` (`a564bf8`), `CONTRACT-012` (`4342ca2`), and `CONTRACT-013`
+(`57facca`) are all **committed and pushed** to `main` on `origin`,
+owner-approved. CONTRACT-011 was scoped to M0-M3 (Amendment 2); CONTRACT-012
+to M4 only (Amendment 1); CONTRACT-013 covered M5-M12 (generation pipeline,
+Policy UI completeness, negative tests, security review, private staging,
+owner acceptance, repo-wide cleanup) -- pushed 2026-08-09 at the owner's
+explicit "push it" go-ahead. **The next action in a fresh session is
+starting a new contract from scratch** -- good candidates already
+identified: M9's deferred real-provider-credentialed drill, M11's queued
+dead-code files outside CONTRACT-013's ownership (`src/index.ts`,
+`src/providers/**`, `src/work/postgres-publication-recorder.ts`), the
+safePath/safeWorkerPath duplication, and completing the Cloudflare Access
+JWT verification M8 left as an interim loopback-bind guarantee.
 
 Read this file, `AGENTS.md`, `docs/SYSTEM-SPECIFICATION.md`, and the active
 contract's `contract.md` (with Amendments) before taking action. Check
@@ -126,31 +126,33 @@ automated test. Lesson for future milestones: run the real server as a live
 process at least once per milestone, don't rely on integration tests alone
 to prove a server actually boots.
 
-## CONTRACT-013 status: M5-M11 done, M12 not started
+## CONTRACT-013 status: closed (`57facca`)
 
-| Milestone | Status                                                                                                                                                                                                                                                                                                                                                                                                                                | Evidence                                                           |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| M5        | done -- real generation pipeline (blueprint -> workspace -> queued task -> executed -> accepted patch), `AiGateway`/`RuntimePolicy` reconciled, 5 real bugs found and fixed                                                                                                                                                                                                                                                           | `docs/contracts/CONTRACT-013/evidence/M5-generation-pipeline.md`   |
-| M6        | done -- `task_role_overrides` storage wired for real (was a stub), Policy UI rollback/override controls + dedicated envelope fields, Telegram webhook confirmed, usage/attribution dashboard depth (fallback reason, rework history) -- all live-verified against a running server                                                                                                                                                    | `docs/contracts/CONTRACT-013/evidence/M6-policy-telegram-usage.md` |
-| M7        | done -- axe coverage for the Policy page, CSRF-rejection matrix for all `/api/v1/policy/*` mutation routes, broadened cross-route authorization negative test, restart/ephemeral-CSRF-secret test                                                                                                                                                                                                                                     | `docs/contracts/CONTRACT-013/evidence/M7-negative-tests.md`        |
-| M8        | done -- independent security review (`docs/security/CONTRACT-013-M8-review.md`); fixed: `ACCESS_AUTH_MODE=cloudflare` now refuses to start unless bound to loopback (was an honor system); everything else reviewed clean or deliberately deferred (rate limiting, out of scope for private staging)                                                                                                                                  | `docs/contracts/CONTRACT-013/evidence/M8-security-review.md`       |
-| M9        | done -- private staging deployed for real (`polyp-control-api.service`, loopback port 4180, real staging Postgres, hardened systemd unit), health + rollback proven live, one real bug found and fixed by booting the compiled server (dashboard SPA path resolution)                                                                                                                                                                 | `docs/contracts/CONTRACT-013/evidence/M9-private-staging.md`       |
-| M10       | done -- owner acceptance checklist (`docs/contracts/CONTRACT-013/acceptance-checklist.md`) mapping all 6 contract acceptance bullets to status+evidence; closed a real gap found while writing it (Telegram decisions/webhook status now observable from the dashboard, not just the settings form)                                                                                                                                   | `docs/contracts/CONTRACT-013/evidence/M10-acceptance.md`           |
-| M11       | done -- `prettier --write .` repository-wide (46 files, all confirmed formatting-only by diff review), zero `format:check` warnings; dead-code/duplication audit (independent fork): 1 unused export removed (in CONTRACT-013's ownership), 3 dead files + 2 duplication candidates documented and queued to a future contract (outside CONTRACT-013's ownership or deliberately not worth the risk this close to the closing commit) | `docs/contracts/CONTRACT-013/evidence/M11-code-quality-cleanup.md` |
-| M12       | not started                                                                                                                                                                                                                                                                                                                                                                                                                           | --                                                                 |
+| Milestone | Status                                                                                                                                                                                                                                                                                                                                                                                                                                | Evidence                                                            |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| M5        | done -- real generation pipeline (blueprint -> workspace -> queued task -> executed -> accepted patch), `AiGateway`/`RuntimePolicy` reconciled, 5 real bugs found and fixed                                                                                                                                                                                                                                                           | `docs/contracts/CONTRACT-013/evidence/M5-generation-pipeline.md`    |
+| M6        | done -- `task_role_overrides` storage wired for real (was a stub), Policy UI rollback/override controls + dedicated envelope fields, Telegram webhook confirmed, usage/attribution dashboard depth (fallback reason, rework history) -- all live-verified against a running server                                                                                                                                                    | `docs/contracts/CONTRACT-013/evidence/M6-policy-telegram-usage.md`  |
+| M7        | done -- axe coverage for the Policy page, CSRF-rejection matrix for all `/api/v1/policy/*` mutation routes, broadened cross-route authorization negative test, restart/ephemeral-CSRF-secret test                                                                                                                                                                                                                                     | `docs/contracts/CONTRACT-013/evidence/M7-negative-tests.md`         |
+| M8        | done -- independent security review (`docs/security/CONTRACT-013-M8-review.md`); fixed: `ACCESS_AUTH_MODE=cloudflare` now refuses to start unless bound to loopback (was an honor system); everything else reviewed clean or deliberately deferred (rate limiting, out of scope for private staging)                                                                                                                                  | `docs/contracts/CONTRACT-013/evidence/M8-security-review.md`        |
+| M9        | done -- private staging deployed for real (`polyp-control-api.service`, loopback port 4180, real staging Postgres, hardened systemd unit), health + rollback proven live, one real bug found and fixed by booting the compiled server (dashboard SPA path resolution)                                                                                                                                                                 | `docs/contracts/CONTRACT-013/evidence/M9-private-staging.md`        |
+| M10       | done -- owner acceptance checklist (`docs/contracts/CONTRACT-013/acceptance-checklist.md`) mapping all 6 contract acceptance bullets to status+evidence; closed a real gap found while writing it (Telegram decisions/webhook status now observable from the dashboard, not just the settings form)                                                                                                                                   | `docs/contracts/CONTRACT-013/evidence/M10-acceptance.md`            |
+| M11       | done -- `prettier --write .` repository-wide (46 files, all confirmed formatting-only by diff review), zero `format:check` warnings; dead-code/duplication audit (independent fork): 1 unused export removed (in CONTRACT-013's ownership), 3 dead files + 2 duplication candidates documented and queued to a future contract (outside CONTRACT-013's ownership or deliberately not worth the risk this close to the closing commit) | `docs/contracts/CONTRACT-013/evidence/M11-code-quality-cleanup.md`  |
+| M12       | done -- found and fixed a real pre-existing gap (a CI secret-pattern gate silently broken since before CONTRACT-011); one commit (`57facca`), pushed to `main` at owner's explicit "push it" go-ahead                                                                                                                                                                                                                                 | `docs/contracts/CONTRACT-013/evidence/M12-commit-reconciliation.md` |
 
 Full suite (fresh disposable DB, migrations 0001-0010): 164 tests, 164 pass,
 0 fail, 0 skip. Dashboard: 19/19. `npm audit` (dev+prod): 0 vulnerabilities.
 `npm run format:check`: zero warnings, repository-wide.
 
-`scripts/verify-contract.ts CONTRACT-013` currently reports dirty
-out-of-scope paths -- **expected**, not a regression: the checker has no
-notion of milestones and doesn't know about M11's explicit, contract
--documented `**` exception for formatting-only changes. Every flagged path
-was manually diff-reviewed and confirmed formatting-only (see M11 evidence).
-This will still show at M12 commit time for the same reason -- resolve by
-manual review before committing, not by treating the tool's output as
-gospel over the contract's own written exception.
+`scripts/verify-contract.ts CONTRACT-013` reported dirty out-of-scope paths
+during M11/M12 -- **expected**, not a regression: the checker has no notion
+of milestones and doesn't know about M11's explicit, contract-documented
+`**` exception for formatting-only changes. Every flagged path was manually
+diff-reviewed and confirmed formatting-only (see M11 evidence) before the
+M12 commit. Working tree is clean post-commit, so this is purely historical
+now -- the same pattern will recur if a future contract's own cleanup
+milestone reformats files outside its declared ownership; resolve by manual
+review, not by treating the tool's output as gospel over a contract's own
+written exception.
 
 Carried forward CONTRACT-012's original M5-M11 (renumbered M5-M12) plus five
 concrete gaps found while building/reviewing M4 -- all five are now closed:
@@ -203,22 +205,19 @@ milestone).
 
 Launch Claude Code in `/root/polyptechnology-next` and say "resume per
 docs/RESUME.md". Read this file, `AGENTS.md`, `docs/SYSTEM-SPECIFICATION.md`,
-and `docs/contracts/CONTRACT-013/contract.md` first. Check `git status` and
-`docs/contracts/CONTRACT-013/evidence/*.md` before doing anything else --
-they are the durable summary specifically so a fresh session doesn't have to
-reconstruct state from memory.
+and (once it exists) the new active contract's `contract.md` first. Check
+`git status` and the relevant `evidence/*.md` files before doing anything
+else -- they are the durable summary specifically so a fresh session
+doesn't have to reconstruct state from memory.
 
-CONTRACT-011 (`a564bf8`) and CONTRACT-012 (`4342ca2`) are both closed and
-pushed. CONTRACT-013's M5-M12 are all done, all gates green (164/164 backend
-tests, 19/19 dashboard, zero `format:check` warnings, zero `npm audit`
-vulnerabilities, secret-pattern scan clean) -- **check `git log --oneline -3`
-first**: if the top commit is still `5e5569a`/`d92558e` (CONTRACT-012's
-close), CONTRACT-013's work is real but uncommitted, and the next action is
-getting the owner's explicit "push it" go-ahead for the single final commit
-(M12 evidence has the exact reconciliation). If a newer commit already
-exists on top, CONTRACT-013 is closed -- read its evidence for what changed,
-then start planning the next contract (candidates already identified: M9's
-deferred real-provider-credentialed drill, M11's queued dead-code files
-outside CONTRACT-013's ownership, the safePath/safeWorkerPath duplication,
-and completing the Cloudflare Access JWT verification M8 left as a
-network-level-guarantee interim fix).
+CONTRACT-011 (`a564bf8`), CONTRACT-012 (`4342ca2`), and CONTRACT-013
+(`57facca`) are all closed and pushed to `main` on `origin`. CONTRACT-013's
+M5-M12 are done, all gates green (164/164 backend tests, 19/19 dashboard,
+zero `format:check` warnings, zero `npm audit` vulnerabilities, secret
+-pattern scan clean) -- see `docs/contracts/CONTRACT-013/evidence/*.md` for
+what changed. **The next action is starting a new contract from scratch**;
+candidates already identified: M9's deferred real-provider-credentialed
+drill, M11's queued dead-code files outside CONTRACT-013's ownership
+(`src/index.ts`, `src/providers/**`, `src/work/postgres-publication-recorder.ts`),
+the safePath/safeWorkerPath duplication, and completing the Cloudflare
+Access JWT verification M8 left as a network-level-guarantee interim fix.
