@@ -13,6 +13,7 @@ export interface AppConfig {
   logLevel: "debug" | "info" | "warn" | "error";
   csrfSecret: string;
   projectWorkspacesRoot: string;
+  attachmentStorageRoot: string;
   telegramBotToken?: string;
   telegramChatId?: string;
   telegramUserId?: string;
@@ -130,6 +131,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     csrfSecret,
     projectWorkspacesRoot:
       env.PROJECT_WORKSPACES_ROOT ?? "/var/lib/polyp/project-workspaces",
+    attachmentStorageRoot:
+      env.ATTACHMENT_STORAGE_ROOT ?? "/var/lib/polyp/attachments",
     ...(telegramBotToken === undefined ? {} : { telegramBotToken }),
     ...(telegramChatId === undefined ? {} : { telegramChatId }),
     ...(telegramUserId === undefined ? {} : { telegramUserId }),

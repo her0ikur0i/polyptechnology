@@ -19,12 +19,14 @@ const conversation = (row: {
   title: string;
   version: string;
   created_at: Date;
+  archived_at?: Date | null;
 }): Conversation => ({
   id: row.id,
   projectId: row.project_id,
   title: row.title,
   version: Number(row.version),
   createdAt: row.created_at,
+  ...(row.archived_at ? { archivedAt: row.archived_at } : {}),
 });
 const message = (row: {
   id: string;
@@ -186,6 +188,48 @@ export class PostgresConversationStore implements ConversationStore {
       [id, projectId],
     );
     return result.rowCount ? conversation(result.rows[0]) : undefined;
+  }
+  async listConversations(
+    projectId: string,
+    options?: { search?: string; includeArchived?: boolean },
+  ) {
+    const includeArchived = options?.includeArchived ?? false;
+    const search = options?.search?.trim();
+    const result = await this.pool.query(
+      `SELECT * FROM conversations
+       WHERE project_id=$1
+         AND ($2 OR archived_at IS NULL)
+         AND ($3::text IS NULL OR title ILIKE '%' || $3 || '%')
+       ORDER BY created_at DESC, id`,
+      [projectId, includeArchived, search && search.length > 0 ? search : null],
+    );
+    return result.rows.map(conversation);
+  }
+  async renameConversation(
+    projectId: string,
+    id: string,
+    title: string,
+    expectedVersion: number,
+  ) {
+    const result = await this.pool.query(
+      "UPDATE conversations SET title=$4, version=version+1 WHERE id=$1 AND project_id=$2 AND version=$3 RETURNING *",
+      [id, projectId, expectedVersion, title],
+    );
+    if (result.rowCount !== 1) throw new Error("stale conversation version");
+    return conversation(result.rows[0]);
+  }
+  async setConversationArchived(
+    projectId: string,
+    id: string,
+    archived: boolean,
+    expectedVersion: number,
+  ) {
+    const result = await this.pool.query(
+      "UPDATE conversations SET archived_at=$4, version=version+1 WHERE id=$1 AND project_id=$2 AND version=$3 RETURNING *",
+      [id, projectId, expectedVersion, archived ? new Date() : null],
+    );
+    if (result.rowCount !== 1) throw new Error("stale conversation version");
+    return conversation(result.rows[0]);
   }
   async messages(projectId: string, id: string) {
     const result = await this.pool.query(

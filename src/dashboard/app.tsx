@@ -35,7 +35,7 @@ import type { DashboardSnapshot, ModelAttempt } from "./types.js";
 import { useSnapshot } from "./use-snapshot.js";
 import { saveTelegramSettings } from "./api.js";
 import { FactoryLivePage } from "./factory-live/FactoryLive.js";
-import { FactoryControlPage } from "./factory-control.js";
+import { ConversationWorkspacePage } from "./conversation-workspace.js";
 import { PolicyControlPage } from "./policy-control.js";
 import "./styles.css";
 const nav = [
@@ -207,8 +207,9 @@ function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
             <Route
               path="/orchestrator"
               element={
-                <FactoryControlPage
+                <ConversationWorkspacePage
                   csrfToken={snapshot.commandPolicy.csrfToken}
+                  projects={snapshot.projects.data}
                 />
               }
             />

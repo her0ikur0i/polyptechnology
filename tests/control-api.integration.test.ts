@@ -64,6 +64,9 @@ async function withServer<T>(
     PROJECT_WORKSPACES_ROOT: mkdtempSync(
       join(tmpdir(), "control-api-workspaces-"),
     ),
+    ATTACHMENT_STORAGE_ROOT: mkdtempSync(
+      join(tmpdir(), "control-api-attachments-"),
+    ),
   });
   const app = createControlApi({
     pool,
@@ -136,6 +139,23 @@ test(
             },
             body: "{}",
           },
+        },
+        {
+          path: "/api/v1/orchestrator/conversations",
+          init: {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-csrf-token": csrfSecret,
+            },
+            body: "{}",
+          },
+        },
+        {
+          path: "/api/v1/orchestrator/projects/00000000-0000-4000-8000-000000000000/conversations",
+        },
+        {
+          path: "/api/v1/orchestrator/proposals/00000000-0000-4000-8000-000000000000",
         },
       ];
       // A valid CSRF token alone must never substitute for owner
@@ -730,6 +750,884 @@ test(
         await fetch(`${baseUrl}/api/v1/dashboard/snapshot`)
       ).json();
       assert.equal(snapshot.telegram.data.webhookRegistered, false);
+    });
+  },
+);
+
+test(
+  "starting a conversation with no projectId bootstraps a real idea-state project",
+  { skip: databaseUrl === undefined },
+  async () => {
+    await withServer("disabled", async (baseUrl, csrfSecret) => {
+      const headers = {
+        "content-type": "application/json",
+        "x-csrf-token": csrfSecret,
+      };
+      const started = await (
+        await fetch(`${baseUrl}/api/v1/orchestrator/conversations`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            title: "My first idea",
+            idempotencyKey: randomUUID(),
+            occurredAt: new Date().toISOString(),
+          }),
+        })
+      ).json();
+      assert.match(started.conversationId, /^[a-f0-9-]{36}$/);
+      assert.match(started.projectId, /^[a-f0-9-]{36}$/);
+      assert.equal(started.title, "My first idea");
+      assert.equal(started.version, 0);
+
+      const snapshot = await (
+        await fetch(`${baseUrl}/api/v1/dashboard/snapshot`)
+      ).json();
+      const bootstrapped = snapshot.projects.data.find(
+        (p: { id: string }) => p.id === started.projectId,
+      );
+      // Overview's project view shows lifecycle -- a bootstrapped project
+      // must stay "idea" (the placeholder blueprint is not a real one; see
+      // src/operations/owner-commands.ts's startConversation() comment).
+      assert.ok(bootstrapped, "bootstrapped project missing from snapshot");
+      assert.equal(bootstrapped.lifecycle, "idea");
+    });
+  },
+);
+
+test(
+  "a message round-trips through send, list, and conversation listing",
+  { skip: databaseUrl === undefined },
+  async () => {
+    await withServer("disabled", async (baseUrl, csrfSecret) => {
+      const headers = {
+        "content-type": "application/json",
+        "x-csrf-token": csrfSecret,
+      };
+      const started = await (
+        await fetch(`${baseUrl}/api/v1/orchestrator/conversations`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            title: "Invoice tracker idea",
+            idempotencyKey: randomUUID(),
+            occurredAt: new Date().toISOString(),
+          }),
+        })
+      ).json();
+
+      const sendResult = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/messages`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              projectId: started.projectId,
+              content: "I want to track vendor invoices.",
+              expectedVersion: 0,
+              idempotencyKey: randomUUID(),
+              occurredAt: new Date().toISOString(),
+            }),
+          },
+        )
+      ).json();
+      const sent = sendResult.message;
+      assert.equal(sent.ordinal, 1);
+      assert.equal(sent.role, "owner");
+      assert.equal(sent.classification, "internal");
+      assert.match(sendResult.replyTaskId, /^[a-f0-9-]{36}$/);
+
+      // The reply is queued as a real background task, not executed inline
+      // -- no supervisor runs against this disposable database in this
+      // test, so it must still be reachable and "queued", not silently
+      // dropped.
+      const replyStatus = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/reply-tasks/${sendResult.replyTaskId}`,
+        )
+      ).json();
+      assert.equal(replyStatus.state, "queued");
+
+      // Sending against the now-stale version must fail closed, not
+      // silently accept a second message out of order.
+      const stale = await fetch(
+        `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/messages`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            projectId: started.projectId,
+            content: "second message, stale version",
+            expectedVersion: 0,
+            idempotencyKey: randomUUID(),
+            occurredAt: new Date().toISOString(),
+          }),
+        },
+      );
+      assert.equal(stale.status, 400);
+
+      const messages = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/messages?projectId=${started.projectId}`,
+        )
+      ).json();
+      assert.equal(messages.length, 1);
+      assert.equal(messages[0].id, sent.id);
+
+      const list = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/projects/${started.projectId}/conversations`,
+        )
+      ).json();
+      assert.equal(list.length, 1);
+      assert.equal(list[0].id, started.conversationId);
+      assert.equal(list[0].version, 1);
+
+      // This leaves the reply task "queued" -- no supervisor consumes it
+      // in this test, and ExecutableTaskSupervisor.runOne()'s eligible-task
+      // query has no per-test scoping (same landmine already documented
+      // for the /generate route's test). Cancel it explicitly rather than
+      // leaving it for some other test's supervisor run to pick up and
+      // fail closed on (this driver map has no "conversation_reply" entry
+      // outside sequence-main.ts).
+      const cleanupPool = new pg.Pool({ connectionString: databaseUrl });
+      try {
+        await new PostgresWorkRepository(cleanupPool).controlTransition(
+          sendResult.replyTaskId,
+          "queued",
+          "cancelled",
+        );
+      } finally {
+        await cleanupPool.end();
+      }
+    });
+  },
+);
+
+test(
+  "starting a conversation on an existing project reuses it instead of bootstrapping a new one",
+  { skip: databaseUrl === undefined },
+  async () => {
+    await withServer("disabled", async (baseUrl, csrfSecret) => {
+      const headers = {
+        "content-type": "application/json",
+        "x-csrf-token": csrfSecret,
+      };
+      const first = await (
+        await fetch(`${baseUrl}/api/v1/orchestrator/conversations`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            title: "First chat",
+            idempotencyKey: randomUUID(),
+            occurredAt: new Date().toISOString(),
+          }),
+        })
+      ).json();
+
+      const second = await (
+        await fetch(`${baseUrl}/api/v1/orchestrator/conversations`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            title: "Follow-up chat",
+            projectId: first.projectId,
+            idempotencyKey: randomUUID(),
+            occurredAt: new Date().toISOString(),
+          }),
+        })
+      ).json();
+      assert.equal(second.projectId, first.projectId);
+      assert.notEqual(second.conversationId, first.conversationId);
+
+      const list = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/projects/${first.projectId}/conversations`,
+        )
+      ).json();
+      assert.equal(list.length, 2);
+    });
+  },
+);
+
+test(
+  "conversation and message routes reject a missing CSRF token",
+  { skip: databaseUrl === undefined },
+  async () => {
+    await withServer("disabled", async (baseUrl, csrfSecret) => {
+      const noToken = await fetch(
+        `${baseUrl}/api/v1/orchestrator/conversations`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            title: "x",
+            idempotencyKey: randomUUID(),
+            occurredAt: new Date().toISOString(),
+          }),
+        },
+      );
+      assert.equal(noToken.status, 403);
+
+      const started = await (
+        await fetch(`${baseUrl}/api/v1/orchestrator/conversations`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-csrf-token": csrfSecret,
+          },
+          body: JSON.stringify({
+            title: "x",
+            idempotencyKey: randomUUID(),
+            occurredAt: new Date().toISOString(),
+          }),
+        })
+      ).json();
+
+      const noTokenMessage = await fetch(
+        `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/messages`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            projectId: started.projectId,
+            content: "hi",
+            expectedVersion: 0,
+            idempotencyKey: randomUUID(),
+            occurredAt: new Date().toISOString(),
+          }),
+        },
+      );
+      assert.equal(noTokenMessage.status, 403);
+
+      // GET routes are read-only queries (ADR-0003) -- no CSRF gate, only
+      // requireOwner, matching /api/v1/policy/simulate's precedent.
+      const readWithoutToken = await fetch(
+        `${baseUrl}/api/v1/orchestrator/projects/${started.projectId}/conversations`,
+      );
+      assert.notEqual(readWithoutToken.status, 403);
+    });
+  },
+);
+
+test(
+  "attachment upload accepts an allowed type, rejects a disallowed type, an oversized file, and a missing CSRF token",
+  { skip: databaseUrl === undefined },
+  async () => {
+    await withServer("disabled", async (baseUrl, csrfSecret) => {
+      const started = await (
+        await fetch(`${baseUrl}/api/v1/orchestrator/conversations`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-csrf-token": csrfSecret,
+          },
+          body: JSON.stringify({
+            title: "Upload test",
+            idempotencyKey: randomUUID(),
+            occurredAt: new Date().toISOString(),
+          }),
+        })
+      ).json();
+
+      const allowedForm = new FormData();
+      allowedForm.set("projectId", started.projectId);
+      allowedForm.set(
+        "file",
+        new Blob(["a requirements note"], { type: "text/plain" }),
+        "requirements.txt",
+      );
+      const accepted = await fetch(
+        `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/attachments`,
+        {
+          method: "POST",
+          headers: { "x-csrf-token": csrfSecret },
+          body: allowedForm,
+        },
+      );
+      assert.equal(accepted.status, 201, JSON.stringify(await accepted.json()));
+
+      const disallowedForm = new FormData();
+      disallowedForm.set("projectId", started.projectId);
+      disallowedForm.set(
+        "file",
+        new Blob(["fake binary"], { type: "application/x-executable" }),
+        "evil.exe",
+      );
+      const rejectedType = await fetch(
+        `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/attachments`,
+        {
+          method: "POST",
+          headers: { "x-csrf-token": csrfSecret },
+          body: disallowedForm,
+        },
+      );
+      assert.equal(rejectedType.status, 400);
+
+      const oversizedForm = new FormData();
+      oversizedForm.set("projectId", started.projectId);
+      oversizedForm.set(
+        "file",
+        new Blob([new Uint8Array(26 * 1024 * 1024)], { type: "text/plain" }),
+        "big.txt",
+      );
+      const rejectedSize = await fetch(
+        `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/attachments`,
+        {
+          method: "POST",
+          headers: { "x-csrf-token": csrfSecret },
+          body: oversizedForm,
+        },
+      );
+      // Real, previously-shipped bug: multer's own error handling reported
+      // this as an unstructured HTML 500 rather than this route's clean
+      // JSON error shape -- fixed by invoking the multer middleware
+      // directly with its callback form instead of chaining it into the
+      // route's middleware array (src/control-api/app.ts).
+      assert.equal(rejectedSize.status, 400);
+      const sizeBody = await rejectedSize.json();
+      assert.ok(typeof sizeBody.error === "string");
+
+      const noTokenForm = new FormData();
+      noTokenForm.set("projectId", started.projectId);
+      noTokenForm.set(
+        "file",
+        new Blob(["ok"], { type: "text/plain" }),
+        "ok.txt",
+      );
+      const noToken = await fetch(
+        `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/attachments`,
+        { method: "POST", body: noTokenForm },
+      );
+      assert.equal(noToken.status, 403);
+
+      const list = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/attachments?projectId=${started.projectId}`,
+        )
+      ).json();
+      assert.equal(list.length, 1);
+      assert.equal(list[0].displayName, "requirements.txt");
+      assert.equal(list[0].state, "scanned");
+    });
+  },
+);
+
+test(
+  "a path-traversal-shaped filename can never escape storage: multer strips it to a basename, and the stored object key is always server-generated",
+  { skip: databaseUrl === undefined },
+  async () => {
+    await withServer("disabled", async (baseUrl, csrfSecret) => {
+      const started = await (
+        await fetch(`${baseUrl}/api/v1/orchestrator/conversations`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-csrf-token": csrfSecret,
+          },
+          body: JSON.stringify({
+            title: "Path traversal test",
+            idempotencyKey: randomUUID(),
+            occurredAt: new Date().toISOString(),
+          }),
+        })
+      ).json();
+
+      // Real finding while writing this test: the original expectation was
+      // that validateAttachmentMetadata()'s '/'/'\0' check
+      // (src/orchestrator/attachments.ts) would reject a traversal-shaped
+      // name outright. Live testing showed multer/busboy's own
+      // Content-Disposition filename parsing already reduces
+      // "../../../../etc/passwd" and "..\\..\\windows\\system32\\config" to
+      // their basenames ("passwd", "config") before this application ever
+      // sees them -- a different, earlier defense layer than assumed. This
+      // test asserts the real, verified behavior: displayName is always
+      // reduced to a bare basename, and objectKey
+      // (src/control-api/attachment-upload.ts) never derives from the
+      // client-supplied name at all regardless -- both layers hold
+      // independently.
+      const cases: Array<[string, string]> = [
+        ["../../../../etc/passwd", "passwd"],
+        ["..\\..\\windows\\system32\\config", "config"],
+      ];
+      for (const [suppliedName, expectedBasename] of cases) {
+        const form = new FormData();
+        form.set("projectId", started.projectId);
+        form.set(
+          "file",
+          new Blob(["irrelevant content"], { type: "text/plain" }),
+          suppliedName,
+        );
+        const response = await fetch(
+          `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/attachments`,
+          {
+            method: "POST",
+            headers: { "x-csrf-token": csrfSecret },
+            body: form,
+          },
+        );
+        const body = await response.json();
+        assert.equal(response.status, 201, JSON.stringify(body));
+        assert.equal(body.displayName, expectedBasename, suppliedName);
+        assert.match(
+          body.objectKey,
+          new RegExp(`^${started.projectId}/[a-f0-9-]{36}$`),
+        );
+      }
+    });
+  },
+);
+
+async function cancelReplyTask(taskId: string) {
+  // The reply task queued by sending a message is a real background task
+  // (M2) -- ExecutableTaskSupervisor.runOne()'s eligible-task query has no
+  // per-test scoping, so an uncancelled queued task is a landmine for
+  // whichever other test's supervisor run happens to pick it up first
+  // (hit for real during this contract's own live testing -- see M5
+  // evidence). Cancel explicitly rather than leaving it behind.
+  const cleanupPool = new pg.Pool({ connectionString: databaseUrl });
+  try {
+    await new PostgresWorkRepository(cleanupPool).controlTransition(
+      taskId,
+      "queued",
+      "cancelled",
+    );
+  } finally {
+    await cleanupPool.end();
+  }
+}
+
+test(
+  "drafting a proposal requires a nonempty conversation, then approve+handoff freezes the candidate in one action",
+  { skip: databaseUrl === undefined },
+  async () => {
+    await withServer("disabled", async (baseUrl, csrfSecret) => {
+      const headers = {
+        "content-type": "application/json",
+        "x-csrf-token": csrfSecret,
+      };
+      const started = await (
+        await fetch(`${baseUrl}/api/v1/orchestrator/conversations`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            title: "Invoice tracker idea",
+            idempotencyKey: randomUUID(),
+            occurredAt: new Date().toISOString(),
+          }),
+        })
+      ).json();
+
+      const emptyDraft = await fetch(
+        `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/proposals`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            projectId: started.projectId,
+            idempotencyKey: randomUUID(),
+            occurredAt: new Date().toISOString(),
+          }),
+        },
+      );
+      assert.equal(emptyDraft.status, 400);
+
+      const sendResult = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/messages`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              projectId: started.projectId,
+              content: "I want a tool to track vendor invoices.",
+              expectedVersion: 0,
+              idempotencyKey: randomUUID(),
+              occurredAt: new Date().toISOString(),
+            }),
+          },
+        )
+      ).json();
+
+      const draft = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/proposals`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              projectId: started.projectId,
+              idempotencyKey: randomUUID(),
+              occurredAt: new Date().toISOString(),
+            }),
+          },
+        )
+      ).json();
+      assert.equal(draft.state, "owner_review");
+      assert.match(draft.contractCandidate, /vendor invoices/);
+
+      const fetched = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/proposals/${draft.proposalId}?projectId=${started.projectId}`,
+        )
+      ).json();
+      assert.equal(fetched.state, "owner_review");
+      assert.equal(fetched.version, draft.version);
+
+      const handedOff = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/proposals/${draft.proposalId}/approve`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              projectId: started.projectId,
+              expectedVersion: draft.version,
+            }),
+          },
+        )
+      ).json();
+      assert.match(handedOff.approvalId, /^[a-f0-9-]{36}$/);
+      assert.equal(handedOff.contractCandidate, draft.contractCandidate);
+
+      await cancelReplyTask(sendResult.replyTaskId);
+    });
+  },
+);
+
+test(
+  "rejecting a proposal is terminal, and a stale-version approve fails closed",
+  { skip: databaseUrl === undefined },
+  async () => {
+    await withServer("disabled", async (baseUrl, csrfSecret) => {
+      const headers = {
+        "content-type": "application/json",
+        "x-csrf-token": csrfSecret,
+      };
+      const started = await (
+        await fetch(`${baseUrl}/api/v1/orchestrator/conversations`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            title: "Reject path",
+            idempotencyKey: randomUUID(),
+            occurredAt: new Date().toISOString(),
+          }),
+        })
+      ).json();
+      const sendResult = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/messages`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              projectId: started.projectId,
+              content: "Not sure this is worth pursuing.",
+              expectedVersion: 0,
+              idempotencyKey: randomUUID(),
+              occurredAt: new Date().toISOString(),
+            }),
+          },
+        )
+      ).json();
+      const draft = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/proposals`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              projectId: started.projectId,
+              idempotencyKey: randomUUID(),
+              occurredAt: new Date().toISOString(),
+            }),
+          },
+        )
+      ).json();
+
+      const rejected = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/proposals/${draft.proposalId}/reject`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              projectId: started.projectId,
+              expectedVersion: draft.version,
+            }),
+          },
+        )
+      ).json();
+      assert.equal(rejected.state, "rejected");
+
+      const staleApprove = await fetch(
+        `${baseUrl}/api/v1/orchestrator/proposals/${draft.proposalId}/approve`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            projectId: started.projectId,
+            expectedVersion: draft.version,
+          }),
+        },
+      );
+      assert.equal(staleApprove.status, 400);
+
+      const noTokenDraft = await fetch(
+        `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/proposals`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            projectId: started.projectId,
+            idempotencyKey: randomUUID(),
+            occurredAt: new Date().toISOString(),
+          }),
+        },
+      );
+      assert.equal(noTokenDraft.status, 403);
+
+      await cancelReplyTask(sendResult.replyTaskId);
+    });
+  },
+);
+
+test(
+  "translating a proposal is gated on it being handed off, then queues a real background task",
+  { skip: databaseUrl === undefined },
+  async () => {
+    await withServer("disabled", async (baseUrl, csrfSecret) => {
+      const headers = {
+        "content-type": "application/json",
+        "x-csrf-token": csrfSecret,
+      };
+      const started = await (
+        await fetch(`${baseUrl}/api/v1/orchestrator/conversations`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            title: "Translate gating",
+            idempotencyKey: randomUUID(),
+            occurredAt: new Date().toISOString(),
+          }),
+        })
+      ).json();
+      const sendResult = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/messages`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              projectId: started.projectId,
+              content: "A Node/Express/Postgres invoice tracker.",
+              expectedVersion: 0,
+              idempotencyKey: randomUUID(),
+              occurredAt: new Date().toISOString(),
+            }),
+          },
+        )
+      ).json();
+      const draft = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/proposals`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              projectId: started.projectId,
+              idempotencyKey: randomUUID(),
+              occurredAt: new Date().toISOString(),
+            }),
+          },
+        )
+      ).json();
+
+      const tooEarly = await fetch(
+        `${baseUrl}/api/v1/orchestrator/proposals/${draft.proposalId}/translate`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ projectId: started.projectId }),
+        },
+      );
+      assert.equal(tooEarly.status, 400);
+
+      await fetch(
+        `${baseUrl}/api/v1/orchestrator/proposals/${draft.proposalId}/approve`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            projectId: started.projectId,
+            expectedVersion: draft.version,
+          }),
+        },
+      );
+
+      const queued = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/proposals/${draft.proposalId}/translate`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ projectId: started.projectId }),
+          },
+        )
+      ).json();
+      assert.match(queued.taskId, /^[a-f0-9-]{36}$/);
+
+      const status = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/reply-tasks/${queued.taskId}`,
+        )
+      ).json();
+      assert.equal(status.state, "queued");
+
+      const noToken = await fetch(
+        `${baseUrl}/api/v1/orchestrator/proposals/${draft.proposalId}/translate`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ projectId: started.projectId }),
+        },
+      );
+      assert.equal(noToken.status, 403);
+
+      await cancelReplyTask(sendResult.replyTaskId);
+      await cancelReplyTask(queued.taskId);
+    });
+  },
+);
+
+test(
+  "rename, archive, unarchive, and search all round-trip through the real store",
+  { skip: databaseUrl === undefined },
+  async () => {
+    await withServer("disabled", async (baseUrl, csrfSecret) => {
+      const headers = {
+        "content-type": "application/json",
+        "x-csrf-token": csrfSecret,
+      };
+      const started = await (
+        await fetch(`${baseUrl}/api/v1/orchestrator/conversations`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            title: "Invoice ideas",
+            idempotencyKey: randomUUID(),
+            occurredAt: new Date().toISOString(),
+          }),
+        })
+      ).json();
+
+      const renamed = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/rename`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              projectId: started.projectId,
+              title: "Vendor invoice tracker (renamed)",
+              expectedVersion: 0,
+            }),
+          },
+        )
+      ).json();
+      assert.equal(renamed.title, "Vendor invoice tracker (renamed)");
+      assert.equal(renamed.version, 1);
+
+      // A stale-version rename must fail closed, not silently overwrite.
+      const staleRename = await fetch(
+        `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/rename`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            projectId: started.projectId,
+            title: "Should not apply",
+            expectedVersion: 0,
+          }),
+        },
+      );
+      assert.equal(staleRename.status, 400);
+
+      const archived = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/archive`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              projectId: started.projectId,
+              archived: true,
+              expectedVersion: 1,
+            }),
+          },
+        )
+      ).json();
+      assert.ok(archived.archivedAt);
+
+      const defaultList = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/projects/${started.projectId}/conversations`,
+        )
+      ).json();
+      assert.equal(defaultList.length, 0);
+
+      const withArchived = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/projects/${started.projectId}/conversations?includeArchived=true`,
+        )
+      ).json();
+      assert.equal(withArchived.length, 1);
+      assert.equal(withArchived[0].id, started.conversationId);
+
+      const unarchived = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/archive`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              projectId: started.projectId,
+              archived: false,
+              expectedVersion: 2,
+            }),
+          },
+        )
+      ).json();
+      assert.equal(unarchived.archivedAt, undefined);
+
+      const matchingSearch = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/projects/${started.projectId}/conversations?search=invoice`,
+        )
+      ).json();
+      assert.equal(matchingSearch.length, 1);
+
+      const nonMatchingSearch = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/projects/${started.projectId}/conversations?search=zzz`,
+        )
+      ).json();
+      assert.equal(nonMatchingSearch.length, 0);
+
+      const noTokenRename = await fetch(
+        `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/rename`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            projectId: started.projectId,
+            title: "x",
+            expectedVersion: 3,
+          }),
+        },
+      );
+      assert.equal(noTokenRename.status, 403);
     });
   },
 );

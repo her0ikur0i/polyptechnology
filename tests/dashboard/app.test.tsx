@@ -108,6 +108,36 @@ describe("dashboard", () => {
     });
     expect(result.violations.map((item) => item.id)).toEqual([]);
   });
+  it("renders the Orchestrator conversation workspace with no automated accessibility violations", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (url === "/api/v1/orchestrator/conversations")
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              conversationId: "conversation-1",
+              projectId: "project-1",
+              title: "Vendor invoice tracker",
+              version: 0,
+            }),
+          });
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }),
+    );
+    render(<DashboardApp initialSnapshot={snapshot} />);
+    await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
+    await userEvent.type(
+      screen.getByLabelText("Conversation title"),
+      "Vendor invoice tracker",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+    await screen.findByLabelText("Message");
+    const result = await axe.run(document.body, {
+      rules: { "color-contrast": { enabled: false } },
+    });
+    expect(result.violations.map((item) => item.id)).toEqual([]);
+  });
   it("renders explicit loading, unauthorized, and error states", () => {
     const { rerender } = render(<StatePage kind="loading" />);
     expect(screen.getByText(/Loading verified/)).toBeInTheDocument();
@@ -139,35 +169,36 @@ describe("dashboard", () => {
     expect(aside).not.toHaveAttribute("inert");
     expect(menu).toHaveAttribute("aria-expanded", "true");
   });
-  it("submits a dynamic project blueprint through the authenticated CSRF command boundary", async () => {
+  it("starts a conversation through the authenticated CSRF command boundary", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          projectId: "project-generated",
-          state: "blueprint",
-          repositoryRef: "repo://projects/generated",
-        }),
+      vi.fn().mockImplementation((url: string) => {
+        if (url.includes("/conversations/") || url.endsWith("/conversations"))
+          return Promise.resolve({
+            ok: true,
+            json: async () =>
+              url === "/api/v1/orchestrator/conversations"
+                ? {
+                    conversationId: "conversation-1",
+                    projectId: "project-bootstrapped",
+                    title: "Vendor invoice tracker",
+                    version: 0,
+                  }
+                : [],
+          });
+        return Promise.resolve({ ok: true, json: async () => [] });
       }),
     );
     render(<DashboardApp initialSnapshot={snapshot} />);
     await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
     await userEvent.type(
-      screen.getByLabelText("Project name"),
-      "Generated Product",
+      screen.getByLabelText("Conversation title"),
+      "Vendor invoice tracker",
     );
-    await userEvent.type(screen.getByLabelText("Slug"), "generated-product");
-    await userEvent.type(
-      screen.getByLabelText(/Requirements/),
-      "Owner-defined workflow",
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Generate project blueprint" }),
-    );
-    expect(await screen.findByText(/project-generated/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+    expect(await screen.findByLabelText("Message")).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith(
-      "/api/v1/factory/projects",
+      "/api/v1/orchestrator/conversations",
       expect.objectContaining({
         method: "POST",
         credentials: "same-origin",

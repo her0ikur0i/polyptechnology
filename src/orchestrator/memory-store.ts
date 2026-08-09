@@ -51,6 +51,49 @@ export class MemoryConversationStore implements ConversationStore {
     const value = this.conversations.get(id);
     return value?.projectId === projectId ? clone(value) : undefined;
   }
+  async listConversations(
+    projectId: string,
+    options?: { search?: string; includeArchived?: boolean },
+  ) {
+    const includeArchived = options?.includeArchived ?? false;
+    const search = options?.search?.trim().toLowerCase();
+    return clone(
+      [...this.conversations.values()]
+        .filter((value) => value.projectId === projectId)
+        .filter((value) => includeArchived || value.archivedAt === undefined)
+        .filter(
+          (value) => !search || value.title.toLowerCase().includes(search),
+        )
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
+    );
+  }
+  async renameConversation(
+    projectId: string,
+    id: string,
+    title: string,
+    expectedVersion: number,
+  ) {
+    const value = this.requireConversation(projectId, id);
+    if (value.version !== expectedVersion)
+      throw new Error("stale conversation version");
+    value.title = title;
+    value.version++;
+    return clone(value);
+  }
+  async setConversationArchived(
+    projectId: string,
+    id: string,
+    archived: boolean,
+    expectedVersion: number,
+  ) {
+    const value = this.requireConversation(projectId, id);
+    if (value.version !== expectedVersion)
+      throw new Error("stale conversation version");
+    if (archived) value.archivedAt = new Date();
+    else delete value.archivedAt;
+    value.version++;
+    return clone(value);
+  }
   async messages(projectId: string, id: string) {
     this.requireConversation(projectId, id);
     return clone(this.messageRows.get(id) ?? []);

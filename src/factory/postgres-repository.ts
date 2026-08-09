@@ -154,6 +154,28 @@ export class PostgresProjectFactory {
       throw new Error("published blueprint version missing");
     return project(result.rows[0] as ProjectRow);
   }
+  // Re-points an already-existing project at a newly-published blueprint
+  // version -- needed once (CONTRACT-014 M6) createProject() no longer owns
+  // the only path to a project's blueprint: a conversation-bootstrapped
+  // project (M1) starts with a placeholder, and this is how a real one,
+  // derived from the approved narrative, replaces it. Version-fenced like
+  // every other mutation on this table; the WHERE clause also re-confirms
+  // the target version is actually published, not just any version id.
+  async attachBlueprintVersion(input: {
+    projectId: string;
+    blueprintVersionId: string;
+    expectedVersion: number;
+  }): Promise<GeneratedProject> {
+    const result = await this.pool.query(
+      "UPDATE generated_projects g SET blueprint_id=v.blueprint_id, blueprint_version_id=$2, version=g.version+1, updated_at=CURRENT_TIMESTAMP FROM project_blueprint_versions v WHERE g.id=$1 AND v.id=$2 AND v.status='published' AND g.version=$3 RETURNING g.*",
+      [input.projectId, input.blueprintVersionId, input.expectedVersion],
+    );
+    if (result.rowCount !== 1)
+      throw new Error(
+        "project version stale, or blueprint version not published",
+      );
+    return project(result.rows[0] as ProjectRow);
+  }
   async transition(projectId: string, request: TransitionRequest) {
     const client = await this.pool.connect();
     try {

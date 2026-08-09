@@ -5,11 +5,16 @@ import type { Lease } from "../work/types.js";
 
 export interface OperationTaskSpec {
   taskId: string;
-  driver: "deterministic_sha256" | "ai_patch_executor";
+  driver:
+    | "deterministic_sha256"
+    | "ai_patch_executor"
+    | "conversation_reply"
+    | "blueprint_translation";
   input: unknown;
-  // null only for a self-verifying driver (ai_patch_executor): its own
-  // returned { verified: boolean } decides success instead of a precomputed
-  // hash comparison. deterministic_sha256 always has this set (DB-enforced).
+  // null only for a self-verifying driver (ai_patch_executor,
+  // conversation_reply, blueprint_translation): its own returned
+  // { verified: boolean } decides success instead of a precomputed hash
+  // comparison. deterministic_sha256 always has this set (DB-enforced).
   expectedOutputSha256: string | null;
   providerId?: string;
   requestedModelId?: string;

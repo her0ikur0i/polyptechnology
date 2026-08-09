@@ -16,6 +16,10 @@ import { GitPatchApplier } from "../operations/git-patch-applier.js";
 import { GitIgnoringWorkspaceCopier } from "../operations/workspace-copy.js";
 import { PostgresProviderArtifactStore } from "../operations/provider-artifact-store.js";
 import { PostgresPolicyRouteResolver } from "../operations/policy-route-resolver.js";
+import { ConversationReplyDriver } from "../operations/conversation-reply-driver.js";
+import { BlueprintTranslationDriver } from "../operations/blueprint-translation-driver.js";
+import { PostgresConversationStore } from "./postgres-store.js";
+import { PostgresProjectFactory } from "../factory/postgres-repository.js";
 import { PostgresPolicyStore } from "../policy/postgres-policy-store.js";
 import { PROGRAMMING_POLICY_KEY } from "../policy/types.js";
 import { AiGateway } from "../gateway/gateway.js";
@@ -56,12 +60,22 @@ const ttlMs = 30_000,
       PROGRAMMING_POLICY_KEY,
     ),
   ),
+  conversationReplyDriver = new ConversationReplyDriver(
+    aiGateway,
+    new PostgresConversationStore(pool),
+  ),
+  blueprintTranslationDriver = new BlueprintTranslationDriver(
+    aiGateway,
+    new PostgresProjectFactory(pool),
+  ),
   operation = new ExecutableTaskSupervisor(
     pool,
     work,
     new Map<string, OperationDriver>([
       ["deterministic_sha256", new DeterministicSha256Driver()],
       ["ai_patch_executor", aiPatchDriver],
+      ["conversation_reply", conversationReplyDriver],
+      ["blueprint_translation", blueprintTranslationDriver],
     ]),
     workerId,
     ttlMs,

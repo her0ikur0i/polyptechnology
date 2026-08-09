@@ -135,6 +135,320 @@ export async function createConversationProposal(
     signal,
   );
 }
+export interface ConversationProposal {
+  id: string;
+  conversationId: string;
+  projectId: string;
+  version: number;
+  state: string;
+  contractCandidate: string;
+  candidateSha256: string;
+  approvalId?: string;
+}
+export async function draftProposal(
+  conversationId: string,
+  command: { projectId: string },
+  csrfToken: string,
+  signal?: AbortSignal,
+) {
+  return commandRequest<{
+    proposalId: string;
+    conversationId: string;
+    state: string;
+    version: number;
+    contractCandidate: string;
+  }>(
+    `/api/v1/orchestrator/conversations/${conversationId}/proposals`,
+    {
+      ...command,
+      idempotencyKey: crypto.randomUUID(),
+      occurredAt: new Date().toISOString(),
+    },
+    csrfToken,
+    signal,
+  );
+}
+export async function approveProposal(
+  proposalId: string,
+  command: { projectId: string; expectedVersion: number },
+  csrfToken: string,
+  signal?: AbortSignal,
+) {
+  return commandRequest<{
+    proposalId: string;
+    projectId: string;
+    conversationId: string;
+    approvalId: string;
+    contractCandidate: string;
+    candidateSha256: string;
+  }>(
+    `/api/v1/orchestrator/proposals/${proposalId}/approve`,
+    command,
+    csrfToken,
+    signal,
+  );
+}
+export async function rejectProposal(
+  proposalId: string,
+  command: { projectId: string; expectedVersion: number },
+  csrfToken: string,
+  signal?: AbortSignal,
+) {
+  return commandRequest<ConversationProposal>(
+    `/api/v1/orchestrator/proposals/${proposalId}/reject`,
+    command,
+    csrfToken,
+    signal,
+  );
+}
+export async function getProposal(
+  proposalId: string,
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<ConversationProposal | undefined> {
+  const response = await fetch(
+    `/api/v1/orchestrator/proposals/${proposalId}?projectId=${encodeURIComponent(projectId)}`,
+    {
+      headers: { Accept: "application/json" },
+      credentials: "same-origin",
+      ...(signal ? { signal } : {}),
+    },
+  );
+  if (response.status === 404) return undefined;
+  if (!response.ok)
+    throw new DashboardApiError(response.status, "Proposal is unavailable.");
+  return response.json();
+}
+export async function translateProposal(
+  proposalId: string,
+  command: { projectId: string },
+  csrfToken: string,
+  signal?: AbortSignal,
+) {
+  return commandRequest<{ taskId: string }>(
+    `/api/v1/orchestrator/proposals/${proposalId}/translate`,
+    command,
+    csrfToken,
+    signal,
+  );
+}
+export interface ConversationSummary {
+  id: string;
+  projectId: string;
+  title: string;
+  version: number;
+  createdAt: string;
+  archivedAt?: string;
+}
+export interface ConversationMessage {
+  id: string;
+  conversationId: string;
+  projectId: string;
+  ordinal: number;
+  role: "owner" | "assistant" | "system";
+  content: string;
+  classification: string;
+  contentSha256: string;
+  createdAt: string;
+}
+export interface ConversationAttachment {
+  id: string;
+  conversationId: string;
+  projectId: string;
+  objectKey: string;
+  displayName: string;
+  mediaType: string;
+  sizeBytes: number;
+  sha256: string;
+  state: string;
+  classification?: string;
+}
+export async function startConversation(
+  command: { title: string; projectId?: string },
+  csrfToken: string,
+  signal?: AbortSignal,
+) {
+  if (command.title.trim().length < 1)
+    throw new Error("Conversation title is required.");
+  return commandRequest<{
+    conversationId: string;
+    projectId: string;
+    title: string;
+    version: number;
+  }>(
+    "/api/v1/orchestrator/conversations",
+    {
+      ...command,
+      idempotencyKey: crypto.randomUUID(),
+      occurredAt: new Date().toISOString(),
+    },
+    csrfToken,
+    signal,
+  );
+}
+export async function sendConversationMessage(
+  conversationId: string,
+  command: { projectId: string; content: string; expectedVersion: number },
+  csrfToken: string,
+  signal?: AbortSignal,
+) {
+  if (command.content.trim().length < 1)
+    throw new Error("Message cannot be empty.");
+  return commandRequest<{
+    message: ConversationMessage;
+    replyTaskId: string;
+  }>(
+    `/api/v1/orchestrator/conversations/${conversationId}/messages`,
+    {
+      ...command,
+      idempotencyKey: crypto.randomUUID(),
+      occurredAt: new Date().toISOString(),
+    },
+    csrfToken,
+    signal,
+  );
+}
+export async function listConversationMessages(
+  conversationId: string,
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<ConversationMessage[]> {
+  const response = await fetch(
+    `/api/v1/orchestrator/conversations/${conversationId}/messages?projectId=${encodeURIComponent(projectId)}`,
+    {
+      headers: { Accept: "application/json" },
+      credentials: "same-origin",
+      ...(signal ? { signal } : {}),
+    },
+  );
+  if (!response.ok)
+    throw new DashboardApiError(response.status, "Messages are unavailable.");
+  return response.json();
+}
+export async function listProjectConversations(
+  projectId: string,
+  options?: { search?: string; includeArchived?: boolean },
+  signal?: AbortSignal,
+): Promise<ConversationSummary[]> {
+  const params = new URLSearchParams();
+  if (options?.search) params.set("search", options.search);
+  if (options?.includeArchived) params.set("includeArchived", "true");
+  const query = params.toString();
+  const response = await fetch(
+    `/api/v1/orchestrator/projects/${projectId}/conversations${query ? `?${query}` : ""}`,
+    {
+      headers: { Accept: "application/json" },
+      credentials: "same-origin",
+      ...(signal ? { signal } : {}),
+    },
+  );
+  if (!response.ok)
+    throw new DashboardApiError(
+      response.status,
+      "Conversations are unavailable.",
+    );
+  return response.json();
+}
+export async function renameConversation(
+  conversationId: string,
+  command: { projectId: string; title: string; expectedVersion: number },
+  csrfToken: string,
+  signal?: AbortSignal,
+): Promise<ConversationSummary> {
+  return commandRequest<ConversationSummary>(
+    `/api/v1/orchestrator/conversations/${conversationId}/rename`,
+    command,
+    csrfToken,
+    signal,
+  );
+}
+export async function setConversationArchived(
+  conversationId: string,
+  command: {
+    projectId: string;
+    archived: boolean;
+    expectedVersion: number;
+  },
+  csrfToken: string,
+  signal?: AbortSignal,
+): Promise<ConversationSummary> {
+  return commandRequest<ConversationSummary>(
+    `/api/v1/orchestrator/conversations/${conversationId}/archive`,
+    command,
+    csrfToken,
+    signal,
+  );
+}
+export async function getReplyTaskStatus(
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<{ taskId: string; state: string }> {
+  const response = await fetch(`/api/v1/orchestrator/reply-tasks/${taskId}`, {
+    headers: { Accept: "application/json" },
+    credentials: "same-origin",
+    ...(signal ? { signal } : {}),
+  });
+  if (!response.ok)
+    throw new DashboardApiError(
+      response.status,
+      "Reply status is unavailable.",
+    );
+  return response.json();
+}
+export async function uploadConversationAttachment(
+  conversationId: string,
+  projectId: string,
+  file: File,
+  csrfToken: string,
+  signal?: AbortSignal,
+): Promise<ConversationAttachment> {
+  const form = new FormData();
+  form.set("projectId", projectId);
+  form.set("file", file);
+  const response = await fetch(
+    `/api/v1/orchestrator/conversations/${conversationId}/attachments`,
+    {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: form,
+      ...(signal ? { signal } : {}),
+    },
+  );
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => undefined);
+    const message =
+      body !== undefined &&
+      typeof body === "object" &&
+      body !== null &&
+      "error" in body &&
+      typeof (body as { error: unknown }).error === "string"
+        ? (body as { error: string }).error
+        : "Upload failed.";
+    throw new DashboardApiError(response.status, message);
+  }
+  return response.json();
+}
+export async function listConversationAttachments(
+  conversationId: string,
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<ConversationAttachment[]> {
+  const response = await fetch(
+    `/api/v1/orchestrator/conversations/${conversationId}/attachments?projectId=${encodeURIComponent(projectId)}`,
+    {
+      headers: { Accept: "application/json" },
+      credentials: "same-origin",
+      ...(signal ? { signal } : {}),
+    },
+  );
+  if (!response.ok)
+    throw new DashboardApiError(
+      response.status,
+      "Attachments are unavailable.",
+    );
+  return response.json();
+}
 export interface PolicyStateResult {
   id: string;
   version: number;

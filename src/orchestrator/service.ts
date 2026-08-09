@@ -54,6 +54,14 @@ export class OrchestratorService {
       approvalId,
     );
   }
+  async reject(projectId: string, proposalId: string, version: number) {
+    return this.store.transitionProposal(
+      projectId,
+      proposalId,
+      version,
+      "rejected",
+    );
+  }
   async handoff(projectId: string, proposalId: string, version: number) {
     const value = await this.store.transitionProposal(
       projectId,

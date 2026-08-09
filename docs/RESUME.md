@@ -4,17 +4,25 @@
 
 `CONTRACT-011` (`a564bf8`), `CONTRACT-012` (`4342ca2`), and `CONTRACT-013`
 (`57facca`) are all **committed and pushed** to `main` on `origin`,
-owner-approved. CONTRACT-011 was scoped to M0-M3 (Amendment 2); CONTRACT-012
-to M4 only (Amendment 1); CONTRACT-013 covered M5-M12 (generation pipeline,
-Policy UI completeness, negative tests, security review, private staging,
-owner acceptance, repo-wide cleanup) -- pushed 2026-08-09 at the owner's
-explicit "push it" go-ahead. **The next action in a fresh session is
-starting a new contract from scratch** -- good candidates already
-identified: M9's deferred real-provider-credentialed drill, M11's queued
-dead-code files outside CONTRACT-013's ownership (`src/index.ts`,
-`src/providers/**`, `src/work/postgres-publication-recorder.ts`), the
-safePath/safeWorkerPath duplication, and completing the Cloudflare Access
-JWT verification M8 left as an interim loopback-bind guarantee.
+owner-approved. `CONTRACT-014` (conversation workspace: chat replaces the
+blueprint form, real assistant replies, file upload, proposal approval,
+blueprint translation, session management) has all 12 milestones done,
+every gate green, redeployed to the private staging instance, and one
+commit staged -- **push withheld pending the owner's explicit "push it"
+confirmation for this specific commit**, the same standing rule followed
+for every prior contract. Check `git log` first in a fresh session to
+tell whether that push already happened before assuming anything below is
+still accurate. **If the push is still pending, the next action is
+getting that confirmation, not starting new work.** Once pushed, good
+candidates for the next contract are already identified: CONTRACT-014
+M9's deferred real-provider-credentialed reply drill, the two honest
+placeholder dashboard pages (`/infrastructure`, `/agents`, see Known
+issues), M9's deferred real-provider-credentialed drill from CONTRACT-013,
+M11's queued dead-code files outside CONTRACT-013's ownership
+(`src/index.ts`, `src/providers/**`,
+`src/work/postgres-publication-recorder.ts`), the safePath/safeWorkerPath
+duplication, and completing the Cloudflare Access JWT verification M8 left
+as an interim loopback-bind guarantee.
 
 Read this file, `AGENTS.md`, `docs/SYSTEM-SPECIFICATION.md`, and the active
 contract's `contract.md` (with Amendments) before taking action. Check
@@ -164,12 +172,41 @@ network-level guarantee (M8, loopback-bind enforcement -- full JWT
 verification against Cloudflare's Access certs remains a documented future
 step, not yet implemented).
 
-Not yet committed -- working tree still has all of CONTRACT-013's changes
-uncommitted, per the standing pattern (commit once at M12, not per
-milestone).
+## CONTRACT-014 status: gates green, commit staged, push pending
+
+| Milestone | Status                                                                                                                                                                                                                                       | Evidence                                                            |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| M1        | done -- conversation/message routes, idea-state project bootstrap from a placeholder blueprint                                                                                                                                               | `docs/contracts/CONTRACT-014/evidence/M1-conversation-routes.md`    |
+| M2        | done -- assistant replies routed through the real `AiGateway` as a background task, never inline; found+fixed a secret-classification filter gap                                                                                             | `docs/contracts/CONTRACT-014/evidence/M2-assistant-replies.md`      |
+| M3        | done -- file upload wired to the attachment state machine (type/size validation for v1); found+fixed multer error-handling returning unstructured HTML 500s                                                                                  | `docs/contracts/CONTRACT-014/evidence/M3-file-upload.md`            |
+| M4        | done -- chat UI fully replaces the "Generate project blueprint" form (`factory-control.tsx` deleted)                                                                                                                                         | `docs/contracts/CONTRACT-014/evidence/M4-chat-ui.md`                |
+| M5        | done -- narrative brief (compiled transcript) -> proposal -> owner approve/reject, inside the conversation UI                                                                                                                                | `docs/contracts/CONTRACT-014/evidence/M5-proposal-approval.md`      |
+| M6        | done -- AI-driven blueprint translation from the approved narrative, validated through the same `parseBlueprint()` the human-authored path already required                                                                                  | `docs/contracts/CONTRACT-014/evidence/M6-blueprint-translation.md`  |
+| M7        | done -- rename/archive/search + project picker (the "folder" view)                                                                                                                                                                           | `docs/contracts/CONTRACT-014/evidence/M7-session-management.md`     |
+| M8        | done -- axe, CSRF/auth-boundary audit, upload abuse; headline finding was a stray NUL byte in the test file itself (not an app bug) that had been silently breaking `Edit`/`grep` on that file                                               | `docs/contracts/CONTRACT-014/evidence/M8-negative-tests.md`         |
+| M9        | done -- independent security review (`docs/security/CONTRACT-014-M9-review.md`); everything reviewed clean or deliberately deferred (attachment content-type trust, rate limiting -- both previously-accepted-style deferrals, not new gaps) | `docs/contracts/CONTRACT-014/evidence/M9-security-review.md`        |
+| M10       | done -- redeployed to the existing CONTRACT-013 M9 staging instance; found+fixed a real deployment gap (default attachment storage path fell outside the systemd unit's `ReadWritePaths`) before it could fail an upload closed              | `docs/contracts/CONTRACT-014/evidence/M10-staging-redeploy.md`      |
+| M11       | done -- repo-wide `format:check` zero warnings; deduplicated a 4-times-copy-pasted `deterministicUuid()` into `src/deterministic-id.ts`                                                                                                      | `docs/contracts/CONTRACT-014/evidence/M11-code-quality-cleanup.md`  |
+| M12       | done -- gates reconciled, one commit staged, push withheld pending explicit confirmation                                                                                                                                                     | `docs/contracts/CONTRACT-014/evidence/M12-commit-reconciliation.md` |
+
+Full suite (fresh disposable DB, migrations 0001-0013): 178 tests, 177
+pass, 0 fail, 1 skip (pre-existing, unrelated). Dashboard: 20/20. `npm
+audit`: 0 vulnerabilities. `npm run format:check`: zero warnings,
+repository-wide. `scripts/verify-contract.ts CONTRACT-014`: clean, no
+out-of-scope dirty paths.
+
+Not yet pushed -- working tree's CONTRACT-014 changes are in one staged
+commit, per the standing pattern (commit once at M12, push only after the
+owner's fresh explicit "push it" for this commit).
 
 ## Known issues (do not silently resolve without confirmation)
 
+- Dashboard has two honest, pre-existing placeholder pages, not silently
+  hidden: `/infrastructure` ("Host, container, service, database and backup
+  observations" -- the closest match to "system monitor/system health")
+  and `/agents` ("Dynamic roles, permissions, workload and evaluation
+  state"). CONTRACT-014 (conversation workspace) did not touch either --
+  still flagged as CONTRACT-015 candidates, owner-confirmed 2026-08-09.
 - `polyptech-dashboard.service` is still active on the host
   (`dash.surachmancenter.com` -> `127.0.0.1:4173` via the live Cloudflare
   Tunnel, verified 2026-08-09), serving from a process whose files were
@@ -187,16 +224,22 @@ milestone).
   Telegram live probe, external backups, production promotion) or retire
   the orphaned service without a fresh explicit owner approval at the time;
   CONTRACT-013's own scope explicitly excludes the public hostname cutover.
+  CONTRACT-014 M10 redeployed the conversation workspace to this same
+  private staging instance (new release
+  `20260809T135047Z-contract014-wip`, migrations 0011-0013 applied to
+  `polyp-staging-pg`) -- still the same private, loopback-only instance,
+  no change to its exposure or trust boundary.
 - `scripts/policy-canary.ts` is a standalone script, not yet wired into
   `PostgresPolicyStore.validate()`. Run it by hand before approving any new
   `MODEL_POLICY_VERSION`.
 - Postgres containers now running: `polyp-contract006-pg` (port 55432, an
   older contract, do not use), `polyp-contract011-pg` (port 55433,
-  disposable test database, migrations 0001-0010, recreate fresh if it no
+  disposable test database, migrations 0001-0013, recreate fresh if it no
   longer exists or gets polluted -- do not try to delete rows from its
   audit-immutable tables, recreate instead), `polyp-staging-pg` (port 55434,
-  loopback-bound, **persistent** named volume `polyp-staging-pg-data`, real
-  data for the M9 private staging instance -- do not treat as disposable).
+  loopback-bound, **persistent** named volume `polyp-staging-pg-data`,
+  migrations 0001-0013 applied, real data for the private staging instance
+  -- do not treat as disposable).
 - CONTRACT-008 left one ledger attempt (`66717047-593d-4976-b133-0a04d475e341`)
   in `outcome_unknown`, unreconciled -- relevant only to whichever database
   ends up being the real production one, not any disposable test DB.
@@ -205,19 +248,26 @@ milestone).
 
 Launch Claude Code in `/root/polyptechnology-next` and say "resume per
 docs/RESUME.md". Read this file, `AGENTS.md`, `docs/SYSTEM-SPECIFICATION.md`,
-and (once it exists) the new active contract's `contract.md` first. Check
-`git status` and the relevant `evidence/*.md` files before doing anything
+and the active contract's `contract.md` first. Check `git log`/`git
+status` and the relevant `evidence/*.md` files before doing anything
 else -- they are the durable summary specifically so a fresh session
 doesn't have to reconstruct state from memory.
 
 CONTRACT-011 (`a564bf8`), CONTRACT-012 (`4342ca2`), and CONTRACT-013
-(`57facca`) are all closed and pushed to `main` on `origin`. CONTRACT-013's
-M5-M12 are done, all gates green (164/164 backend tests, 19/19 dashboard,
-zero `format:check` warnings, zero `npm audit` vulnerabilities, secret
--pattern scan clean) -- see `docs/contracts/CONTRACT-013/evidence/*.md` for
-what changed. **The next action is starting a new contract from scratch**;
-candidates already identified: M9's deferred real-provider-credentialed
-drill, M11's queued dead-code files outside CONTRACT-013's ownership
+(`57facca`) are all closed and pushed to `main` on `origin`. CONTRACT-014's
+M1-M12 are done, all gates green (178/178 backend tests less 1
+pre-existing skip, 20/20 dashboard, zero `format:check` warnings, zero
+`npm audit` vulnerabilities, secret-pattern scan clean) and one commit is
+staged -- see `docs/contracts/CONTRACT-014/evidence/*.md` for what
+changed. **Check `git log` first**: if the CONTRACT-014 commit is not yet
+on `origin/main`, the only remaining action is getting the owner's fresh,
+explicit "push it" for that specific commit -- do not start new work, and
+do not push without that exact confirmation no matter how long it's been
+pending. Once pushed, candidates for the next contract are already
+identified: CONTRACT-014 M9's deferred real-provider-credentialed reply
+drill, the two honest placeholder dashboard pages (`/infrastructure`,
+`/agents`), CONTRACT-013 M9's deferred real-provider-credentialed drill,
+M11's queued dead-code files outside CONTRACT-013's ownership
 (`src/index.ts`, `src/providers/**`, `src/work/postgres-publication-recorder.ts`),
 the safePath/safeWorkerPath duplication, and completing the Cloudflare
 Access JWT verification M8 left as a network-level-guarantee interim fix.

@@ -17,6 +17,7 @@ import { PostgresIncidentService } from "../src/operations/incidents.js";
 import { databaseReadiness } from "../src/operations/readiness.js";
 import { PostgresSequenceStore } from "../src/orchestrator/postgres-sequence-store.js";
 import { PostgresConversationStore } from "../src/orchestrator/postgres-store.js";
+import { OrchestratorService } from "../src/orchestrator/service.js";
 import { PostgresProjectFactory } from "../src/factory/postgres-repository.js";
 import { OwnerCommandService } from "../src/operations/owner-commands.js";
 
@@ -240,10 +241,12 @@ test(
       assert.deepEqual(await databaseReadiness(pool), { state: "ready" });
 
       const csrf = "x".repeat(32),
+        conversationStore = new PostgresConversationStore(pool),
         ownerCommands = new OwnerCommandService(
           new PostgresProjectFactory(pool),
-          new PostgresConversationStore(pool),
+          conversationStore,
           csrf,
+          new OrchestratorService(conversationStore),
         ),
         owner = {
           authenticated: true,

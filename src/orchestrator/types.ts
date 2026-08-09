@@ -5,6 +5,7 @@ export interface Conversation {
   title: string;
   version: number;
   createdAt: Date;
+  archivedAt?: Date;
 }
 export interface Message {
   id: string;
@@ -78,6 +79,22 @@ export interface ConversationStore {
     projectId: string,
     id: string,
   ): Promise<Conversation | undefined>;
+  listConversations(
+    projectId: string,
+    options?: { search?: string; includeArchived?: boolean },
+  ): Promise<ReadonlyArray<Conversation>>;
+  renameConversation(
+    projectId: string,
+    id: string,
+    title: string,
+    expectedVersion: number,
+  ): Promise<Conversation>;
+  setConversationArchived(
+    projectId: string,
+    id: string,
+    archived: boolean,
+    expectedVersion: number,
+  ): Promise<Conversation>;
   messages(
     projectId: string,
     conversationId: string,
