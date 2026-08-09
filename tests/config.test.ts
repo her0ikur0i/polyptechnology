@@ -63,3 +63,48 @@ test("rejects invalid ports and proxy hop counts", () => {
   assert.throws(() => loadConfig({ PORT: "0" }), /between/);
   assert.throws(() => loadConfig({ TRUSTED_PROXY_HOPS: "many" }), /integer/);
 });
+
+test("cloudflare mode refuses a non-loopback bind address", () => {
+  assert.throws(
+    () =>
+      loadConfig({
+        ACCESS_AUTH_MODE: "cloudflare",
+        HOST: "0.0.0.0",
+      }),
+    /loopback/,
+  );
+  assert.throws(
+    () =>
+      loadConfig({
+        NODE_ENV: "production",
+        ACCESS_AUTH_MODE: "cloudflare",
+        HOST: "0.0.0.0",
+        TELEGRAM_BOT_TOKEN: "test",
+        TELEGRAM_CHAT_ID: "chat",
+        TELEGRAM_USER_ID: "user",
+        CSRF_SECRET: "x".repeat(32),
+      }),
+    /loopback/,
+  );
+});
+
+test("cloudflare mode allows a non-loopback bind only with the explicit trust-boundary escape hatch", () => {
+  const config = loadConfig({
+    ACCESS_AUTH_MODE: "cloudflare",
+    HOST: "0.0.0.0",
+    CLOUDFLARE_TRUST_NETWORK_BOUNDARY: "true",
+  });
+  assert.equal(config.host, "0.0.0.0");
+});
+
+test("cloudflare mode accepts every loopback spelling", () => {
+  for (const host of ["127.0.0.1", "::1", "localhost"]) {
+    const config = loadConfig({ ACCESS_AUTH_MODE: "cloudflare", HOST: host });
+    assert.equal(config.host, host);
+  }
+});
+
+test("disabled mode is unaffected by the loopback restriction", () => {
+  const config = loadConfig({ ACCESS_AUTH_MODE: "disabled", HOST: "0.0.0.0" });
+  assert.equal(config.host, "0.0.0.0");
+});

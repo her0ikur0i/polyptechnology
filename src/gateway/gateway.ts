@@ -13,6 +13,19 @@ const stable = (value: unknown) =>
   JSON.stringify(value, (_key, item) =>
     item instanceof Set ? [...item].sort() : item,
   );
+// Field-by-field, not JSON.stringify string equality: a route that round-
+// trips through a jsonb column (operation_task_specs.input.route, used by
+// src/operations/ai-patch-operation-driver.ts) comes back with Postgres's
+// own jsonb key ordering, not insertion order -- two structurally identical
+// routes can stringify to different strings. ModelRoute's shape is small and
+// fixed, so comparing every field explicitly is both correct and clearer
+// than trying to canonicalize key order before stringifying.
+const routeEquals = (a: ModelRoute, b: ModelRoute) =>
+  a.provider === b.provider &&
+  a.requestedModelId === b.requestedModelId &&
+  a.role === b.role &&
+  a.mode === b.mode &&
+  a.effort === b.effort;
 export class GatewayInvocationError extends Error {
   constructor(
     message: string,
@@ -41,9 +54,8 @@ export class AiGateway {
       request.routeOverride ?? (await this.resolve(request.taskClass));
     if (
       request.routeOverride !== undefined &&
-      !modelRoutes(request.taskClass).some(
-        (candidate) =>
-          JSON.stringify(candidate) === JSON.stringify(request.routeOverride),
+      !modelRoutes(request.taskClass).some((candidate) =>
+        routeEquals(candidate, request.routeOverride!),
       )
     )
       throw new Error("route override is outside policy");
@@ -162,6 +174,16 @@ export class AiGateway {
         failed,
       );
     }
+  }
+  // "provider:requestedModelId" keys for every model every registered
+  // adapter currently reports -- the format simulateProgrammingRoute()
+  // expects for its availability set (src/policy/simulate-route.ts).
+  async availableModelKeys(): Promise<ReadonlySet<string>> {
+    const keys = new Set<string>();
+    for (const [provider, adapter] of this.adapters)
+      for (const modelId of await adapter.listModels())
+        keys.add(`${provider}:${modelId}`);
+    return keys;
   }
   private async resolve(
     taskClass: GatewayRequest["taskClass"],

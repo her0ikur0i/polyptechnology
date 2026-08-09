@@ -46,6 +46,9 @@ export interface ModelAttempt {
   costUsdMicros: number;
   verified: boolean;
   artifactSha256?: string;
+  failureCode?: string;
+  taskId?: string;
+  attemptOrdinal?: number;
 }
 export interface ApprovalSummary {
   id: string;
@@ -53,6 +56,8 @@ export interface ApprovalSummary {
   risk: string;
   state: string;
   expiresAt: string;
+  decidedBy?: string;
+  decidedAt?: string;
 }
 export interface TelegramSettings {
   secretRef?: string;
@@ -62,6 +67,12 @@ export interface TelegramSettings {
   lastCheckedAt?: string;
   liveProbeState: "not_run" | "passed" | "failed";
   approvalRequiredForProbe: boolean;
+  // Whether POST /api/v1/telegram/webhook is actually registered right now
+  // (server-side config.telegramWebhookSecret/chatId/userId all set) --
+  // distinct from configurationReady, which reflects the dashboard-editable
+  // telegram_settings row and can be "ready" even when the real webhook
+  // route doesn't exist (or vice versa), since they're two separate stores.
+  webhookRegistered: boolean;
 }
 export interface TelegramSettingsCommand {
   secretRef: string;

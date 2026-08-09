@@ -96,6 +96,9 @@ async function loadAttempts(pool: Pool): Promise<ModelAttempt[]> {
     role: string;
     outcome: RunOutcome;
     output_sha256: string | null;
+    failure_code: string | null;
+    task_id: string | null;
+    attempt_ordinal: number | null;
     input_tokens: string | null;
     output_tokens: string | null;
     reasoning_tokens: string | null;
@@ -105,7 +108,9 @@ async function loadAttempts(pool: Pool): Promise<ModelAttempt[]> {
     verified: boolean | null;
   }>(
     `SELECT a.id, a.provider_id, a.requested_model_id, a.resolved_model_id, a.resolution_source,
-            a.role, a.outcome, a.output_sha256,
+            a.role, a.outcome, a.output_sha256, a.failure_code,
+            a.attribution->>'taskId' AS task_id,
+            NULLIF(a.attribution->>'taskAttemptOrdinal','')::int AS attempt_ordinal,
             u.input_tokens, u.output_tokens, u.reasoning_tokens, u.cache_read_tokens,
             u.cache_write_tokens, u.cost_usd_micros, v.passed AS verified
      FROM ai_gateway_attempts a
@@ -138,6 +143,11 @@ async function loadAttempts(pool: Pool): Promise<ModelAttempt[]> {
     costUsdMicros: Number(row.cost_usd_micros ?? 0),
     verified: row.verified === true,
     ...(row.output_sha256 ? { artifactSha256: row.output_sha256 } : {}),
+    ...(row.failure_code ? { failureCode: row.failure_code } : {}),
+    ...(row.task_id ? { taskId: row.task_id } : {}),
+    ...(row.attempt_ordinal !== null
+      ? { attemptOrdinal: row.attempt_ordinal }
+      : {}),
   }));
 }
 
@@ -149,10 +159,23 @@ async function loadApprovals(pool: Pool): Promise<ApprovalSummary[]> {
     risk: approval.target.risk,
     state: approval.status,
     expiresAt: approval.expiresAt.toISOString(),
+    // decidedBy/decidedAt (approval_requests.decided_by/decided_at) are the
+    // durable record of who actually decided and when -- for a decision
+    // routed through the Telegram webhook (src/control-api/telegram-webhook.ts),
+    // decidedBy is the authorized Telegram user id. Surfacing these here is
+    // what makes a Telegram decision observable from the dashboard, not
+    // just from the settings form (CONTRACT-013 acceptance criterion).
+    ...(approval.decidedBy ? { decidedBy: approval.decidedBy } : {}),
+    ...(approval.decidedAt
+      ? { decidedAt: approval.decidedAt.toISOString() }
+      : {}),
   }));
 }
 
-async function loadTelegram(pool: Pool): Promise<TelegramSettings> {
+async function loadTelegram(
+  pool: Pool,
+  webhookRegistered: boolean,
+): Promise<TelegramSettings> {
   const stored = await new PostgresTelegramSettingsStore(pool).get();
   return {
     ...(stored.secretRef ? { secretRef: stored.secretRef } : {}),
@@ -167,6 +190,7 @@ async function loadTelegram(pool: Pool): Promise<TelegramSettings> {
     // "This contract does not configure a webhook or send a live message").
     liveProbeState: "not_run",
     approvalRequiredForProbe: true,
+    webhookRegistered,
   };
 }
 
@@ -226,6 +250,7 @@ function computeAttention(
 export async function buildDashboardSnapshot(
   pool: Pool,
   csrfToken: string,
+  webhookRegistered = false,
 ): Promise<DashboardSnapshot> {
   const [projects, contracts, attempts, approvals, telegram, sequence] =
     await Promise.all([
@@ -233,7 +258,7 @@ export async function buildDashboardSnapshot(
       loadContracts(pool),
       loadAttempts(pool),
       loadApprovals(pool),
-      loadTelegram(pool),
+      loadTelegram(pool, webhookRegistered),
       loadSequence(pool),
     ]);
   const sequenceSummary = observed(sequence, "sequence_supervisor");

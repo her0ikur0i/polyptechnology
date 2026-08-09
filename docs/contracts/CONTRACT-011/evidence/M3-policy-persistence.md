@@ -15,7 +15,7 @@ Status: done for the core lifecycle; canary-gated validation added 2026-08-09.
   `created_by` naming an earlier Claude-authored draft proposed; the two
   designs diverged and were reconciled correctly).
 - `src/policy/{types,validate-policy,execution-permission,simulate-route,
-  postgres-policy-store}.ts`: the policy engine itself.
+postgres-policy-store}.ts`: the policy engine itself.
 - `src/policy/owner-policy-service.ts` (new, 2026-08-09): the command surface
   (`createDraft`/`validateDraft`/`approve`/`activate`/`rollback`/`simulate`/
   `createCodexOverride`) that a future dashboard (M4) will call. The prior

@@ -254,6 +254,29 @@ input {
   border-radius: var(--radius);
   margin-top: 20px;
 }
+.rework-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.rework-list > li > code {
+  font-size: 0.85em;
+  color: var(--muted);
+}
+.rework-list ol {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fallback-reason {
+  color: var(--muted);
+  font-size: 0.9em;
+}
 .attention-list {
   list-style: none;
   padding: 0;

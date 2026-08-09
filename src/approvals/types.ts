@@ -34,6 +34,10 @@ export type DecisionResult =
 
 export interface ApprovalRepository {
   create(record: ApprovalRecord): Promise<void>;
-  decide(input: DecisionInput, authorizedChatId: string, authorizedUserId: string): Promise<DecisionResult>;
+  decide(
+    input: DecisionInput,
+    authorizedChatId: string,
+    authorizedUserId: string,
+  ): Promise<DecisionResult>;
   find(id: string): Promise<ApprovalRecord | undefined>;
 }

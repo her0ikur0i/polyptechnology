@@ -26,7 +26,7 @@ export interface StoredAiPatchTaskInput {
   maxCostUsdMicros: number;
   policyVersion: string;
   route: ModelRoute;
-  ownedPaths: ReadonlyArray<string>;
+  ownedPaths: ReadonlyArray<string> | "unscoped";
   workspaceRoot: string;
   verifyJob: {
     isolationRoot: string;
@@ -84,7 +84,10 @@ export function parseStoredAiPatchTaskInput(
     maxCostUsdMicros: input.maxCostUsdMicros as number,
     policyVersion: assertString(input.policyVersion, "policyVersion"),
     route: input.route as ModelRoute,
-    ownedPaths: input.ownedPaths as ReadonlyArray<string>,
+    ownedPaths:
+      input.ownedPaths === "unscoped"
+        ? "unscoped"
+        : (input.ownedPaths as ReadonlyArray<string>),
     workspaceRoot: assertString(input.workspaceRoot, "workspaceRoot"),
     verifyJob: {
       isolationRoot: assertString(
@@ -121,11 +124,33 @@ function toWorkerJob(stored: StoredAiPatchTaskInput["verifyJob"]): WorkerJob {
 // verification signal execution-supervisor.ts checks in place of a
 // precomputed output hash (operation_task_specs.expected_output_sha256 is
 // NULL for this driver -- see migrations/0009_ai_patch_executor.sql).
+export interface RouteResolver {
+  resolve(
+    taskClass: StoredAiPatchTaskInput["taskClass"],
+    taskId: string,
+    fallback: StoredAiPatchTaskInput["route"],
+  ): Promise<StoredAiPatchTaskInput["route"]>;
+}
+
+const staticFallbackResolver: RouteResolver = {
+  async resolve(_taskClass, _taskId, fallback) {
+    return fallback;
+  },
+};
+
 export class AiPatchOperationDriver implements OperationDriver {
-  constructor(private readonly inner: AiPatchExecutorDriver) {}
+  constructor(
+    private readonly inner: AiPatchExecutorDriver,
+    private readonly routeResolver: RouteResolver = staticFallbackResolver,
+  ) {}
 
   async execute(input: unknown, signal: AbortSignal): Promise<unknown> {
     const stored = parseStoredAiPatchTaskInput(input);
+    const route = await this.routeResolver.resolve(
+      stored.taskClass,
+      stored.taskId,
+      stored.route,
+    );
     const result = await this.inner.run({
       taskId: stored.taskId,
       gatewayRequest: {
@@ -138,7 +163,7 @@ export class AiPatchOperationDriver implements OperationDriver {
         policyVersion: stored.policyVersion,
         signal,
       },
-      route: stored.route,
+      route,
       ownedPaths: stored.ownedPaths,
       workspaceRoot: stored.workspaceRoot,
       verifyJob: toWorkerJob(stored.verifyJob),

@@ -56,3 +56,18 @@ test("a patch touching .git metadata is rejected", () => {
   const evil = `diff --git a/.git/config b/.git/config\n--- a/.git/config\n+++ b/.git/config\n`;
   assert.throws(() => validatePatchScope(evil, ["**"]));
 });
+
+test("'unscoped' skips manifest membership but still enforces path safety", () => {
+  const touched = validatePatchScope(twoFilePatch, "unscoped");
+  assert.equal(touched.length, 2);
+});
+
+test("'unscoped' still rejects path traversal", () => {
+  const evil = `diff --git a/../../etc/passwd b/../../etc/passwd\n--- a/../../etc/passwd\n+++ b/../../etc/passwd\n`;
+  assert.throws(() => validatePatchScope(evil, "unscoped"));
+});
+
+test("'unscoped' still rejects .git metadata", () => {
+  const evil = `diff --git a/.git/config b/.git/config\n--- a/.git/config\n+++ b/.git/config\n`;
+  assert.throws(() => validatePatchScope(evil, "unscoped"));
+});

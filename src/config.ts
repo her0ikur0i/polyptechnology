@@ -12,9 +12,11 @@ export interface AppConfig {
   trustedProxyHops: number;
   logLevel: "debug" | "info" | "warn" | "error";
   csrfSecret: string;
+  projectWorkspacesRoot: string;
   telegramBotToken?: string;
   telegramChatId?: string;
   telegramUserId?: string;
+  telegramWebhookSecret?: string;
 }
 
 function enumValue<T extends string>(
@@ -55,6 +57,29 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (environment === "production" && accessAuthMode === "disabled") {
     throw new Error("ACCESS_AUTH_MODE cannot be disabled in production");
   }
+  const host = env.HOST ?? "127.0.0.1";
+  // identifyOwner() (src/control-api/auth.ts) trusts
+  // Cf-Access-Authenticated-User-Email's mere *presence* -- it does not
+  // verify Cloudflare's Access JWT assertion. That header is only a real
+  // auth boundary if nothing other than the trusted Cloudflare Tunnel
+  // process can ever reach this server (docs/security/CONTRACT-013-M8-review.md
+  // finding 1: bind-to-loopback is the network-level guarantee this mode
+  // requires, matching the deployed architecture where cloudflared makes an
+  // outbound-only connection to 127.0.0.1). CLOUDFLARE_TRUST_NETWORK_BOUNDARY
+  // is an explicit, narrow escape hatch for a deployment that puts its own
+  // verified reverse proxy in front instead -- absent that, refuse to start
+  // rather than silently trust a spoofable header on a non-loopback bind.
+  if (
+    accessAuthMode === "cloudflare" &&
+    !["127.0.0.1", "::1", "localhost"].includes(host) &&
+    env.CLOUDFLARE_TRUST_NETWORK_BOUNDARY !== "true"
+  ) {
+    throw new Error(
+      "ACCESS_AUTH_MODE=cloudflare requires HOST to be loopback (127.0.0.1/::1/localhost) " +
+        "unless CLOUDFLARE_TRUST_NETWORK_BOUNDARY=true is explicitly set for a deployment " +
+        "with its own verified reverse proxy in front",
+    );
+  }
   const telegramBotToken = env.TELEGRAM_BOT_TOKEN;
   const telegramChatId = env.TELEGRAM_CHAT_ID;
   const telegramUserId = env.TELEGRAM_USER_ID;
@@ -86,7 +111,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   return {
     environment,
-    host: env.HOST ?? "127.0.0.1",
+    host,
     port: integer("PORT", env.PORT ?? "4173", 1, 65535),
     databaseUrl: env.DATABASE_URL ?? "postgresql://polyp@127.0.0.1:5432/polyp",
     accessAuthMode,
@@ -103,8 +128,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       "error",
     ] as const),
     csrfSecret,
+    projectWorkspacesRoot:
+      env.PROJECT_WORKSPACES_ROOT ?? "/var/lib/polyp/project-workspaces",
     ...(telegramBotToken === undefined ? {} : { telegramBotToken }),
     ...(telegramChatId === undefined ? {} : { telegramChatId }),
     ...(telegramUserId === undefined ? {} : { telegramUserId }),
+    ...(env.TELEGRAM_WEBHOOK_SECRET === undefined
+      ? {}
+      : { telegramWebhookSecret: env.TELEGRAM_WEBHOOK_SECRET }),
   };
 }

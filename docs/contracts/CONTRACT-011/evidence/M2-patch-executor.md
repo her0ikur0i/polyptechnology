@@ -22,7 +22,7 @@ Status: done and wired into the live supervisor loop, 2026-08-09.
   injected `PatchApplier`, runs verification through the existing hardened
   Docker sandbox (`src/worker/executor.ts`, unmodified), records the
   accept/reject verdict, classifies the outcome via `classifyAttempt()`. An
-  out-of-scope patch is rejected *before* the verification sandbox runs. 3
+  out-of-scope patch is rejected _before_ the verification sandbox runs. 3
   tests with fake adapters/runners.
 - `src/operations/git-patch-applier.ts` (`GitPatchApplier`): real
   `git apply --check --numstat` then `git apply`, tested against a real
@@ -32,10 +32,10 @@ Status: done and wired into the live supervisor loop, 2026-08-09.
 ## What changed (wiring, second pass)
 
 - **Architecture finding:** `ExecutableTaskSupervisor` (built in CONTRACT-010)
-  assumed every driver's correct output hash is known *before* execution
+  assumed every driver's correct output hash is known _before_ execution
   (`operation_task_specs.expected_output_sha256`, compared byte-for-byte
   after the driver runs). That fits a deterministic driver; it cannot fit an
-  AI-generated patch, whose correctness is only knowable *after* an isolated
+  AI-generated patch, whose correctness is only knowable _after_ an isolated
   verifier runs. Fixed with a minimal, backward-compatible extension rather
   than replacing the component:
   - `migrations/0009_ai_patch_executor.sql`: `expected_output_sha256` is now
@@ -81,7 +81,7 @@ The claims above were only proven against fake adapters/runners. Building a
 real end-to-end test (`tests/ai-patch-driver-docker.integration.test.ts`,
 real `git apply`, real Docker container) surfaced a genuine design bug:
 `executeWorker()` deliberately refuses any workspace containing `.git`, but
-the driver applied the patch via `git apply` into the *same* directory it
+the driver applied the patch via `git apply` into the _same_ directory it
 then handed to that same sandbox. Fixed with
 `src/operations/workspace-copy.ts` (`GitIgnoringWorkspaceCopier`): the
 git-apply target and the verification sandbox are now always separate
@@ -131,7 +131,7 @@ standing zero-skip invocation from here forward.
 ## What is still missing
 
 `src/factory/lifecycle.ts` still has zero references to `AiGateway` or
-`model-policy` -- `ProjectLifecycle` only tracks project *state*
+`model-policy` -- `ProjectLifecycle` only tracks project _state_
 (idea -> blueprint -> ... -> production); nothing today creates the `tasks` /
 `operation_task_specs` rows that would let a real blueprint actually lease
 and run through `AiPatchExecutorDriver`. This is the remaining piece that

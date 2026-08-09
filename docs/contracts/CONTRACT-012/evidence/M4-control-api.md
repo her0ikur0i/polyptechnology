@@ -37,7 +37,7 @@ Status: done, 2026-08-09.
   `PUT /api/v1/settings/telegram`, `POST /api/v1/factory/projects`,
   `POST /api/v1/orchestrator/proposals`), plus new policy routes
   (`POST /api/v1/policy/{draft,validate,approve,activate,rollback,simulate,
-  codex-override}`, `GET /api/v1/policy/:policyKey/active`) wired to
+codex-override}`, `GET /api/v1/policy/:policyKey/active`) wired to
   `OwnerPolicyService`. Serves the built `dist-dashboard/` SPA with a
   client-side-routing fallback.
 - `src/control-api/server.ts` + `package.json` `dev`/`start`: the real
@@ -55,7 +55,7 @@ Status: done, 2026-08-09.
 ## Real bug found and fixed (not caught by unit/integration tests alone)
 
 Express 5's router (`path-to-regexp` v8) rejects a bare `"*"` wildcard route
-at *startup* -- `createControlApi()` threw immediately when
+at _startup_ -- `createControlApi()` threw immediately when
 `dashboardDistPath` was supplied. None of the integration tests caught this
 because none of them exercised the SPA-serving code path. Found by actually
 starting the server as a live process and curling it (not just running the

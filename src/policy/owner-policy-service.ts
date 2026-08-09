@@ -193,6 +193,13 @@ export class OwnerPolicyService {
     if (!command.availableModelKeys.length) {
       throw new Error("At least one model key required");
     }
+    // Client-supplied occurredAt is safe only because this is a read-only
+    // preview: simulate() has no CSRF gate by design (M7 evidence) and this
+    // value can make an already-expired override evaluate as valid in the
+    // *response* (docs/security/CONTRACT-013-M8-review.md, finding 2). The
+    // real execution path never trusts this -- policy-route-resolver.ts
+    // always calls simulateProgrammingRoute() with real server time. Do not
+    // start trusting this endpoint's output for anything beyond display.
     const occurredAt = parseTime(command.occurredAt);
 
     const active = await this.store.active(command.policyKey.trim());
@@ -234,9 +241,14 @@ export class OwnerPolicyService {
     }
 
     const id = randomUUID();
-    // NOTE: persisting task_role_overrides rows is not yet implemented on
-    // PostgresPolicyStore -- this call is the intended shape for when that
-    // lands; until then createCodexOverride is not wired to storage.
+    await this.store.insertOverride({
+      id,
+      taskId: command.taskId,
+      ownerId: context.actorId,
+      reason: command.reason.trim(),
+      expiresAt,
+      occurredAt: parseTime(command.occurredAt),
+    });
     return { id, taskId: command.taskId, expiresAt };
   }
 
@@ -254,11 +266,16 @@ export class OwnerPolicyService {
   }
 
   private async findActiveOverride(
-    _taskId: string,
+    taskId: string,
   ): Promise<OwnerOverride | undefined> {
-    // NOTE: task_role_overrides lookup is not yet implemented on
-    // PostgresPolicyStore -- returns undefined (no override) until that
-    // storage method exists.
-    return undefined;
+    const row = await this.store.findActiveOverride(taskId);
+    if (row === undefined) return undefined;
+    return {
+      taskId: row.task_id,
+      ownerId: row.owner_id,
+      reason: row.reason,
+      expiresAt: row.expires_at,
+      codexTechnicalExecution: true,
+    };
   }
 }

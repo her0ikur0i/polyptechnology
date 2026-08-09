@@ -96,6 +96,19 @@ export async function createFactoryProject(
     signal,
   );
 }
+export async function generateProject(
+  projectId: string,
+  csrfToken: string,
+  signal?: AbortSignal,
+) {
+  if (!/^[a-f0-9-]{36}$/.test(projectId))
+    throw new Error("Invalid project id.");
+  return commandRequest<{
+    taskId: string;
+    contractId: string;
+    milestoneId: string;
+  }>(`/api/v1/factory/projects/${projectId}/generate`, {}, csrfToken, signal);
+}
 export async function createConversationProposal(
   command: { projectId: string; title: string; objective: string },
   csrfToken: string,
@@ -184,6 +197,18 @@ export async function rollbackPolicy(
 ) {
   return commandRequest<PolicyStateResult>(
     "/api/v1/policy/rollback",
+    command,
+    csrfToken,
+    signal,
+  );
+}
+export async function createCodexOverride(
+  command: { taskId: string; reason: string; expiresAt: string },
+  csrfToken: string,
+  signal?: AbortSignal,
+) {
+  return commandRequest<{ id: string; taskId: string; expiresAt: string }>(
+    "/api/v1/policy/codex-override",
     command,
     csrfToken,
     signal,

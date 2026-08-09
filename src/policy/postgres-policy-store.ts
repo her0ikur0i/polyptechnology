@@ -519,4 +519,55 @@ export class PostgresPolicyStore {
       client.release();
     }
   }
+
+  // task_role_overrides.task_id REFERENCES tasks(id) -- an override can only
+  // be granted for a task that already exists, matching the contract's own
+  // model: the owner is overriding one specific already-queued task, not
+  // pre-authorizing hypothetical future ones.
+  async insertOverride(input: {
+    id: string;
+    taskId: string;
+    ownerId: string;
+    reason: string;
+    expiresAt: Date;
+    occurredAt: Date;
+  }): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO task_role_overrides
+       (id, task_id, owner_id, reason, codex_technical_execution, created_at, expires_at)
+       VALUES ($1, $2, $3, $4, true, $5, $6)`,
+      [
+        input.id,
+        input.taskId,
+        input.ownerId,
+        input.reason,
+        input.occurredAt,
+        input.expiresAt,
+      ],
+    );
+  }
+
+  async findActiveOverride(taskId: string): Promise<
+    | {
+        task_id: string;
+        owner_id: string;
+        reason: string;
+        expires_at: Date;
+      }
+    | undefined
+  > {
+    const result = await this.pool.query<{
+      task_id: string;
+      owner_id: string;
+      reason: string;
+      expires_at: Date;
+    }>(
+      `SELECT task_id, owner_id, reason, expires_at
+       FROM task_role_overrides
+       WHERE task_id = $1 AND codex_technical_execution AND expires_at > CURRENT_TIMESTAMP
+       ORDER BY created_at DESC LIMIT 1`,
+      [taskId],
+    );
+    return result.rows[0];
+  }
 }

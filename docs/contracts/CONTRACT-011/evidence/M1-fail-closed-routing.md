@@ -11,7 +11,7 @@ Status: done, evidenced 2026-08-09 (initial cut 2026-08-08, extended by Amendmen
   `MODEL_POLICY_VERSION` is `2026-08-09.1`.
 - `src/policy/execution-permission.ts`: `technicalExecutionAllowed` now branches
   on `deepseek` (always), `codex` (verified DeepSeek failure or manual owner
-  override), `claude` (verified DeepSeek *and* Codex failure -- fallback of the
+  override), `claude` (verified DeepSeek _and_ Codex failure -- fallback of the
   fallback).
 - `src/policy/validate-policy.ts`: provider allowlist extended to
   `deepseek | codex | claude`; ordering check generalized from a 2-tier

@@ -1,5 +1,9 @@
 import { useState } from "react";
-import { createConversationProposal, createFactoryProject } from "./api.js";
+import {
+  createConversationProposal,
+  createFactoryProject,
+  generateProject,
+} from "./api.js";
 export function FactoryControlPage({ csrfToken }: { csrfToken: string }) {
   const [conversation, setConversation] = useState({
       projectId: "",
@@ -16,8 +20,10 @@ export function FactoryControlPage({ csrfToken }: { csrfToken: string }) {
     }),
     [conversationResult, setConversationResult] = useState<string>(),
     [projectResult, setProjectResult] = useState<string>(),
+    [createdProjectId, setCreatedProjectId] = useState<string>(),
+    [generationResult, setGenerationResult] = useState<string>(),
     [error, setError] = useState<string>(),
-    [busy, setBusy] = useState<"conversation" | "project">();
+    [busy, setBusy] = useState<"conversation" | "project" | "generate">();
   return (
     <div className="page">
       <header className="page-title">
@@ -117,11 +123,13 @@ export function FactoryControlPage({ csrfToken }: { csrfToken: string }) {
               },
               csrfToken,
             )
-              .then((value) =>
+              .then((value) => {
                 setProjectResult(
                   `${value.state} · ${value.projectId} · ${value.repositoryRef}`,
-                ),
-              )
+                );
+                setCreatedProjectId(value.projectId);
+                setGenerationResult(undefined);
+              })
               .catch((reason: unknown) =>
                 setError(
                   reason instanceof Error
@@ -209,6 +217,42 @@ export function FactoryControlPage({ csrfToken }: { csrfToken: string }) {
           {projectResult && <output aria-live="polite">{projectResult}</output>}
         </form>
       </div>
+      {createdProjectId && (
+        <div className="settings-grid">
+          <h2>Start code generation</h2>
+          <p>
+            Routes an initial scaffold through the DeepSeek -&gt; Codex -&gt;
+            Claude execution engine (CONTRACT-011/CONTRACT-013). Runs
+            asynchronously -- the task is queued for the supervisor, not
+            executed inline here.
+          </p>
+          <button
+            type="button"
+            disabled={busy !== undefined}
+            onClick={() => {
+              setBusy("generate");
+              setError(undefined);
+              void generateProject(createdProjectId, csrfToken)
+                .then((value) =>
+                  setGenerationResult(`queued · task ${value.taskId}`),
+                )
+                .catch((reason: unknown) =>
+                  setError(
+                    reason instanceof Error
+                      ? reason.message
+                      : "Generation could not be queued.",
+                  ),
+                )
+                .finally(() => setBusy(undefined));
+            }}
+          >
+            {busy === "generate" ? "Queuing…" : "Start code generation"}
+          </button>
+          {generationResult && (
+            <output aria-live="polite">{generationResult}</output>
+          )}
+        </div>
+      )}
     </div>
   );
 }

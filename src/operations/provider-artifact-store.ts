@@ -19,6 +19,7 @@ export interface ProviderArtifactInput {
 export interface ProviderArtifactRow {
   taskId: string;
   providerId: string;
+  requestedModelId: string;
   status: "accepted" | "rejected";
   reason: string | null;
 }
@@ -58,15 +59,17 @@ export class PostgresProviderArtifactStore {
     const result = await this.pool.query<{
       task_id: string;
       provider_id: string;
+      requested_model_id: string;
       status: "accepted" | "rejected";
       reason: string | null;
     }>(
-      "SELECT task_id, provider_id, status, reason FROM provider_artifacts WHERE task_id=$1 ORDER BY created_at",
+      "SELECT task_id, provider_id, requested_model_id, status, reason FROM provider_artifacts WHERE task_id=$1 ORDER BY created_at",
       [taskId],
     );
     return result.rows.map((row) => ({
       taskId: row.task_id,
       providerId: row.provider_id,
+      requestedModelId: row.requested_model_id,
       status: row.status,
       reason: row.reason,
     }));

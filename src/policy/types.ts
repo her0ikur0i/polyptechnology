@@ -2,6 +2,12 @@ export type ProgrammingTaskClass =
   "bulk_code" | "complex_backend" | "bounded_repair";
 export type TechnicalProvider = "deepseek" | "claude" | "codex";
 
+// The single policyKey the live executor consults (src/operations/
+// policy-route-resolver.ts) for all three programming task classes at
+// once -- the dashboard's Policy page must draft/activate under this same
+// key, otherwise an activated policy silently affects nothing real.
+export const PROGRAMMING_POLICY_KEY = "programming-routes";
+
 export interface ProgrammingRoute {
   provider: "deepseek" | "codex" | "claude";
   requestedModelId: string;

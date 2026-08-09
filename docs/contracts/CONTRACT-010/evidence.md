@@ -29,12 +29,12 @@ Date: 2026-08-08
 
 ## Independent review and model tracking
 
-| Role | Provider | Requested/resolved model | Attempt | Usage | Cost | Outcome |
-|---|---|---|---|---|---:|---|
-| Primary operations design worker | DeepSeek | `deepseek-v4-pro` / `deepseek-v4-pro` (thinking) | `eb29a7ab-b2e9-40f4-a687-d9c91d7c1f43` | 207 input, 3,862 output, 1,323 reasoning | $0.003450 | succeeded |
-| Security/DR specialist review | Anthropic | `claude-sonnet-5` / `claude-sonnet-5` with `claude-haiku` auxiliary | `b7899620-af02-4095-80cd-ba9c04831066` | 909 input, 6,357 output, 16,275 cache read, 9,658 cache write | $0.158919 | succeeded |
-| Independent re-review | DeepSeek | `deepseek-v4-pro` / `deepseek-v4-pro` | `875475e0-2cb0-4011-a8ca-c6712d6e3a23` | 241 input, 8 output | $0.000112 | succeeded; no critical/high findings |
-| Final post-integration review | DeepSeek | `deepseek-v4-pro` / `deepseek-v4-pro` | `8f222ef7-6ee6-43f0-b0f3-649f9bea1b2d` | 142 input, 8 output | $0.000069 | succeeded; no critical/high findings |
+| Role                             | Provider  | Requested/resolved model                                            | Attempt                                | Usage                                                         |      Cost | Outcome                              |
+| -------------------------------- | --------- | ------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------- | --------: | ------------------------------------ |
+| Primary operations design worker | DeepSeek  | `deepseek-v4-pro` / `deepseek-v4-pro` (thinking)                    | `eb29a7ab-b2e9-40f4-a687-d9c91d7c1f43` | 207 input, 3,862 output, 1,323 reasoning                      | $0.003450 | succeeded                            |
+| Security/DR specialist review    | Anthropic | `claude-sonnet-5` / `claude-sonnet-5` with `claude-haiku` auxiliary | `b7899620-af02-4095-80cd-ba9c04831066` | 909 input, 6,357 output, 16,275 cache read, 9,658 cache write | $0.158919 | succeeded                            |
+| Independent re-review            | DeepSeek  | `deepseek-v4-pro` / `deepseek-v4-pro`                               | `875475e0-2cb0-4011-a8ca-c6712d6e3a23` | 241 input, 8 output                                           | $0.000112 | succeeded; no critical/high findings |
+| Final post-integration review    | DeepSeek  | `deepseek-v4-pro` / `deepseek-v4-pro`                               | `8f222ef7-6ee6-43f0-b0f3-649f9bea1b2d` | 142 input, 8 output                                           | $0.000069 | succeeded; no critical/high findings |
 
 Total attributable CONTRACT-010 managed-provider cost: **$0.162550**.
 Codex performed orchestration, source-level triage, integration, and deterministic

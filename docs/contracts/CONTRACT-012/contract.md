@@ -35,7 +35,7 @@ criteria and should not silently become undocumented debt:
 - **No CSRF-rejection test for `/api/v1/policy/*`** specifically -- only
   `/api/v1/settings/telegram` is covered; the policy routes could regress
   silently.
-- **`ACCESS_AUTH_MODE=cloudflare` trusts header *presence* only** --
+- **`ACCESS_AUTH_MODE=cloudflare` trusts header _presence_ only** --
   `identifyOwner()` never verifies the request actually transited Cloudflare
   Access; if the app were ever reachable directly (bypassing the tunnel),
   the identity header is spoofable. Needs either origin-pull verification or
@@ -93,7 +93,7 @@ user, hardened systemd unit, Cloudflare Access/DNS cutover, Telegram live
 probe, external backups. The currently-running `polyptech-dashboard.service`
 (`/opt/master-orchestrator`, deleted, orphaned) is a pre-CONTRACT-007
 artifact, not a stale build of the current system -- it must be retired
-*at the same moment* the real replacement activates, not before (an
+_at the same moment_ the real replacement activates, not before (an
 availability gap on `dash.surachmancenter.com` is a real regression, not a
 cosmetic one). Staging/cutover itself is CONTRACT-013 scope (M8 there); this
 note carries forward so it isn't rediscovered from zero.

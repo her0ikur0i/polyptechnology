@@ -1,0 +1,44 @@
+[Unit]
+Description=Polyp AI Factory Control API and dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=polyp-factory
+Group=polyp-factory
+WorkingDirectory=/opt/polyp-ai-factory/current
+EnvironmentFile=/etc/polyp-ai-factory/control-api.env
+ExecStart=/usr/bin/node --jitless dist/src/control-api/server.js
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectClock=true
+ProtectHostname=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/polyp-ai-factory /var/log/polyp-ai-factory
+MemoryMax=512M
+CPUQuota=100%
+TasksMax=64
+StateDirectory=polyp-ai-factory
+LogsDirectory=polyp-ai-factory
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

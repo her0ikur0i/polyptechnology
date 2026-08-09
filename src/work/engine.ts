@@ -1,20 +1,195 @@
 import { randomUUID } from "node:crypto";
 import { canTransition, retryable, workerStates } from "./state-machine.js";
 import type { FailureReason, Lease, Task, TaskState } from "./types.js";
-export class WorkStore {readonly tasks=new Map<string,Task>();readonly keys=new Map<string,string>();readonly leases=new Map<string,Lease>();readonly budgets=new Map<string,{max:number;spent:number}>();readonly costIds=new Set<string>();stopped=false;constructor(readonly defaultContractMaxCostUsdMicros:number,public fence:number){if(!Number.isSafeInteger(fence)||fence<0)throw new Error("durable fencing seed is required");}setContractBudget(contractId:string,max:number):void{const current=this.budgets.get(contractId);this.budgets.set(contractId,{max,spent:current?.spent??0});}}
+export class WorkStore {
+  readonly tasks = new Map<string, Task>();
+  readonly keys = new Map<string, string>();
+  readonly leases = new Map<string, Lease>();
+  readonly budgets = new Map<string, { max: number; spent: number }>();
+  readonly costIds = new Set<string>();
+  stopped = false;
+  constructor(
+    readonly defaultContractMaxCostUsdMicros: number,
+    public fence: number,
+  ) {
+    if (!Number.isSafeInteger(fence) || fence < 0)
+      throw new Error("durable fencing seed is required");
+  }
+  setContractBudget(contractId: string, max: number): void {
+    const current = this.budgets.get(contractId);
+    this.budgets.set(contractId, { max, spent: current?.spent ?? 0 });
+  }
+}
 export class WorkEngine {
- constructor(private readonly store:WorkStore){}
- submit(input:Omit<Task,"id"|"state"|"spentUsdMicros"|"attemptCount">):Task{const scopedKey=`${input.contractId}\0${input.idempotencyKey}`;const existing=this.store.keys.get(scopedKey);if(existing!==undefined)return this.get(existing)!;if(!Number.isSafeInteger(input.maxAttempts)||input.maxAttempts<1)throw new Error("maxAttempts must be positive");if(!this.store.budgets.has(input.contractId))this.store.setContractBudget(input.contractId,this.store.defaultContractMaxCostUsdMicros);const task:Task={...input,id:randomUUID(),state:"draft",spentUsdMicros:0,attemptCount:0};this.store.tasks.set(task.id,task);this.store.keys.set(scopedKey,task.id);return {...task};}
- transition(id:string,next:TaskState,fencingToken?:number):Task{const task=this.required(id);if(workerStates.has(task.state))this.assertFence(id,fencingToken);if(!canTransition(task.state,next))throw new Error(`invalid transition ${task.state} -> ${next}`);task.state=next;if(!workerStates.has(next))this.store.leases.delete(id);return {...task};}
- lease(id:string,workerId:string,ttlMs:number,now=new Date()):Lease{if(this.store.stopped)throw new Error("emergency stop active");this.validTtl(ttlMs);const task=this.required(id),budget=this.budget(task.contractId);if(task.state!=="queued")throw new Error("task is not queued");if(task.attemptCount>=task.maxAttempts){task.state="failed";throw new Error("attempt limit exhausted");}if(task.spentUsdMicros>=task.maxCostUsdMicros||budget.spent>=budget.max){task.state="budget_blocked";throw new Error("budget exhausted");}const current=this.store.leases.get(id);if(current!==undefined&&current.expiresAt>now)throw new Error("task already leased");task.state="leased";task.attemptCount++;const lease={taskId:id,workerId,fencingToken:++this.store.fence,attemptOrdinal:task.attemptCount,heartbeatAt:now,expiresAt:new Date(now.getTime()+ttlMs)};this.store.leases.set(id,lease);return {...lease};}
- heartbeat(taskId:string,token:number,ttlMs:number,now=new Date()):Lease{if(this.store.stopped)throw new Error("emergency stop active");this.validTtl(ttlMs);const lease=this.assertFence(taskId,token);if(lease.expiresAt<=now)throw new Error("stale lease");lease.heartbeatAt=now;lease.expiresAt=new Date(now.getTime()+ttlMs);return {...lease};}
- reclaimExpired(now=new Date()):ReadonlyArray<string>{const reclaimed:string[]=[];for(const [id,lease] of this.store.leases)if(lease.expiresAt<=now){this.store.leases.delete(id);const task=this.required(id);if(workerStates.has(task.state)){task.state="queued";reclaimed.push(id);}}return reclaimed;}
- recordCost(id:string,costId:string,cost:number):Task{if(costId.length===0||!Number.isSafeInteger(cost)||cost<0)throw new Error("invalid cost");const task=this.required(id);if(this.store.costIds.has(costId))return {...task};this.store.costIds.add(costId);const budget=this.budget(task.contractId);task.spentUsdMicros+=cost;budget.spent+=cost;if(task.spentUsdMicros>=task.maxCostUsdMicros||budget.spent>=budget.max)for(const candidate of this.store.tasks.values())if(candidate.contractId===task.contractId&&(candidate.state==="queued"||workerStates.has(candidate.state)||candidate.state==="retry_wait")){candidate.state="budget_blocked";this.store.leases.delete(candidate.id);}return {...task};}
- fail(id:string,token:number,reason:FailureReason):Task{this.assertFence(id,token);const task=this.required(id);if(task.state!=="running"&&task.state!=="verifying")throw new Error("task cannot fail from current state");if(!retryable(reason))task.state=reason==="budget"?"budget_blocked":"failed";else task.state=task.attemptCount>=task.maxAttempts?"failed":"retry_wait";this.store.leases.delete(id);return {...task};}
- emergencyStop():void{this.store.stopped=true;for(const [id] of this.store.leases){const task=this.required(id);if(workerStates.has(task.state))task.state="queued";}this.store.leases.clear();}
- resume():void{this.store.stopped=false;} get(id:string):Task|undefined{const t=this.store.tasks.get(id);return t===undefined?undefined:{...t};}
- private required(id:string):Task{const task=this.store.tasks.get(id);if(task===undefined)throw new Error("unknown task");return task;}
- private budget(contractId:string):{max:number;spent:number}{const budget=this.store.budgets.get(contractId);if(budget===undefined)throw new Error("contract budget missing");return budget;}
- private assertFence(id:string,token:number|undefined):Lease{const lease=this.store.leases.get(id);if(lease===undefined||token===undefined||lease.fencingToken!==token)throw new Error("stale lease");return lease;}
- private validTtl(ttlMs:number):void{if(!Number.isSafeInteger(ttlMs)||ttlMs<1)throw new Error("lease TTL must be positive");}
+  constructor(private readonly store: WorkStore) {}
+  submit(
+    input: Omit<Task, "id" | "state" | "spentUsdMicros" | "attemptCount">,
+  ): Task {
+    const scopedKey = `${input.contractId}\0${input.idempotencyKey}`;
+    const existing = this.store.keys.get(scopedKey);
+    if (existing !== undefined) return this.get(existing)!;
+    if (!Number.isSafeInteger(input.maxAttempts) || input.maxAttempts < 1)
+      throw new Error("maxAttempts must be positive");
+    if (!this.store.budgets.has(input.contractId))
+      this.store.setContractBudget(
+        input.contractId,
+        this.store.defaultContractMaxCostUsdMicros,
+      );
+    const task: Task = {
+      ...input,
+      id: randomUUID(),
+      state: "draft",
+      spentUsdMicros: 0,
+      attemptCount: 0,
+    };
+    this.store.tasks.set(task.id, task);
+    this.store.keys.set(scopedKey, task.id);
+    return { ...task };
+  }
+  transition(id: string, next: TaskState, fencingToken?: number): Task {
+    const task = this.required(id);
+    if (workerStates.has(task.state)) this.assertFence(id, fencingToken);
+    if (!canTransition(task.state, next))
+      throw new Error(`invalid transition ${task.state} -> ${next}`);
+    task.state = next;
+    if (!workerStates.has(next)) this.store.leases.delete(id);
+    return { ...task };
+  }
+  lease(id: string, workerId: string, ttlMs: number, now = new Date()): Lease {
+    if (this.store.stopped) throw new Error("emergency stop active");
+    this.validTtl(ttlMs);
+    const task = this.required(id),
+      budget = this.budget(task.contractId);
+    if (task.state !== "queued") throw new Error("task is not queued");
+    if (task.attemptCount >= task.maxAttempts) {
+      task.state = "failed";
+      throw new Error("attempt limit exhausted");
+    }
+    if (
+      task.spentUsdMicros >= task.maxCostUsdMicros ||
+      budget.spent >= budget.max
+    ) {
+      task.state = "budget_blocked";
+      throw new Error("budget exhausted");
+    }
+    const current = this.store.leases.get(id);
+    if (current !== undefined && current.expiresAt > now)
+      throw new Error("task already leased");
+    task.state = "leased";
+    task.attemptCount++;
+    const lease = {
+      taskId: id,
+      workerId,
+      fencingToken: ++this.store.fence,
+      attemptOrdinal: task.attemptCount,
+      heartbeatAt: now,
+      expiresAt: new Date(now.getTime() + ttlMs),
+    };
+    this.store.leases.set(id, lease);
+    return { ...lease };
+  }
+  heartbeat(
+    taskId: string,
+    token: number,
+    ttlMs: number,
+    now = new Date(),
+  ): Lease {
+    if (this.store.stopped) throw new Error("emergency stop active");
+    this.validTtl(ttlMs);
+    const lease = this.assertFence(taskId, token);
+    if (lease.expiresAt <= now) throw new Error("stale lease");
+    lease.heartbeatAt = now;
+    lease.expiresAt = new Date(now.getTime() + ttlMs);
+    return { ...lease };
+  }
+  reclaimExpired(now = new Date()): ReadonlyArray<string> {
+    const reclaimed: string[] = [];
+    for (const [id, lease] of this.store.leases)
+      if (lease.expiresAt <= now) {
+        this.store.leases.delete(id);
+        const task = this.required(id);
+        if (workerStates.has(task.state)) {
+          task.state = "queued";
+          reclaimed.push(id);
+        }
+      }
+    return reclaimed;
+  }
+  recordCost(id: string, costId: string, cost: number): Task {
+    if (costId.length === 0 || !Number.isSafeInteger(cost) || cost < 0)
+      throw new Error("invalid cost");
+    const task = this.required(id);
+    if (this.store.costIds.has(costId)) return { ...task };
+    this.store.costIds.add(costId);
+    const budget = this.budget(task.contractId);
+    task.spentUsdMicros += cost;
+    budget.spent += cost;
+    if (
+      task.spentUsdMicros >= task.maxCostUsdMicros ||
+      budget.spent >= budget.max
+    )
+      for (const candidate of this.store.tasks.values())
+        if (
+          candidate.contractId === task.contractId &&
+          (candidate.state === "queued" ||
+            workerStates.has(candidate.state) ||
+            candidate.state === "retry_wait")
+        ) {
+          candidate.state = "budget_blocked";
+          this.store.leases.delete(candidate.id);
+        }
+    return { ...task };
+  }
+  fail(id: string, token: number, reason: FailureReason): Task {
+    this.assertFence(id, token);
+    const task = this.required(id);
+    if (task.state !== "running" && task.state !== "verifying")
+      throw new Error("task cannot fail from current state");
+    if (!retryable(reason))
+      task.state = reason === "budget" ? "budget_blocked" : "failed";
+    else
+      task.state =
+        task.attemptCount >= task.maxAttempts ? "failed" : "retry_wait";
+    this.store.leases.delete(id);
+    return { ...task };
+  }
+  emergencyStop(): void {
+    this.store.stopped = true;
+    for (const [id] of this.store.leases) {
+      const task = this.required(id);
+      if (workerStates.has(task.state)) task.state = "queued";
+    }
+    this.store.leases.clear();
+  }
+  resume(): void {
+    this.store.stopped = false;
+  }
+  get(id: string): Task | undefined {
+    const t = this.store.tasks.get(id);
+    return t === undefined ? undefined : { ...t };
+  }
+  private required(id: string): Task {
+    const task = this.store.tasks.get(id);
+    if (task === undefined) throw new Error("unknown task");
+    return task;
+  }
+  private budget(contractId: string): { max: number; spent: number } {
+    const budget = this.store.budgets.get(contractId);
+    if (budget === undefined) throw new Error("contract budget missing");
+    return budget;
+  }
+  private assertFence(id: string, token: number | undefined): Lease {
+    const lease = this.store.leases.get(id);
+    if (
+      lease === undefined ||
+      token === undefined ||
+      lease.fencingToken !== token
+    )
+      throw new Error("stale lease");
+    return lease;
+  }
+  private validTtl(ttlMs: number): void {
+    if (!Number.isSafeInteger(ttlMs) || ttlMs < 1)
+      throw new Error("lease TTL must be positive");
+  }
 }

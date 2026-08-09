@@ -42,6 +42,7 @@ const snapshot: DashboardSnapshot = {
     configurationReady: false,
     liveProbeState: "not_run",
     approvalRequiredForProbe: true,
+    webhookRegistered: false,
   }),
   sequence: observed({
     state: "running",
@@ -89,6 +90,19 @@ describe("dashboard", () => {
     stale.attention.issues = ["Event stream delayed."];
     render(<DashboardApp initialSnapshot={stale} />);
     expect(screen.getByRole("status")).toHaveTextContent("Stale data observed");
+    const result = await axe.run(document.body, {
+      rules: { "color-contrast": { enabled: false } },
+    });
+    expect(result.violations.map((item) => item.id)).toEqual([]);
+  });
+  it("renders the Policy page with no automated accessibility violations", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new Error("no policy active in this test")),
+    );
+    render(<DashboardApp initialSnapshot={snapshot} />);
+    await userEvent.click(screen.getByRole("link", { name: /Policy/ }));
+    await screen.findByRole("heading", { name: "Orchestration Policy" });
     const result = await axe.run(document.body, {
       rules: { "color-contrast": { enabled: false } },
     });

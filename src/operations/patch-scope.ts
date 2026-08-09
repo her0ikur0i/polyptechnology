@@ -54,11 +54,21 @@ export function patchTouchedPaths(patch: string): ReadonlyArray<string> {
 // manifest (docs/contracts/CONTRACT-*/contract.md "File ownership"). Throws
 // on the first out-of-scope or unsafe path rather than applying anything --
 // an AI-produced patch is untrusted input until this passes.
+//
+// ownedPaths: "unscoped" is the explicit, narrow exception for a freshly
+// scaffolded generated project (src/factory/generation-task.ts) -- it has
+// no file-ownership manifest to check against because the whole repo *is*
+// its scope. Safety checks (traversal, null bytes, .git) still apply; only
+// the manifest-membership check is skipped, and only when the caller opted
+// in by name rather than by passing a manifest that happens to match
+// everything (the bare "**" string is deliberately never a wildcard here,
+// matching src/work/git-publication.ts's own anti-footgun stance).
 export function validatePatchScope(
   patch: string,
-  ownedPaths: ReadonlyArray<string>,
+  ownedPaths: ReadonlyArray<string> | "unscoped",
 ): ReadonlyArray<string> {
   const touched = patchTouchedPaths(patch).map(safePath);
+  if (ownedPaths === "unscoped") return touched;
   const outside = touched.filter((path) => !owned(path, ownedPaths));
   if (outside.length > 0)
     throw new Error(`patch touches out-of-scope paths: ${outside.join(", ")}`);

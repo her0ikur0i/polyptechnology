@@ -13,6 +13,7 @@ const telegram = {
   configurationReady: false,
   liveProbeState: "not_run",
   approvalRequiredForProbe: true,
+  webhookRegistered: false,
 };
 const base = {
   attention: observed([]),

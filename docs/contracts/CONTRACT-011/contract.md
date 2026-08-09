@@ -87,10 +87,10 @@ patch execution, a full Control API server, staging, and acceptance at once.
 ## Gates
 
 - A programming task cannot be leased without an initial DeepSeek route.
-- Codex technical execution is allowed automatically on durable, *verified*
+- Codex technical execution is allowed automatically on durable, _verified_
   DeepSeek failure evidence for the same task, or via a task-scoped owner
   override outside that chain. Claude technical fallback requires durable
-  verified failure evidence for *both* DeepSeek and Codex on the same task
+  verified failure evidence for _both_ DeepSeek and Codex on the same task
   (Amendment 1, 2026-08-09).
 - A transport/protocol failure (bad envelope, timeout, empty response) must
   retry the same tier and must never produce verified failure evidence on its
@@ -158,7 +158,7 @@ posture for provider attempts and provenance.
   evidence for the task (`src/policy/execution-permission.ts`), not only via a
   manual per-task owner override. The manual override remains available for
   cases outside the auto-escalation chain.
-- Claude technical fallback now requires verified failure evidence for *both*
+- Claude technical fallback now requires verified failure evidence for _both_
   DeepSeek and Codex on the same task -- fallback of the fallback, never a
   shortcut past Codex.
 - Anti self-review rule: a provider must never be the reviewer of record for a
@@ -170,7 +170,7 @@ posture for provider attempts and provenance.
   evidence, never by default. Applies to executor and orchestrator roles
   alike -- orchestration also has a light/heavy tier, not one fixed model.
 - Escalation distinguishes a transport/protocol failure (bad envelope,
-  timeout, empty response -- retry the *same* tier, never escalate) from a
+  timeout, empty response -- retry the _same_ tier, never escalate) from a
   verified patch-verifier rejection (`provider_artifacts.status='rejected'`
   -- the only thing allowed to produce `FailureEvidence{verified:true}` and
   unlock the next tier). See `src/policy/failure-classification.ts`.
@@ -207,7 +207,7 @@ threshold; the canary script itself needed correcting from 32 to 512 tokens.
   surfaced a genuine design bug: `executeWorker()` deliberately refuses any
   workspace containing `.git` (credentials/history must never be reachable
   from inside the sandbox), but the driver was applying the patch via
-  `git apply` into the *same* directory then handed to that sandbox. Fixed
+  `git apply` into the _same_ directory then handed to that sandbox. Fixed
   with `src/operations/workspace-copy.ts`
   (`GitIgnoringWorkspaceCopier`) -- the git-apply target and the verification
   sandbox are now always separate directories, the latter populated by a

@@ -11,6 +11,13 @@ import { OwnerPolicyService } from "../policy/owner-policy-service.js";
 import { PostgresTelegramSettingsStore } from "./telegram-settings-store.js";
 import { buildDashboardSnapshot } from "./snapshot.js";
 import { identifyOwner, requireCsrf, requireOwner } from "./auth.js";
+import { NodeWorkspaceProvisioner } from "../factory/workspace-provisioner.js";
+import { createGenerationTask } from "../factory/generation-task.js";
+import { parseBlueprint } from "../factory/blueprint.js";
+import {
+  createTelegramWebhookHandler,
+  requireTelegramWebhookSecret,
+} from "./telegram-webhook.js";
 
 export interface ControlApiDeps {
   pool: Pool;
@@ -41,9 +48,18 @@ export function createControlApi(deps: ControlApiDeps): Express {
   app.use(express.json({ limit: "256kb" }));
   app.use(identifyOwner(config));
 
+  const webhookRegistered =
+    config.telegramWebhookSecret !== undefined &&
+    config.telegramChatId !== undefined &&
+    config.telegramUserId !== undefined;
+
   app.get("/api/v1/dashboard/snapshot", requireOwner, async (_req, res) => {
     try {
-      const snapshot = await buildDashboardSnapshot(pool, csrfSecret);
+      const snapshot = await buildDashboardSnapshot(
+        pool,
+        csrfSecret,
+        webhookRegistered,
+      );
       res.json(snapshot);
     } catch (error) {
       res.status(500).json({
@@ -70,6 +86,7 @@ export function createControlApi(deps: ControlApiDeps): Express {
           lastCheckedAt: saved.updatedAt.toISOString(),
           liveProbeState: "not_run",
           approvalRequiredForProbe: true,
+          webhookRegistered,
         });
       } catch (error) {
         res.status(400).json({
@@ -78,6 +95,30 @@ export function createControlApi(deps: ControlApiDeps): Express {
       }
     },
   );
+
+  // Telegram calls this route, not the owner's authenticated browser -- it
+  // is gated by the webhook secret header (Telegram's own setWebhook
+  // secret_token mechanism), never by requireOwner/CSRF. Only registered
+  // when all three of TELEGRAM_WEBHOOK_SECRET/TELEGRAM_CHAT_ID/
+  // TELEGRAM_USER_ID are configured -- absent config means the route does
+  // not exist at all, failing closed by omission rather than accepting
+  // unauthenticated callbacks (docs/operations/telegram-approvals.md:
+  // "Absence/failure must remain fail-closed").
+  if (
+    config.telegramWebhookSecret !== undefined &&
+    config.telegramChatId !== undefined &&
+    config.telegramUserId !== undefined
+  ) {
+    app.post(
+      "/api/v1/telegram/webhook",
+      requireTelegramWebhookSecret(config.telegramWebhookSecret),
+      createTelegramWebhookHandler(
+        pool,
+        config.telegramChatId,
+        config.telegramUserId,
+      ),
+    );
+  }
 
   app.post(
     "/api/v1/factory/projects",
@@ -98,6 +139,47 @@ export function createControlApi(deps: ControlApiDeps): Express {
         res.status(400).json({
           error:
             error instanceof Error ? error.message : "project command failed",
+        });
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/factory/projects/:id/generate",
+    requireOwner,
+    requireCsrf(csrfSecret),
+    async (req, res) => {
+      try {
+        const projectId = req.params.id;
+        if (typeof projectId !== "string")
+          throw new Error("invalid project id");
+        const factory = new PostgresProjectFactory(pool);
+        const project = await factory.getProject(projectId);
+        if (project === undefined) throw new Error("project not found");
+        const versionRow = await pool.query<{ document: unknown }>(
+          "SELECT document FROM project_blueprint_versions WHERE id=$1",
+          [project.blueprintVersionId],
+        );
+        if (versionRow.rowCount !== 1)
+          throw new Error("blueprint version not found");
+        const blueprint = parseBlueprint(versionRow.rows[0]!.document);
+        const provisioner = new NodeWorkspaceProvisioner(
+          config.projectWorkspacesRoot,
+        );
+        const { repoPath } = await provisioner.provision(project.id, blueprint);
+        const task = await createGenerationTask(
+          pool,
+          project,
+          blueprint,
+          repoPath,
+        );
+        res.status(201).json(task);
+      } catch (error) {
+        res.status(400).json({
+          error:
+            error instanceof Error
+              ? error.message
+              : "generation command failed",
         });
       }
     },

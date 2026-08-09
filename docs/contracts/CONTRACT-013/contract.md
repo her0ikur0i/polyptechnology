@@ -44,7 +44,7 @@ completes them.
   and authorization negative tests generally.
 - **Independent security review**, explicitly scoped to include (carried
   from CONTRACT-012 Amendment 1): `ACCESS_AUTH_MODE=cloudflare` trusts
-  identity-header *presence* only today (`src/control-api/auth.ts`) -- no
+  identity-header _presence_ only today (`src/control-api/auth.ts`) -- no
   verification the request actually transited Cloudflare Access. Needs
   either origin-pull verification or a network-level guarantee (bind to
   localhost only, firewall direct access) before this is considered a real
@@ -77,8 +77,8 @@ deployment plan that was **never executed**: install at
 user, hardened systemd unit, Cloudflare Access/DNS cutover, Telegram live
 probe, external backups. The currently-running `polyptech-dashboard.service`
 (`/opt/master-orchestrator`, deleted, orphaned) is a pre-CONTRACT-007
-artifact, not a stale build of the current system -- retire it *at the same
-moment* the real replacement activates, not before (an availability gap on
+artifact, not a stale build of the current system -- retire it _at the same
+moment_ the real replacement activates, not before (an availability gap on
 `dash.surachmancenter.com` is a real regression). This contract's staging
 milestone is scoped to a **private, non-public** instance; the public
 hostname cutover remains a separate, explicit approval.
@@ -159,6 +159,8 @@ immutable.
 - `src/policy/**`
 - `src/operations/**`
 - `src/orchestrator/**`
+- `src/gateway/gateway.ts`
+- `src/config.ts`
 - `deploy/**`
 - `.github/workflows/**`
 - `tests/**`

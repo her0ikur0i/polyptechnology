@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
   blueprintDigest,
@@ -395,4 +394,3 @@ async function lockedProject(client: PoolClient, id: string) {
   if (result.rowCount !== 1) throw new Error("project missing");
   return project(result.rows[0] as ProjectRow);
 }
-export const newProjectId = () => randomUUID();

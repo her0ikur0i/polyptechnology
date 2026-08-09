@@ -55,7 +55,8 @@ function telegram(value: unknown): value is TelegramSettings {
     value.authorizedUserIds.every(string) &&
     typeof value.configurationReady === "boolean" &&
     ["not_run", "passed", "failed"].includes(String(value.liveProbeState)) &&
-    typeof value.approvalRequiredForProbe === "boolean"
+    typeof value.approvalRequiredForProbe === "boolean" &&
+    typeof value.webhookRegistered === "boolean"
   );
 }
 export function parseDashboardSnapshot(value: unknown): DashboardSnapshot {

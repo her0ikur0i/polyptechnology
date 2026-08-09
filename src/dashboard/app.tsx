@@ -173,7 +173,14 @@ function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
                 <RegistryPage
                   title="Approvals"
                   observation={snapshot.approvals}
-                  columns={["action", "risk", "state", "expiresAt"]}
+                  columns={[
+                    "action",
+                    "risk",
+                    "state",
+                    "expiresAt",
+                    "decidedBy",
+                    "decidedAt",
+                  ]}
                 />
               }
             />
@@ -371,6 +378,7 @@ function Providers({ snapshot }: { snapshot: DashboardSnapshot }) {
                     <th>Tokens</th>
                     <th>Cost</th>
                     <th>Outcome</th>
+                    <th>Fallback reason</th>
                     <th>Gate</th>
                   </tr>
                 </thead>
@@ -384,7 +392,85 @@ function Providers({ snapshot }: { snapshot: DashboardSnapshot }) {
           )}
         </Observation>
       </Panel>
+      <Panel
+        title="Rework history"
+        eyebrow="ESCALATION CHAINS"
+        actions={
+          <span className="eyebrow">tasks with more than one attempt</span>
+        }
+      >
+        <Observation
+          value={snapshot.attempts}
+          empty={snapshot.attempts.data.length === 0}
+        >
+          {(attempts) => <ReworkHistory attempts={attempts} />}
+        </Observation>
+      </Panel>
     </div>
+  );
+}
+function ReworkHistory({
+  attempts,
+}: {
+  attempts: ReadonlyArray<ModelAttempt>;
+}) {
+  const byTask = new Map<string, ModelAttempt[]>();
+  for (const attempt of attempts) {
+    if (attempt.taskId === undefined) continue;
+    const group = byTask.get(attempt.taskId) ?? [];
+    group.push(attempt);
+    byTask.set(attempt.taskId, group);
+  }
+  const chains = [...byTask.entries()]
+    .filter(([, group]) => group.length > 1)
+    .map(
+      ([taskId, group]) =>
+        [
+          taskId,
+          [...group].sort(
+            (a, b) => (a.attemptOrdinal ?? 0) - (b.attemptOrdinal ?? 0),
+          ),
+        ] as const,
+    );
+  if (chains.length === 0) {
+    return <p className="empty">No task has escalated across providers yet.</p>;
+  }
+  return (
+    <ul className="rework-list">
+      {chains.map(([taskId, chain]) => (
+        <li key={taskId}>
+          <code>{taskId}</code>
+          <ol>
+            {chain.map((attempt) => (
+              <li key={attempt.id}>
+                <strong>
+                  {attempt.attemptOrdinal !== undefined
+                    ? `#${attempt.attemptOrdinal}`
+                    : "#?"}
+                </strong>{" "}
+                {attempt.provider}/{attempt.requestedModelId} ·{" "}
+                <StatusBadge
+                  label={attempt.outcome}
+                  tone={
+                    attempt.outcome === "succeeded"
+                      ? "good"
+                      : attempt.outcome === "failed"
+                        ? "danger"
+                        : "warning"
+                  }
+                />
+                {attempt.failureCode && (
+                  <span className="fallback-reason">
+                    {" "}
+                    — {attempt.failureCode}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ol>
+        </li>
+      ))}
+    </ul>
   );
 }
 function AttemptRow({ value }: { value: ModelAttempt }) {
@@ -422,6 +508,7 @@ function AttemptRow({ value }: { value: ModelAttempt }) {
           }
         />
       </td>
+      <td>{value.failureCode ?? "—"}</td>
       <td>
         <OutcomeIcon verified={value.verified} />
       </td>
@@ -533,6 +620,23 @@ function Settings({ snapshot }: { snapshot: DashboardSnapshot }) {
                   }
                   tone={telegram.configurationReady ? "good" : "warning"}
                 />
+                <StatusBadge
+                  label={
+                    telegram.webhookRegistered
+                      ? "Webhook route live"
+                      : "Webhook route not registered"
+                  }
+                  tone={telegram.webhookRegistered ? "good" : "warning"}
+                />
+                <p>
+                  <small>
+                    Configuration checks reflect this form's saved state.
+                    Webhook route reflects whether the server was started with
+                    the secret/chat/user environment variables that actually
+                    register <code>POST /api/v1/telegram/webhook</code> -- the
+                    two can disagree, since they are separate stores.
+                  </small>
+                </p>
                 <p>
                   Live inference/probe: {telegram.liveProbeState}.{" "}
                   {telegram.approvalRequiredForProbe

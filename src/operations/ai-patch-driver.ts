@@ -35,7 +35,7 @@ export interface AiPatchTaskInput {
   taskId: string;
   gatewayRequest: Omit<GatewayRequest, "routeOverride">;
   route: ModelRoute;
-  ownedPaths: ReadonlyArray<string>;
+  ownedPaths: ReadonlyArray<string> | "unscoped";
   workspaceRoot: string;
   verifyJob: WorkerJob;
   fallbackReason: string | null;

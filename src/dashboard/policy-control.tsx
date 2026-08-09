@@ -3,10 +3,13 @@ import { Panel, StatusBadge } from "./components.js";
 import {
   activatePolicyDraft,
   approvePolicyDraft,
+  createCodexOverride,
   createPolicyDraft,
   loadActivePolicy,
+  rollbackPolicy,
   validatePolicyDraft,
 } from "./api.js";
+import { PROGRAMMING_POLICY_KEY } from "../policy/types.js";
 
 const stateTone: Record<string, "good" | "warning" | "neutral"> = {
   active: "good",
@@ -15,58 +18,61 @@ const stateTone: Record<string, "good" | "warning" | "neutral"> = {
   draft: "neutral",
 };
 
-const defaultPolicyTemplate = JSON.stringify(
+const defaultRoutesTemplate = JSON.stringify(
   {
-    routesByTaskClass: {
-      bulk_code: [
-        {
-          provider: "deepseek",
-          requestedModelId: "deepseek-v4-flash",
-          priority: 0,
-        },
-        {
-          provider: "claude",
-          requestedModelId: "claude-sonnet-5",
-          priority: 1,
-        },
-      ],
-      complex_backend: [
-        {
-          provider: "deepseek",
-          requestedModelId: "deepseek-v4-pro",
-          priority: 0,
-        },
-        {
-          provider: "claude",
-          requestedModelId: "claude-opus-4-8",
-          priority: 1,
-        },
-      ],
-      bounded_repair: [
-        {
-          provider: "deepseek",
-          requestedModelId: "deepseek-v4-flash",
-          priority: 0,
-        },
-        {
-          provider: "claude",
-          requestedModelId: "claude-sonnet-5",
-          priority: 1,
-        },
-      ],
-    },
-    envelope: {
-      softBudgetUsdMicros: 1_000_000,
-      emergencyCostCeilingUsdMicros: 5_000_000,
-      maxOutputTokens: 8_000,
-      maxTurns: 10,
-      timeoutMs: 300_000,
-      concurrency: 4,
-    },
+    bulk_code: [
+      {
+        provider: "deepseek",
+        requestedModelId: "deepseek-v4-flash",
+        priority: 0,
+      },
+      { provider: "claude", requestedModelId: "claude-sonnet-5", priority: 1 },
+    ],
+    complex_backend: [
+      {
+        provider: "deepseek",
+        requestedModelId: "deepseek-v4-pro",
+        priority: 0,
+      },
+      { provider: "claude", requestedModelId: "claude-opus-4-8", priority: 1 },
+    ],
+    bounded_repair: [
+      {
+        provider: "deepseek",
+        requestedModelId: "deepseek-v4-flash",
+        priority: 0,
+      },
+      { provider: "claude", requestedModelId: "claude-sonnet-5", priority: 1 },
+    ],
   },
   null,
   2,
 );
+
+// ExecutionEnvelope (src/policy/types.ts) is a flat scalar record --
+// CONTRACT-013 scope calls for dedicated fields here instead of asking the
+// owner to hand-edit JSON for these six numbers, while routesByTaskClass
+// (inherently a nested per-task-class list) stays JSON.
+const defaultEnvelope = {
+  softBudgetUsdMicros: 1_000_000,
+  emergencyCostCeilingUsdMicros: 5_000_000,
+  maxOutputTokens: 8_000,
+  maxTurns: 10,
+  timeoutMs: 300_000,
+  concurrency: 4,
+};
+type EnvelopeField = keyof typeof defaultEnvelope;
+const envelopeFields: Array<{ key: EnvelopeField; label: string }> = [
+  { key: "softBudgetUsdMicros", label: "Soft budget (USD micros)" },
+  {
+    key: "emergencyCostCeilingUsdMicros",
+    label: "Emergency cost ceiling (USD micros)",
+  },
+  { key: "maxOutputTokens", label: "Max output tokens" },
+  { key: "maxTurns", label: "Max turns" },
+  { key: "timeoutMs", label: "Timeout (ms)" },
+  { key: "concurrency", label: "Concurrency" },
+];
 
 // The owner-adjustable draft/validate/approve/activate lifecycle for
 // programming-task routing policy, wired to OwnerPolicyService
@@ -76,8 +82,13 @@ const defaultPolicyTemplate = JSON.stringify(
 // renders their state, matching ADR-0003 (queries and commands, not new
 // authority in the client).
 export function PolicyControlPage({ csrfToken }: { csrfToken: string }) {
-  const [policyKey, setPolicyKey] = useState("bulk_code_default");
-  const [policyJson, setPolicyJson] = useState(defaultPolicyTemplate);
+  // The live executor only ever consults PROGRAMMING_POLICY_KEY
+  // (src/operations/policy-route-resolver.ts) -- default here so an owner
+  // who just clicks through the lifecycle activates something that
+  // actually affects real routing, not a key nothing reads.
+  const [policyKey, setPolicyKey] = useState(PROGRAMMING_POLICY_KEY);
+  const [routesJson, setRoutesJson] = useState(defaultRoutesTemplate);
+  const [envelope, setEnvelope] = useState(defaultEnvelope);
   const [draft, setDraft] = useState<{
     id: string;
     version: number;
@@ -90,8 +101,22 @@ export function PolicyControlPage({ csrfToken }: { csrfToken: string }) {
   }>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState<
-    "draft" | "validate" | "approve" | "activate"
+    "draft" | "validate" | "approve" | "activate" | "rollback" | "override"
   >();
+  const [rollbackVersion, setRollbackVersion] = useState("");
+  const [rollbackResult, setRollbackResult] = useState<{
+    id: string;
+    version: number;
+    state: string;
+  }>();
+  const [overrideTaskId, setOverrideTaskId] = useState("");
+  const [overrideReason, setOverrideReason] = useState("");
+  const [overrideExpiresAt, setOverrideExpiresAt] = useState("");
+  const [overrideResult, setOverrideResult] = useState<{
+    id: string;
+    taskId: string;
+    expiresAt: string;
+  }>();
 
   useEffect(() => {
     let cancelled = false;
@@ -176,28 +201,53 @@ export function PolicyControlPage({ csrfToken }: { csrfToken: string }) {
             className="settings-grid"
             onSubmit={(event) => {
               event.preventDefault();
-              let parsed: unknown;
+              let routesByTaskClass: unknown;
               try {
-                parsed = JSON.parse(policyJson);
+                routesByTaskClass = JSON.parse(routesJson);
               } catch {
-                setError("Policy JSON is not valid.");
+                setError("Routes JSON is not valid.");
                 return;
               }
               run("draft", () =>
-                createPolicyDraft({ policyKey, policy: parsed }, csrfToken),
+                createPolicyDraft(
+                  {
+                    policyKey,
+                    policy: { routesByTaskClass, envelope },
+                  },
+                  csrfToken,
+                ),
               );
             }}
           >
             <label>
-              Policy document (JSON)
+              Routes by task class (JSON)
               <textarea
-                aria-label="Policy document JSON"
-                value={policyJson}
-                onChange={(event) => setPolicyJson(event.target.value)}
+                aria-label="Routes by task class JSON"
+                value={routesJson}
+                onChange={(event) => setRoutesJson(event.target.value)}
                 rows={12}
                 required
               />
             </label>
+            <fieldset className="settings-grid">
+              <legend>Execution envelope</legend>
+              {envelopeFields.map(({ key, label }) => (
+                <label key={key}>
+                  {label}
+                  <input
+                    aria-label={label}
+                    type="number"
+                    min={key === "concurrency" || key === "maxTurns" ? 1 : 0}
+                    value={envelope[key]}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      setEnvelope((current) => ({ ...current, [key]: value }));
+                    }}
+                    required
+                  />
+                </label>
+              ))}
+            </fieldset>
             <div className="settings-actions">
               <button type="submit" disabled={busy !== undefined}>
                 {busy === "draft" ? "Drafting…" : "Create draft"}
@@ -256,6 +306,136 @@ export function PolicyControlPage({ csrfToken }: { csrfToken: string }) {
                   label={draft.state}
                   tone={stateTone[draft.state] ?? "neutral"}
                 />
+              </output>
+            )}
+          </form>
+        </Panel>
+        <Panel title="Rollback to a prior version" eyebrow="ROLLBACK">
+          <form
+            className="settings-grid"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const targetVersion = Number(rollbackVersion);
+              if (!Number.isSafeInteger(targetVersion) || targetVersion <= 0) {
+                setError("Target version must be a positive integer.");
+                return;
+              }
+              setBusy("rollback");
+              setError(undefined);
+              rollbackPolicy({ policyKey, targetVersion }, csrfToken)
+                .then((result) => {
+                  setRollbackResult(result);
+                  setActive(result);
+                })
+                .catch((reason: unknown) =>
+                  setError(
+                    reason instanceof Error
+                      ? reason.message
+                      : "Rollback failed.",
+                  ),
+                )
+                .finally(() => setBusy(undefined));
+            }}
+          >
+            <label>
+              Target version
+              <input
+                aria-label="Rollback target version"
+                value={rollbackVersion}
+                onChange={(event) => setRollbackVersion(event.target.value)}
+                inputMode="numeric"
+                pattern="[0-9]+"
+                required
+              />
+            </label>
+            <div className="settings-actions">
+              <button type="submit" disabled={busy !== undefined}>
+                {busy === "rollback" ? "Rolling back…" : "Rollback"}
+              </button>
+            </div>
+            {rollbackResult && (
+              <output aria-live="polite">
+                Reactivated version {rollbackResult.version} ·{" "}
+                <StatusBadge
+                  label={rollbackResult.state}
+                  tone={stateTone[rollbackResult.state] ?? "neutral"}
+                />
+              </output>
+            )}
+          </form>
+        </Panel>
+        <Panel
+          title="Codex technical-execution override"
+          eyebrow="MANUAL ESCALATION"
+        >
+          <form
+            className="settings-grid"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setBusy("override");
+              setError(undefined);
+              createCodexOverride(
+                {
+                  taskId: overrideTaskId,
+                  reason: overrideReason,
+                  expiresAt: new Date(overrideExpiresAt).toISOString(),
+                },
+                csrfToken,
+              )
+                .then(setOverrideResult)
+                .catch((reason: unknown) =>
+                  setError(
+                    reason instanceof Error
+                      ? reason.message
+                      : "Override failed.",
+                  ),
+                )
+                .finally(() => setBusy(undefined));
+            }}
+          >
+            <p>
+              Grants Codex technical-execution permission on one already queued
+              task, bypassing DeepSeek-first ordering for that task only.
+              Bounded to 24 hours; never widens which tasks a provider may
+              review.
+            </p>
+            <label>
+              Task id
+              <input
+                aria-label="Override task id"
+                value={overrideTaskId}
+                onChange={(event) => setOverrideTaskId(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Reason
+              <textarea
+                aria-label="Override reason"
+                value={overrideReason}
+                onChange={(event) => setOverrideReason(event.target.value)}
+                rows={3}
+                required
+              />
+            </label>
+            <label>
+              Expires at
+              <input
+                aria-label="Override expiry"
+                type="datetime-local"
+                value={overrideExpiresAt}
+                onChange={(event) => setOverrideExpiresAt(event.target.value)}
+                required
+              />
+            </label>
+            <div className="settings-actions">
+              <button type="submit" disabled={busy !== undefined}>
+                {busy === "override" ? "Granting…" : "Grant override"}
+              </button>
+            </div>
+            {overrideResult && (
+              <output aria-live="polite">
+                Granted · expires {overrideResult.expiresAt}
               </output>
             )}
           </form>

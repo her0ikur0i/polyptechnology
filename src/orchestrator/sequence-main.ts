@@ -15,6 +15,9 @@ import { AiPatchOperationDriver } from "../operations/ai-patch-operation-driver.
 import { GitPatchApplier } from "../operations/git-patch-applier.js";
 import { GitIgnoringWorkspaceCopier } from "../operations/workspace-copy.js";
 import { PostgresProviderArtifactStore } from "../operations/provider-artifact-store.js";
+import { PostgresPolicyRouteResolver } from "../operations/policy-route-resolver.js";
+import { PostgresPolicyStore } from "../policy/postgres-policy-store.js";
+import { PROGRAMMING_POLICY_KEY } from "../policy/types.js";
 import { AiGateway } from "../gateway/gateway.js";
 import { PostgresAttemptLedger } from "../gateway/postgres-ledger.js";
 import { DeepSeekAdapter } from "../gateway/deepseek-adapter.js";
@@ -37,13 +40,20 @@ const ttlMs = 30_000,
     new CodexCliAdapter(),
     new ClaudeCliAdapter(),
   ]),
+  providerArtifacts = new PostgresProviderArtifactStore(pool),
   aiPatchDriver = new AiPatchOperationDriver(
     new AiPatchExecutorDriver(
       aiGateway,
       new GitPatchApplier(),
       new SpawnWorkerRunner(),
-      new PostgresProviderArtifactStore(pool),
+      providerArtifacts,
       new GitIgnoringWorkspaceCopier(),
+    ),
+    new PostgresPolicyRouteResolver(
+      new PostgresPolicyStore(pool),
+      providerArtifacts,
+      aiGateway,
+      PROGRAMMING_POLICY_KEY,
     ),
   ),
   operation = new ExecutableTaskSupervisor(
