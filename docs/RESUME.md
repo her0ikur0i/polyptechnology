@@ -7,12 +7,23 @@ repository is the truth.
 
 ## Current state
 
-`CONTRACT-014` (`f58a649`, conversation workspace) is **committed and pushed**
-to `main` on `origin`. Contracts 001–014 are all closed and pushed.
+Contracts 001–015 are all closed and pushed. `CONTRACT-015` (foundation
+hardening) closed at `4b55447` with 193 backend tests passing and zero skipped,
+38 dashboard tests, and a private-staging redeploy verified against the live
+process. Its charter, the repository-wide audit that motivated it, the owner
+acceptance mapping and all ten milestone evidence files are in
+`docs/contracts/CONTRACT-015/`.
 
-`CONTRACT-015` (foundation hardening) is **in progress** —
-`docs/contracts/CONTRACT-015/contract.md`, with the repository-wide audit that
-motivated it in the same directory (`audit-2026-08-09.md`).
+**The next contract is CONTRACT-016** (conversation workspace at parity:
+streaming, markdown, a real composer, and Telegram as a full conversational
+entry point). Draft its `contract.md` and open it with M0, the single
+front-loaded owner checkpoint.
+
+Two things from CONTRACT-015 worth carrying forward rather than rediscovering:
+its M8 independent review found a critical bug that M3's own six passing tests
+had missed entirely, because every one of them exercised the same canonical
+input shape; and a milestone reported a 1-skipped run as matching a 0-skipped
+baseline, which is why the zero-skip invocation is now stated in `CLAUDE.md`.
 
 The roadmap through CONTRACT-020 is `docs/product/roadmap-2026H2.md`. It exists
 because the owner set the principle that large scope is split into smaller
@@ -30,7 +41,7 @@ durable record; this file deliberately no longer restates it.
 | 012      | `4342ca2` | Control API server, owner policy UI foundation               |
 | 013      | `57facca` | Generation pipeline, policy UI, private staging deployment   |
 | 014      | `f58a649` | Conversation workspace: chat replaces the blueprint form     |
-| 015      | —         | Foundation hardening (in progress)                           |
+| 015      | `4b55447` | Foundation hardening: audit findings, path safety, throttle  |
 
 ## Owner constraints (current)
 
