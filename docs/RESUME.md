@@ -7,80 +7,43 @@ repository is the truth.
 
 ## Current state
 
-Contracts 001–015 are all closed and pushed. `CONTRACT-015` (foundation
+Contracts 001–016 are all closed and pushed. `CONTRACT-015` (foundation
 hardening) closed at `4b55447` with 193 backend tests passing and zero skipped,
 38 dashboard tests, and a private-staging redeploy verified against the live
 process. Its charter, the repository-wide audit that motivated it, the owner
 acceptance mapping and all ten milestone evidence files are in
 `docs/contracts/CONTRACT-015/`.
 
-## CONTRACT-016 is IN PROGRESS and UNCOMMITTED
+## Next: CONTRACT-017 — Telegram as a working control surface
 
-**Read this section first if `git status` is dirty.** The repository commits
-once per contract, so a contract in flight always has uncommitted work on disk.
-Nothing is lost by a session ending — the files persist — but a fresh session
-must not mistake that state for an accident and must not `git checkout` it away.
+Charter drafted at `docs/contracts/CONTRACT-017/contract.md`; **no
+implementation started**. Begin at M0.
 
-`docs/contracts/CONTRACT-016/contract.md` is the charter (11 milestones after
-M0). Per-milestone state lives in `docs/contracts/CONTRACT-016/evidence/`; the
-presence of `M<n>-*.md` is the authoritative signal that milestone `n` is done.
-Trust those files over this paragraph, which can go stale between edits.
+Owner-prioritised on 2026-08-10: every run report (success **and** failure) to
+Telegram, every confirmation approvable there, plus conversation and commands.
+CONTRACT-016 was descoped by its Amendment 1 to make room rather than absorb it.
 
-| Milestone | State                                                               |
-| --------- | ------------------------------------------------------------------- |
-| M0        | done — owner confirmation, streaming architecture decision recorded |
-| M1        | done — streaming provider invocation, `ClaudeCliAdapter` over spawn |
-| M2        | done — durable reply chunks, migration `0014`                       |
-| M3        | done — driver writes coalesced chunks; wired in `sequence-main.ts`  |
-| M4–M11    | not started                                                         |
+Three decisions already settled, so they are not relitigated:
 
-**Resume by doing exactly this:**
+- **Long polling, never `setWebhook`.** Telegram's webhook transport needs a
+  public HTTPS endpoint this deployment does not have; `getUpdates` is outbound,
+  so inbound Telegram needs no public exposure and no DNS change. Verified
+  against the live bot: no webhook is set and `getUpdates` succeeds. The two
+  transports are mutually exclusive.
+- **Commands are a closed set** — status, active runs, pending approvals,
+  budget, and answering decisions that already exist. The owner confirmed this
+  is sufficient. Nothing executes because it was asked for in a chat.
+- **Plain text, not MarkdownV2.** The live probe's first attempt failed on
+  escaping, because report text quotes paths and identifiers constantly. A
+  failure report that fails to send is the worst bug a notifier can have.
 
-1. `git status` — expect a dirty tree; `git log --oneline -1` should be
-   `30f84ea` (or later if M11 already committed, in which case this section is
-   stale and the contract is closed).
-2. Read `docs/contracts/CONTRACT-016/contract.md`, then every
-   `evidence/M*.md` present, newest milestone last.
-3. Run the standing zero-skip invocation below. It should report **212 tests,
-   212 passing, 0 skipped**. A different number means something changed since
-   this was written — reconcile before continuing, do not assume.
-4. Continue at the first milestone with no evidence file, currently M4.
+Telegram credentials are in `/root/.config/polyp/provider-secrets.env`
+(`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`); the bot is `@PolypTech_bot`. Staging
+itself still has no Telegram configuration, so the inbound webhook route stays
+unregistered there — deliberate, since this contract uses polling instead.
 
-**Migration state that is easy to get wrong.** `0014_reply_streaming.sql` is
-already applied to the **disposable test** database and deliberately **not** to
-staging; staging gets it at M11 with the redeploy, the same way CONTRACT-014
-M10 applied `0011`–`0013`. The migrations are not idempotent — re-running one
-fails loudly rather than silently double-applying, which is the safe direction
-but still a wasted step.
-
-`psql` is **not installed on this host**. Go through the containers, and note
-the two databases use different roles — getting this wrong produces a
-`role "postgres" does not exist` error that looks like a broken database and is
-really a wrong command:
-
-```bash
-# disposable test DB (has 0014)
-docker exec -i polyp-contract011-pg psql -U postgres -d polyp_test \
-  -v ON_ERROR_STOP=1 < migrations/0014_reply_streaming.sql
-
-# persistent staging DB (must NOT have 0014 until M11) — different role
-docker exec polyp-staging-pg psql -U polyp_staging -d polyp_staging \
-  -tAc "SELECT to_regclass('public.conversation_reply_chunks') IS NOT NULL;"
-```
-
-Verified 2026-08-10: the test DB returns `t`, staging returns `f`.
-
-**The architectural decision M0 recorded, so it is not relitigated:** token
-streaming needs the adapter to stream, the fragments to be durable because the
-reply is produced in `polyp-sequence.service` and served by the Control API, and
-only then an SSE route. Running replies inline in the API would make streaming
-trivial and is refused — CONTRACT-014 M2 made replies a background task on
-purpose. Streaming state transitions without token text is also refused, as not
-what goal 2 asks for.
-
-After CONTRACT-016 the roadmap continues 017 (Factory Live producer), 018
-(design system), 019 (multi-stack), 020 (domains, detach, and the closing
-full-factory drill).
+After CONTRACT-017: 018 chat experience on the streaming foundation, 019 Factory
+Live producer, 020 design system, 021 multi-stack, 022 domains and detach.
 
 Two things from CONTRACT-015 worth carrying forward rather than rediscovering:
 its M8 independent review found a critical bug that M3's own six passing tests
@@ -98,13 +61,14 @@ gap against the five product goals.
 Per-milestone detail lives in each contract's `evidence/*.md`. That is the
 durable record; this file deliberately no longer restates it.
 
-| Contract | Commit    | Subject                                                      |
-| -------- | --------- | ------------------------------------------------------------ |
-| 011      | `a564bf8` | Fail-closed routing, real patch executor, policy persistence |
-| 012      | `4342ca2` | Control API server, owner policy UI foundation               |
-| 013      | `57facca` | Generation pipeline, policy UI, private staging deployment   |
-| 014      | `f58a649` | Conversation workspace: chat replaces the blueprint form     |
-| 015      | `4b55447` | Foundation hardening: audit findings, path safety, throttle  |
+| Contract | Commit    | Subject                                                       |
+| -------- | --------- | ------------------------------------------------------------- |
+| 011      | `a564bf8` | Fail-closed routing, real patch executor, policy persistence  |
+| 012      | `4342ca2` | Control API server, owner policy UI foundation                |
+| 013      | `57facca` | Generation pipeline, policy UI, private staging deployment    |
+| 014      | `f58a649` | Conversation workspace: chat replaces the blueprint form      |
+| 015      | `4b55447` | Foundation hardening: audit findings, path safety, throttle   |
+| 016      | `324b39f` | Streaming foundation: adapter streaming, durable reply chunks |
 
 ## Owner constraints (current)
 
