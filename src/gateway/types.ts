@@ -38,6 +38,13 @@ export interface GatewayRequest {
   policyVersion: string;
   routeOverride?: ModelRoute;
   signal?: AbortSignal;
+  // Called with each incremental fragment of the answer as the provider emits
+  // it, when the selected adapter supports streaming. Purely a
+  // perceived-latency optimization: `content` on the returned completion stays
+  // the single source of truth, so an adapter that cannot stream simply never
+  // calls this, and a stream that dies mid-answer leaves no half-written
+  // record anywhere. Never treat accumulated deltas as the answer.
+  onDelta?: (fragment: string) => void;
 }
 export interface NormalizedUsage {
   inputTokens: number;
@@ -95,6 +102,19 @@ export interface ManagedProviderAdapter {
     route: ModelRoute,
     messages: GatewayRequest["messages"],
     maxOutputTokens: number,
+    signal?: AbortSignal,
+  ): Promise<ManagedCompletion>;
+  // Optional. Same contract as invoke() -- same validation, same
+  // ManagedCompletion, same failure semantics -- except that fragments of the
+  // answer are handed to onDelta as they arrive. An adapter without it is not
+  // broken and is never wrapped in a fake: the gateway falls back to invoke()
+  // and the caller simply sees no deltas, which is honest about the provider
+  // genuinely not streaming.
+  invokeStreaming?(
+    route: ModelRoute,
+    messages: GatewayRequest["messages"],
+    maxOutputTokens: number,
+    onDelta: (fragment: string) => void,
     signal?: AbortSignal,
   ): Promise<ManagedCompletion>;
 }

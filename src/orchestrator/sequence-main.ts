@@ -28,6 +28,7 @@ import { DeepSeekAdapter } from "../gateway/deepseek-adapter.js";
 import { CodexCliAdapter, ClaudeCliAdapter } from "../gateway/cli-adapters.js";
 import { FileSecretResolver } from "../gateway/file-secret-resolver.js";
 import { SpawnWorkerRunner } from "../worker/spawn-runner.js";
+import { PostgresReplyChunkStore } from "./reply-chunks.js";
 const databaseUrl = process.env.DATABASE_URL,
   workerId = process.env.SEQUENCE_WORKER_ID ?? `${hostname()}:${process.pid}`;
 if (!databaseUrl) throw new Error("DATABASE_URL is required");
@@ -63,6 +64,10 @@ const ttlMs = 30_000,
   conversationReplyDriver = new ConversationReplyDriver(
     aiGateway,
     new PostgresConversationStore(pool),
+    // Progress fragments have to be durable because this process is not the one
+    // that serves them: the Control API holds the SSE connection
+    // (CONTRACT-016 M2/M3).
+    new PostgresReplyChunkStore(pool),
   ),
   blueprintTranslationDriver = new BlueprintTranslationDriver(
     aiGateway,

@@ -1,4 +1,4 @@
-# Roadmap — CONTRACT-015 through CONTRACT-020
+# Roadmap — CONTRACT-015 through CONTRACT-022
 
 Written 2026-08-09, immediately after CONTRACT-014 was pushed (`f58a649`) and
 the repository-wide audit in
@@ -8,10 +8,16 @@ This roadmap exists because the owner asked for every audit recommendation to
 be bundled into milestones, and then — on seeing the resulting size — set the
 governing principle: **break large work into smaller pieces so the result can
 be good** ("pecah pekerjaan besar menjadi lebih kecil agar hasil bisa
-berkualitas"). So the recommendations are all here, but distributed across five
+berkualitas"). So the recommendations are all here, but distributed across
 small contracts rather than compressed into one large one. Each closes with its
-own commit and push, so no contract holds a large body of finished work
-hostage to an unfinished one.
+own commit and push, so no contract holds a large body of finished work hostage
+to an unfinished one.
+
+The sequence has grown since it was written, and deliberately: CONTRACT-016 was
+descoped mid-flight and CONTRACT-017 inserted, both because the owner
+reprioritised Telegram. That is the mechanism working, not drift — a roadmap
+that cannot absorb a change of priority just becomes a document nobody
+consults.
 
 ## Where the product actually stands
 
@@ -19,14 +25,14 @@ Measured against the owner's five stated goals, not against the contract log.
 
 | #   | Goal                                                                               | Today                                                                                                                                                                                      | Gap owner             |
 | --- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------- |
-| 1   | Multi-provider factory generating anything from a landing page to a complex system | Three real provider adapters and a working blueprint → workspace → patch → verify pipeline, but `NodeWorkspaceProvisioner` scaffolds **only** Node/TS and hard-rejects every other runtime | CONTRACT-019          |
-| 2   | Dashboard whose flagship is a claude.ai-class chat window                          | Chat works end to end — send, background reply, attachments, proposal, approve, generate — but polls every 1.5 s and renders replies as raw text                                           | CONTRACT-016          |
+| 1   | Multi-provider factory generating anything from a landing page to a complex system | Three real provider adapters and a working blueprint → workspace → patch → verify pipeline, but `NodeWorkspaceProvisioner` scaffolds **only** Node/TS and hard-rejects every other runtime | CONTRACT-021          |
+| 2   | Dashboard whose flagship is a claude.ai-class chat window                          | Chat works end to end — send, background reply, attachments, proposal, approve, generate — but polls every 1.5 s and renders replies as raw text                                           | CONTRACT-018          |
 | 3   | Don't reinvent the wheel; standard engineering practice                            | The strongest area: ADRs, threat model, per-contract security review, ordered migrations, CSRF matrices, axe tests, mechanical format gate, zero `npm audit` findings                      | maintained throughout |
-| 4   | Maximum performance and aesthetics — this is the primary workspace                 | 718 lines of hand-written CSS, dark-only, 12 colour variables, no type scale, and a declared typeface that has never loaded                                                                | CONTRACT-018          |
-| 5   | Every generated product gets its own domain and can be detached                    | Absent from code **and** from the specification. Only logical isolation exists (`workspace://projects/{id}`, separate repos/secrets/budgets)                                               | CONTRACT-020          |
-| —   | Seeing the agents actually work (specification §21, ADR-0004, release criterion 8) | A well-built Canvas renderer with **no server behind it** — both routes it calls are unregistered, and every test feeds it a fixture                                                       | CONTRACT-017          |
+| 4   | Maximum performance and aesthetics — this is the primary workspace                 | 718 lines of hand-written CSS, dark-only, 12 colour variables, no type scale, and a declared typeface that has never loaded                                                                | CONTRACT-020          |
+| 5   | Every generated product gets its own domain and can be detached                    | Absent from code **and** from the specification. Only logical isolation exists (`workspace://projects/{id}`, separate repos/secrets/budgets)                                               | CONTRACT-022          |
+| —   | Seeing the agents actually work (specification §21, ADR-0004, release criterion 8) | A well-built Canvas renderer with **no server behind it** — both routes it calls are unregistered, and every test feeds it a fixture                                                       | CONTRACT-019          |
 
-## Conventions that apply to all five contracts
+## Conventions that apply to every contract here
 
 **One batched confirmation milestone, and it runs first.** Every contract opens
 with M0, its only owner checkpoint: scope approval, any record correction,
@@ -70,43 +76,60 @@ on these files.
 
 Nine milestones, closing with the batched owner confirmation gate.
 
-## CONTRACT-016 — Conversation workspace at parity
+## CONTRACT-016 — Streaming foundation (closed)
 
-**Objective.** Make the chat window feel like the tools it is measured against,
-and close the gap the audit found between "chat works" and "chat is good".
+Descoped by its own Amendment 1 when the owner asked for Telegram to be
+prioritised, and closed on what was already built and working rather than left
+to absorb a new priority. Delivered: a real streaming path through the provider
+layer (`ClaudeCliAdapter` over `spawn` with `--output-format stream-json`),
+durable reply chunks that cross the process boundary between
+`polyp-sequence.service` and the Control API, and a coalescing writer that turns
+per-token deltas into a sane number of database writes.
 
-- Server-sent token streaming, replacing the 1.5 s poll. The SSE plumbing
-  already exists and is proven in Factory Live (`src/dashboard/factory-live/api.ts:17`);
-  this extends that pattern rather than inventing one.
-- Markdown rendering with syntax-highlighted code blocks and per-block copy —
-  established libraries, not a hand-rolled parser.
-- A real composer: autosizing input, Enter to send with Shift+Enter for a
-  newline, stop, regenerate, and edit-and-resend.
-- Optimistic echo of the owner's own message, and error recovery that keeps the
-  typed text rather than discarding it.
-- Per-message model attribution and cost, surfaced from the ledger the gateway
-  already writes.
-- Virtualized thread rendering so a long conversation stays responsive.
-- **Telegram as a full conversational entry point** — added to scope at the
-  owner's request, at the deeper of the two options offered
-  (`docs/contracts/CONTRACT-015/evidence/M0-owner-confirmation.md` §4). Today
-  Telegram is 176 lines total (`src/telegram/gateway.ts`,
-  `src/control-api/telegram-webhook.ts`) and does exactly one thing: approval
-  callbacks. The expansion covers run-state and gate notifications, budget
-  alerts, approvals carrying real context rather than a bare button, and
-  holding an actual conversation with the factory from Telegram.
-  This opens a second ingress for untrusted text, so the contract carries its
-  own security review of `docs/architecture/adr-0002-conversation-authority-boundary.md`:
-  a Telegram-originated message must never gain execution authority that the
-  same message typed into the dashboard would not have.
+The governing principle, which everything downstream inherits: **accumulated
+fragments are never the answer.** `ManagedCompletion.content` is the only source
+of truth, chunks are disposable progress. That is why a stream dying mid-answer
+leaves no half-written record, why ledger settlement is unchanged, and why the
+machinery could ship inert without risk.
 
-**Excludes.** The design-system replacement (CONTRACT-018) — this contract
-delivers chat behaviour on the current visual language, so the two can be
-verified independently. The server-side SSE pattern this contract establishes
-for streaming replies is what CONTRACT-017's event producer then reuses, which
-is why chat comes first.
+## CONTRACT-017 — Telegram as a working control surface
 
-## CONTRACT-017 — Factory Live: the agents at work, for real
+**Objective.** Reports, approvals, conversation and commands over Telegram —
+prioritised ahead of the rest of the chat work at the owner's explicit request
+(2026-08-10). Fully specified in `docs/contracts/CONTRACT-017/contract.md`.
+
+The finding that makes it possible now: Telegram's webhook transport needs a
+public HTTPS endpoint, which this deployment does not have and will not have
+until CONTRACT-022's cutover. **Long polling (`getUpdates`) is outbound**, so
+inbound Telegram needs no public exposure, no DNS change, and no new trust
+boundary. Verified against the live bot before drafting.
+
+The authority boundary it will not bend: a Telegram-originated message gains
+exactly the authority the same message typed into the dashboard would gain, and
+not one step more. Commands are therefore a **closed set** — status, active
+runs, pending approvals, budget, and answering decisions that already exist —
+confirmed sufficient by the owner. Nothing executes because it was asked for in
+a chat.
+
+## CONTRACT-018 — Chat experience on the streaming foundation
+
+**Objective.** What CONTRACT-016 was originally going to carry, now built on the
+foundation it laid: the Control API SSE route with resume-from-last-chunk, the
+client that consumes it and renders progressively, markdown with
+syntax-highlighted code blocks and per-block copy, a real composer
+(autosize, Enter/Shift+Enter, stop, regenerate, edit-and-resend, optimistic
+echo, error recovery that preserves typed text), per-message model attribution
+and cost from the ledger, and virtualized thread rendering.
+
+Rendering model output is an injection surface: it must not be able to inject
+HTML, script, or styling into the dashboard, and that is proven by test with
+hostile content rather than assumed from the library's reputation.
+
+**Excludes.** The design-system replacement (CONTRACT-020) — this contract
+delivers behaviour on the current visual language, so a behaviour regression and
+a restyling can never be confused for one another.
+
+## CONTRACT-019 — Factory Live: the agents at work, for real
 
 **Objective.** Give the visual agent view an actual server. Added to the
 roadmap at the owner's direction (2026-08-09), with the standing instruction
@@ -149,7 +172,7 @@ CONTRACT-018, and keeping them apart means a rendering regression and a
 producer bug can never be confused for one another. Replay of historical
 streams beyond what the current client already supports.
 
-## CONTRACT-018 — Design system and shell
+## CONTRACT-020 — Design system and shell
 
 **Objective.** Goal 4, treated as the primary-workspace requirement the owner
 stated rather than as a cosmetic pass.
@@ -172,7 +195,7 @@ domains.
 **Excludes.** Chat behaviour (CONTRACT-016 owns it). Any new page beyond the
 two existing placeholders.
 
-## CONTRACT-019 — Multi-stack generation
+## CONTRACT-021 — Multi-stack generation
 
 **Objective.** Goal 1's actual ceiling. Today `src/factory/workspace-provisioner.ts:30`
 rejects any blueprint whose runtime is not `node`, and
@@ -187,10 +210,10 @@ named as its simplest case.
 - The Docker worker suite running in CI, which the audit found it never has —
   natural to land here, since this contract is what multiplies the images.
 
-**Excludes.** Deployment and domains (CONTRACT-019). Any stack beyond the three
+**Excludes.** Deployment and domains (CONTRACT-021). Any stack beyond the three
 named, until a real blueprint demands it.
 
-## CONTRACT-020 — Domain and detach
+## CONTRACT-022 — Domain and detach
 
 **Objective.** Goal 5, which exists in neither code nor specification today.
 Requires a new ADR before implementation, because it introduces the first

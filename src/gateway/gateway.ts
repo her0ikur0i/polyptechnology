@@ -100,12 +100,29 @@ export class AiGateway {
     }
     await this.ledger.dispatched(initial.id);
     try {
-      const result = await adapter.invoke(
-        route,
-        request.messages,
-        request.maxOutputTokens,
-        request.signal,
-      );
+      // Streaming is used only when the caller asked for deltas AND the
+      // selected adapter genuinely supports them. Everything downstream of
+      // this line -- validation, rejection codes, ledger settlement -- is
+      // identical either way, because invokeStreaming() returns the same
+      // completion invoke() would have. That is deliberate: a streamed answer
+      // must not be able to reach the ledger through a different path than a
+      // buffered one, or the two would drift and only one would be tested.
+      const streaming =
+        request.onDelta !== undefined && adapter.invokeStreaming !== undefined;
+      const result = streaming
+        ? await adapter.invokeStreaming!(
+            route,
+            request.messages,
+            request.maxOutputTokens,
+            request.onDelta!,
+            request.signal,
+          )
+        : await adapter.invoke(
+            route,
+            request.messages,
+            request.maxOutputTokens,
+            request.signal,
+          );
       let rejection: string | undefined;
       if (result.resolvedModelId !== route.requestedModelId)
         rejection = "resolved_model_mismatch";
