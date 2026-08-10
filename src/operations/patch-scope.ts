@@ -1,37 +1,19 @@
-import { isAbsolute, posix } from "node:path";
+import { ownedByManifest, safeRelativePath } from "../safe-path.js";
 
-// Same path-safety posture as src/work/git-publication.ts's safePath/owned
-// (traversal, null bytes, glob metacharacters, .git rejected) -- duplicated
-// on purpose rather than imported, since git-publication.ts governs the
-// final M10 commit and this module governs an untrusted AI-produced patch
-// before it ever reaches a workspace; keeping them independently reviewable
-// is worth the few duplicated lines.
-function safePath(path: string): string {
-  if (
-    isAbsolute(path) ||
-    path.split(/[\\/]/).includes("..") ||
-    path.includes("\0") ||
-    /[*?[:]/.test(path)
-  )
-    throw new Error(`unsafe patch path: ${path}`);
-  const normalized = posix.normalize(path.replaceAll("\\", "/"));
-  if (
-    normalized === "." ||
-    normalized.startsWith("../") ||
-    normalized === ".git" ||
-    normalized.startsWith(".git/")
-  )
-    throw new Error(`unsafe patch path: ${path}`);
-  return normalized;
-}
+// Governs an untrusted AI-produced patch before it ever reaches a workspace --
+// the earliest and most exposed of the three boundaries that share
+// src/safe-path.ts.
+//
+// This module previously kept a private copy of the guard on purpose, so that
+// this boundary and src/work/git-publication.ts's could be reviewed
+// independently. CONTRACT-015 M2 shares the string-level primitive but keeps
+// the boundaries separate where it matters: each retains its own wrapper,
+// label, and tests. The two are still reviewed apart; they just no longer
+// disagree about what a dangerous path looks like, which is what three
+// drifting copies eventually guaranteed they would.
+const safePath = (path: string): string => safeRelativePath(path, "patch path");
 
-const owned = (path: string, manifest: ReadonlyArray<string>) =>
-  manifest.some((entry) => {
-    if (entry === "**") return false;
-    return entry.endsWith("/**")
-      ? entry.length > 3 && path.startsWith(entry.slice(0, -2))
-      : path === entry;
-  });
+const owned = ownedByManifest;
 
 // Extracts the set of file paths a unified diff touches, from the
 // "diff --git a/<path> b/<path>" header lines only -- deliberately ignores

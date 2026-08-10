@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import {
   Activity,
   Bot,
@@ -34,10 +34,29 @@ import {
 import type { DashboardSnapshot, ModelAttempt } from "./types.js";
 import { useSnapshot } from "./use-snapshot.js";
 import { saveTelegramSettings } from "./api.js";
-import { FactoryLivePage } from "./factory-live/FactoryLive.js";
-import { ConversationWorkspacePage } from "./conversation-workspace.js";
-import { PolicyControlPage } from "./policy-control.js";
 import "./styles.css";
+// The three real page modules are code-split; everything else routed below is
+// defined inline in this file, so lazy-loading it would move nothing. These
+// three are where the weight actually is -- factory-live alone pulls in the
+// canvas renderer, layout engine, frame-budget controller and its validators,
+// none of which the owner needs on a page they are not looking at.
+// Extracting the inline pages into their own modules belongs to CONTRACT-018's
+// shell rework, not to a hardening contract.
+const FactoryLivePage = lazy(() =>
+  import("./factory-live/FactoryLive.js").then((module) => ({
+    default: module.FactoryLivePage,
+  })),
+);
+const ConversationWorkspacePage = lazy(() =>
+  import("./conversation-workspace.js").then((module) => ({
+    default: module.ConversationWorkspacePage,
+  })),
+);
+const PolicyControlPage = lazy(() =>
+  import("./policy-control.js").then((module) => ({
+    default: module.PolicyControlPage,
+  })),
+);
 const nav = [
   { to: "/", label: "Overview", icon: Factory },
   { to: "/orchestrator", label: "Orchestrator", icon: BrainCircuit },
@@ -156,91 +175,96 @@ function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
           </div>
         </header>
         <main id="main-content">
-          <Routes>
-            <Route path="/" element={<Overview snapshot={snapshot} />} />
-            <Route path="/factory-live" element={<FactoryLivePage />} />
-            <Route
-              path="/providers"
-              element={<Providers snapshot={snapshot} />}
-            />
-            <Route
-              path="/settings"
-              element={<Settings snapshot={snapshot} />}
-            />
-            <Route
-              path="/approvals"
-              element={
-                <RegistryPage
-                  title="Approvals"
-                  observation={snapshot.approvals}
-                  columns={[
-                    "action",
-                    "risk",
-                    "state",
-                    "expiresAt",
-                    "decidedBy",
-                    "decidedAt",
-                  ]}
-                />
-              }
-            />
-            <Route
-              path="/projects"
-              element={
-                <RegistryPage
-                  title="Projects"
-                  observation={snapshot.projects}
-                  columns={["name", "lifecycle", "attention", "updatedAt"]}
-                />
-              }
-            />
-            <Route
-              path="/contracts"
-              element={
-                <RegistryPage
-                  title="Contracts / Runs"
-                  observation={snapshot.contracts}
-                  columns={["id", "milestone", "state", "gateStatus"]}
-                />
-              }
-            />
-            <Route
-              path="/orchestrator"
-              element={
-                <ConversationWorkspacePage
-                  csrfToken={snapshot.commandPolicy.csrfToken}
-                  projects={snapshot.projects.data}
-                />
-              }
-            />
-            <Route
-              path="/policy"
-              element={
-                <PolicyControlPage
-                  csrfToken={snapshot.commandPolicy.csrfToken}
-                />
-              }
-            />
-            <Route
-              path="/agents"
-              element={
-                <Placeholder
-                  title="Agents"
-                  detail="Dynamic roles, permissions, workload and evaluation state."
-                />
-              }
-            />
-            <Route
-              path="/infrastructure"
-              element={
-                <Placeholder
-                  title="Infrastructure"
-                  detail="Host, container, service, database and backup observations."
-                />
-              }
-            />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          {/* Reuses the same loading treatment the initial snapshot fetch
+              already shows, so a chunk fetch and a data fetch look alike to
+              the owner rather than introducing a second vocabulary. */}
+          <Suspense fallback={<StatePage kind="loading" />}>
+            <Routes>
+              <Route path="/" element={<Overview snapshot={snapshot} />} />
+              <Route path="/factory-live" element={<FactoryLivePage />} />
+              <Route
+                path="/providers"
+                element={<Providers snapshot={snapshot} />}
+              />
+              <Route
+                path="/settings"
+                element={<Settings snapshot={snapshot} />}
+              />
+              <Route
+                path="/approvals"
+                element={
+                  <RegistryPage
+                    title="Approvals"
+                    observation={snapshot.approvals}
+                    columns={[
+                      "action",
+                      "risk",
+                      "state",
+                      "expiresAt",
+                      "decidedBy",
+                      "decidedAt",
+                    ]}
+                  />
+                }
+              />
+              <Route
+                path="/projects"
+                element={
+                  <RegistryPage
+                    title="Projects"
+                    observation={snapshot.projects}
+                    columns={["name", "lifecycle", "attention", "updatedAt"]}
+                  />
+                }
+              />
+              <Route
+                path="/contracts"
+                element={
+                  <RegistryPage
+                    title="Contracts / Runs"
+                    observation={snapshot.contracts}
+                    columns={["id", "milestone", "state", "gateStatus"]}
+                  />
+                }
+              />
+              <Route
+                path="/orchestrator"
+                element={
+                  <ConversationWorkspacePage
+                    csrfToken={snapshot.commandPolicy.csrfToken}
+                    projects={snapshot.projects.data}
+                  />
+                }
+              />
+              <Route
+                path="/policy"
+                element={
+                  <PolicyControlPage
+                    csrfToken={snapshot.commandPolicy.csrfToken}
+                  />
+                }
+              />
+              <Route
+                path="/agents"
+                element={
+                  <Placeholder
+                    title="Agents"
+                    detail="Dynamic roles, permissions, workload and evaluation state."
+                  />
+                }
+              />
+              <Route
+                path="/infrastructure"
+                element={
+                  <Placeholder
+                    title="Infrastructure"
+                    detail="Host, container, service, database and backup observations."
+                  />
+                }
+              />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
         </main>
       </div>
     </div>

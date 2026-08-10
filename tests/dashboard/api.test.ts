@@ -12,6 +12,9 @@ describe("dashboard commands", () => {
           configurationReady: true,
           liveProbeState: "not_run",
           approvalRequiredForProbe: true,
+          // PUT /api/v1/settings/telegram always includes this (src/control-api/app.ts) --
+          // omitting it here was stale fixture drift, not a real response shape.
+          webhookRegistered: true,
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),

@@ -12,6 +12,7 @@ import {
   modelRoutes,
 } from "../src/gateway/model-policy.js";
 import { PostgresAttemptLedger } from "../src/gateway/postgres-ledger.js";
+import { PostgresPolicyStore } from "../src/policy/postgres-policy-store.js";
 import type { ModelRoute, TaskClass } from "../src/gateway/types.js";
 
 const ALL_TASK_CLASSES: readonly TaskClass[] = [
@@ -131,7 +132,44 @@ async function main() {
       }
     }
     console.log(JSON.stringify(results, null, 2));
-    if (results.some((r) => !r.ok)) process.exitCode = 1;
+    if (results.some((r) => !r.ok)) {
+      process.exitCode = 1;
+      return;
+    }
+
+    // CONTRACT-015 M4: the canary now writes durable evidence instead of only
+    // printing to a terminal that nobody is required to read.
+    // PostgresPolicyStore.validate() refuses to advance a draft without a
+    // passing record bound to that policy's sha256, so this is what turns a
+    // remembered pre-flight into an enforced gate.
+    //
+    // Recording is skipped when POLICY_ID/POLICY_VERSION are absent, because
+    // the script is also useful as a bare connectivity check against no
+    // particular draft. It is never skipped silently on failure: a failing run
+    // returned above without writing anything.
+    const policyId = process.env.POLICY_ID;
+    const policyVersion = process.env.POLICY_VERSION;
+    if (policyId === undefined || policyVersion === undefined) {
+      console.error(
+        "canary passed; set POLICY_ID and POLICY_VERSION to record evidence against a draft",
+      );
+      return;
+    }
+    if (only !== undefined)
+      throw new Error(
+        "refusing to record evidence from a provider-filtered run: validate() requires every registered route to have passed",
+      );
+
+    await new PostgresPolicyStore(pool).recordCanaryEvidence(
+      policyId,
+      Number(policyVersion),
+      process.env.POLICY_CANARY_ACTOR ?? "policy-canary",
+      new Date(),
+      results,
+    );
+    console.error(
+      `recorded canary evidence for policy ${policyId} v${policyVersion} (${results.length} routes)`,
+    );
   } finally {
     await pool.end();
   }

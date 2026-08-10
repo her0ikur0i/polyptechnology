@@ -1,5 +1,6 @@
-import { isAbsolute, posix } from "node:path";
+import { isAbsolute } from "node:path";
 import type { ContractPublication } from "./types.js";
+import { ownedByManifest, safeRelativePath } from "../safe-path.js";
 export interface Command {
   executable: "git";
   args: ReadonlyArray<string>;
@@ -13,31 +14,12 @@ export interface PublicationContext {
   remote: string;
   branch: string;
 }
-function safePath(path: string): string {
-  if (
-    isAbsolute(path) ||
-    path.split(/[\\/]/).includes("..") ||
-    path.includes("\0") ||
-    /[*?[:]/.test(path)
-  )
-    throw new Error(`unsafe repository path: ${path}`);
-  const normalized = posix.normalize(path.replaceAll("\\", "/"));
-  if (
-    normalized === "." ||
-    normalized.startsWith("../") ||
-    normalized === ".git" ||
-    normalized.startsWith(".git/")
-  )
-    throw new Error(`unsafe repository path: ${path}`);
-  return normalized;
-}
-const owned = (path: string, manifest: ReadonlyArray<string>) =>
-  manifest.some((entry) => {
-    if (entry === "**") return false;
-    return entry.endsWith("/**")
-      ? entry.length > 3 && path.startsWith(entry.slice(0, -2))
-      : path === entry;
-  });
+// Governs what the final contract commit is allowed to publish. Shares one
+// implementation with the worker and patch-scope boundaries
+// (src/safe-path.ts) while keeping its own label and tests.
+const safePath = (path: string): string =>
+  safeRelativePath(path, "repository path");
+const owned = ownedByManifest;
 export function validateGitArguments(
   contract: ContractPublication,
   context: PublicationContext,

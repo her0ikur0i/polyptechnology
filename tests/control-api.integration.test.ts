@@ -9,6 +9,7 @@ import type { AddressInfo } from "node:net";
 import { createControlApi } from "../src/control-api/app.js";
 import { loadConfig } from "../src/config.js";
 import { PostgresWorkRepository } from "../src/work/postgres-repository.js";
+import { PostgresPolicyStore } from "../src/policy/postgres-policy-store.js";
 import type { RuntimePolicy } from "../src/policy/types.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -458,6 +459,35 @@ test(
       ).json();
       assert.equal(draft.state, "draft");
 
+      // CONTRACT-015 M4: POST /policy/validate now fails closed without a
+      // passing live-canary record for this exact policy content. Operationally
+      // the owner gets that record by running scripts/policy-canary.ts with
+      // POLICY_ID/POLICY_VERSION set; here it is written directly, because this
+      // test is about the HTTP lifecycle and must not call real providers or
+      // spend real money.
+      const canaryPool = new pg.Pool({ connectionString: databaseUrl });
+      try {
+        await new PostgresPolicyStore(canaryPool).recordCanaryEvidence(
+          draft.id,
+          draft.version,
+          "policy-canary",
+          new Date(),
+          [
+            {
+              provider: "deepseek",
+              requestedModelId: "deepseek-v4-flash",
+              ok: true,
+              detail: "round-trip ok",
+            },
+          ],
+        );
+      } finally {
+        await canaryPool.end();
+      }
+
+      // Refuses before the evidence exists is covered in
+      // tests/policy-postgres.integration.test.ts; this asserts the happy path
+      // still completes end to end through the API.
       const validated = await (
         await fetch(`${baseUrl}/api/v1/policy/validate`, {
           method: "POST",

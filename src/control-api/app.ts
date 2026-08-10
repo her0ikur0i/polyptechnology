@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import express from "express";
+import { rateLimit } from "express-rate-limit";
 import type { Express } from "express";
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
@@ -38,6 +39,10 @@ export interface ControlApiDeps {
 // policy routes wiring src/policy/owner-policy-service.ts. Queries and
 // commands stay separate (buildDashboardSnapshot vs. the command services
 // below), matching the ADR's stated boundary.
+// Lower-case canonical form. Every comparison against it folds case first,
+// because Express's router matches paths case-insensitively by default.
+const TELEGRAM_WEBHOOK_PATH = "/api/v1/telegram/webhook";
+
 export function createControlApi(deps: ControlApiDeps): Express {
   const { pool, config } = deps;
   const csrfSecret = deps.csrfSecret ?? config.csrfSecret;
@@ -57,6 +62,76 @@ export function createControlApi(deps: ControlApiDeps): Express {
   app.set("trust proxy", config.trustedProxyHops);
   app.use(express.json({ limit: "256kb" }));
   app.use(identifyOwner(config));
+
+  // Request throttling (CONTRACT-015 M3). The control plane spends real money
+  // per request through AiGateway, so this is a budget control as much as an
+  // availability one: src/gateway/postgres-ledger.ts caps spend per contract
+  // scope, but until now nothing capped request volume, so a flood could burn
+  // budget and CPU right up to that cap.
+  //
+  // Deliberately generous. The dashboard's own busiest pattern is the reply
+  // poller in src/dashboard/conversation-workspace.tsx at 1.5 s intervals,
+  // roughly 40 requests a minute while an assistant reply is pending, against
+  // a 300/minute default. API_RATE_LIMIT_PER_MINUTE exists so a protection
+  // against floods can never itself become the thing that locks the owner out
+  // of their own control plane.
+  const apiLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: config.apiRateLimitPerMinute,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "rate limited" },
+  });
+  // The Telegram webhook is authenticated by secret_token rather than by owner
+  // session, so it gets its own budget. Keeping the two separate means inbound
+  // Telegram traffic can never exhaust the owner's allowance, and the owner's
+  // dashboard use can never exhaust the webhook's -- which matters because both
+  // arrive through the same tunnel and therefore share a client address.
+  //
+  // Split into two tiers after the CONTRACT-015 M8 review: the webhook is the
+  // one route reachable without Cloudflare Access (Telegram cannot do
+  // interactive SSO), so an anonymous caller who merely knows the fixed path
+  // could previously spend the entire protective budget on rejected requests
+  // and deny the owner's real approval callbacks -- a credential-free DoS on
+  // the approval channel.
+  //
+  // Now the configured ceiling is consumed only AFTER the secret validates,
+  // and unauthenticated traffic is held off by a separate, looser guard that
+  // exists to protect CPU rather than to ration Telegram. An attacker
+  // exhausting the guard tier cannot touch the authenticated tier.
+  const webhookLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: config.webhookRateLimitPerMinute,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "rate limited" },
+  });
+  const webhookGuardLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: config.webhookRateLimitPerMinute * 4,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "rate limited" },
+  });
+  // Applied by explicit dispatch rather than app.use("/api/", ...) so the
+  // matching is on the full path and cannot be confused by mount-path
+  // stripping. Static assets and the SPA fallback are never throttled.
+  //
+  // Case-folded, and this is not cosmetic. Express matches routes
+  // case-insensitively unless "case sensitive routing" is enabled, which this
+  // app never enables -- so a case-sensitive comparison here disagreed with the
+  // router about which requests exist. `/API/v1/dashboard/snapshot` reached the
+  // real handler with no throttle at all, which meant the limiter M3 added to
+  // protect the AI budget could be skipped by holding down shift. Shipped
+  // broken in M3, found by the M8 independent review, verified before and after
+  // by live request.
+  app.use((req, res, next) => {
+    const path = req.path.toLowerCase();
+    if (!path.startsWith("/api/")) return next();
+    return path === TELEGRAM_WEBHOOK_PATH
+      ? webhookGuardLimiter(req, res, next)
+      : apiLimiter(req, res, next);
+  });
 
   const webhookRegistered =
     config.telegramWebhookSecret !== undefined &&
@@ -120,8 +195,12 @@ export function createControlApi(deps: ControlApiDeps): Express {
     config.telegramUserId !== undefined
   ) {
     app.post(
-      "/api/v1/telegram/webhook",
+      TELEGRAM_WEBHOOK_PATH,
       requireTelegramWebhookSecret(config.telegramWebhookSecret),
+      // After the secret check on purpose: only callers that proved they are
+      // Telegram consume the configured ceiling. Anonymous traffic is already
+      // held by webhookGuardLimiter above and never reaches here.
+      webhookLimiter,
       createTelegramWebhookHandler(
         pool,
         config.telegramChatId,
@@ -769,6 +848,22 @@ export function createControlApi(deps: ControlApiDeps): Express {
   );
 
   if (deps.dashboardDistPath) {
+    // Defence in depth alongside vite.config.ts's sourcemap:false. Even if a
+    // build somewhere re-enables map emission, the server refuses to hand the
+    // dashboard's original source to a browser (CONTRACT-015 M3).
+    app.use((req, res, next) => {
+      // Case-folded for the same reason the limiter dispatch is: a
+      // case-sensitive suffix test disagrees with what the filesystem may
+      // serve. Nothing leaked in practice here, because the static root is
+      // case-sensitive Linux and a mismatched-case request fell through to the
+      // SPA fallback -- but that is the filesystem upholding the promise, not
+      // this guard. Tightened by the CONTRACT-015 M8 review.
+      if (req.path.toLowerCase().endsWith(".map")) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      next();
+    });
     app.use(express.static(deps.dashboardDistPath));
     app.get("/*splat", (req, res, next) => {
       if (req.path.startsWith("/api/")) {

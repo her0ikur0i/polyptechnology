@@ -127,8 +127,11 @@ describe("dashboard", () => {
     );
     render(<DashboardApp initialSnapshot={snapshot} />);
     await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
+    // findBy, not getBy: the workspace is a code-split chunk (CONTRACT-015 M6),
+    // so navigating to it now crosses a Suspense boundary the owner also waits
+    // on. A synchronous query here would assert against the loading fallback.
     await userEvent.type(
-      screen.getByLabelText("Conversation title"),
+      await screen.findByLabelText("Conversation title"),
       "Vendor invoice tracker",
     );
     await userEvent.click(screen.getByRole("button", { name: "Start" }));
@@ -191,8 +194,11 @@ describe("dashboard", () => {
     );
     render(<DashboardApp initialSnapshot={snapshot} />);
     await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
+    // findBy, not getBy: the workspace is a code-split chunk (CONTRACT-015 M6),
+    // so navigating to it now crosses a Suspense boundary the owner also waits
+    // on. A synchronous query here would assert against the loading fallback.
     await userEvent.type(
-      screen.getByLabelText("Conversation title"),
+      await screen.findByLabelText("Conversation title"),
       "Vendor invoice tracker",
     );
     await userEvent.click(screen.getByRole("button", { name: "Start" }));
@@ -224,7 +230,9 @@ describe("dashboard", () => {
     );
     render(<DashboardApp initialSnapshot={snapshot} />);
     await userEvent.click(screen.getByRole("link", { name: /Policy/ }));
-    await userEvent.click(screen.getByRole("button", { name: "Create draft" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Create draft" }),
+    );
     expect(await screen.findByText(/policy-1/)).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith(
       "/api/v1/policy/draft",

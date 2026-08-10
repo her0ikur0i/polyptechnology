@@ -92,6 +92,24 @@ if (!TEST_DATABASE_URL) {
     assert.equal(v1.version, 1);
     assert.equal(v1.state, "draft");
 
+    // CONTRACT-015 M4: validate() now refuses a draft with no passing canary
+    // record bound to its content, so the live pre-flight is a gate rather
+    // than something an operator has to remember.
+    await store.recordCanaryEvidence(v1.id, 1, "policy-canary", now1, [
+      {
+        provider: "deepseek",
+        requestedModelId: "deepseek-v4-flash",
+        ok: true,
+        detail: "round-trip ok",
+      },
+      {
+        provider: "claude",
+        requestedModelId: "claude-sonnet-5",
+        ok: true,
+        detail: "round-trip ok",
+      },
+    ]);
+
     const validated1 = await store.validate(v1.id, 1, validatorId, now1);
     assert.equal(validated1.state, "validated");
 
@@ -118,6 +136,14 @@ if (!TEST_DATABASE_URL) {
     assert.equal(v2.version, 2);
     assert.equal(v2.state, "draft");
 
+    await store.recordCanaryEvidence(v2.id, 2, "policy-canary", now2, [
+      {
+        provider: "deepseek",
+        requestedModelId: "deepseek-v4-flash",
+        ok: true,
+        detail: "round-trip ok",
+      },
+    ]);
     await store.validate(v2.id, 2, validatorId, now2);
     await store.approve(v2.id, 2, approverId, now2);
     const active2 = await store.activate(v2.id, 2, activatorId, now2);
@@ -228,6 +254,119 @@ if (!TEST_DATABASE_URL) {
       [draft.id],
     );
     assert.equal((rows.rows[0] as { state: string }).state, "draft");
+  });
+
+  test("validation fails closed without passing canary evidence", async () => {
+    const store = new PostgresPolicyStore(pool);
+    const policyKey = `test-policy-${randomUUID()}`;
+    const creatorId = `user-${randomUUID()}`;
+    const validatorId = `validator-${randomUUID()}`;
+    const now = new Date();
+
+    const draft = await store.createDraft(
+      policyKey,
+      makeValidPolicy(10),
+      creatorId,
+      now,
+    );
+
+    // Structurally valid, so this is not the structural validator refusing --
+    // it is the missing live-canary record.
+    await assert.rejects(
+      store.validate(draft.id, draft.version, validatorId, now),
+      /requires a passing canary/i,
+    );
+    const stillDraft = await pool.query(
+      `SELECT state FROM orchestration_policies WHERE id = $1`,
+      [draft.id],
+    );
+    assert.equal((stillDraft.rows[0] as { state: string }).state, "draft");
+
+    // A canary that proves nothing is refused rather than recorded.
+    await assert.rejects(
+      store.recordCanaryEvidence(draft.id, draft.version, "canary", now, []),
+      /at least one route result/i,
+    );
+    // A partial pass cannot be laundered into evidence either.
+    await assert.rejects(
+      store.recordCanaryEvidence(draft.id, draft.version, "canary", now, [
+        {
+          provider: "deepseek",
+          requestedModelId: "deepseek-v4-flash",
+          ok: true,
+          detail: "round-trip ok",
+        },
+        {
+          provider: "claude",
+          requestedModelId: "claude-sonnet-5",
+          ok: false,
+          detail: "envelope parse failed",
+        },
+      ]),
+      /1 of 2 routes failed/i,
+    );
+
+    // Still refused, because neither attempt wrote anything.
+    await assert.rejects(
+      store.validate(draft.id, draft.version, validatorId, now),
+      /requires a passing canary/i,
+    );
+
+    await store.recordCanaryEvidence(draft.id, draft.version, "canary", now, [
+      {
+        provider: "deepseek",
+        requestedModelId: "deepseek-v4-flash",
+        ok: true,
+        detail: "round-trip ok",
+      },
+    ]);
+    const validated = await store.validate(
+      draft.id,
+      draft.version,
+      validatorId,
+      now,
+    );
+    assert.equal(validated.state, "validated");
+  });
+
+  test("canary evidence does not carry across policy contents", async () => {
+    const store = new PostgresPolicyStore(pool);
+    const creatorId = `user-${randomUUID()}`;
+    const validatorId = `validator-${randomUUID()}`;
+    const now = new Date();
+
+    // Two drafts under the same key with different content. Evidence recorded
+    // against the first must not admit the second: validate() matches on
+    // policy_sha256 precisely so a draft edited after its canary ran cannot
+    // inherit the old proof.
+    const keyA = `test-policy-${randomUUID()}`;
+    const first = await store.createDraft(
+      keyA,
+      makeValidPolicy(10),
+      creatorId,
+      now,
+    );
+    await store.recordCanaryEvidence(first.id, first.version, "canary", now, [
+      {
+        provider: "deepseek",
+        requestedModelId: "deepseek-v4-flash",
+        ok: true,
+        detail: "round-trip ok",
+      },
+    ]);
+    await store.validate(first.id, first.version, validatorId, now);
+
+    const keyB = `test-policy-${randomUUID()}`;
+    const other = await store.createDraft(
+      keyB,
+      makeValidPolicy(20),
+      creatorId,
+      now,
+    );
+    await assert.rejects(
+      store.validate(other.id, other.version, validatorId, now),
+      /requires a passing canary/i,
+    );
   });
 
   after(() => pool.end());

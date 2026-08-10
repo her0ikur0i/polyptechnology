@@ -10,6 +10,16 @@ export interface AppConfig {
   databaseUrl: string;
   accessAuthMode: AccessAuthMode;
   trustedProxyHops: number;
+  // Requests per minute per client address. Sized well above what the
+  // dashboard itself generates -- the reply poller in
+  // src/dashboard/conversation-workspace.tsx runs at 1.5 s intervals, about 40
+  // requests a minute while waiting on an assistant reply -- so ordinary owner
+  // use never approaches the ceiling. Configurable precisely so a throttle
+  // meant to stop a flood can never become the thing that locks the owner out.
+  apiRateLimitPerMinute: number;
+  // The Telegram webhook is authenticated by secret_token rather than by owner
+  // session, so it is throttled separately and more tightly.
+  webhookRateLimitPerMinute: number;
   logLevel: "debug" | "info" | "warn" | "error";
   csrfSecret: string;
   projectWorkspacesRoot: string;
@@ -116,11 +126,32 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: integer("PORT", env.PORT ?? "4173", 1, 65535),
     databaseUrl: env.DATABASE_URL ?? "postgresql://polyp@127.0.0.1:5432/polyp",
     accessAuthMode,
+    // Raising this above 0 makes Express trust that many leading
+    // X-Forwarded-For entries, which are attacker-controlled unless exactly
+    // that many *verified* proxies sit in front and each overwrites rather
+    // than appends the header. At 0 the rate limiter keys on the real socket
+    // address and forged X-Forwarded-For values are ignored entirely --
+    // confirmed by the CONTRACT-015 M8 review, which also confirmed that
+    // setting it to 1 lets a spoofed header mint a fresh rate-limit budget.
+    // Same reasoning as CLOUDFLARE_TRUST_NETWORK_BOUNDARY above: a trust
+    // setting is only as good as the network guarantee behind it.
     trustedProxyHops: integer(
       "TRUSTED_PROXY_HOPS",
       env.TRUSTED_PROXY_HOPS ?? "0",
       0,
       8,
+    ),
+    apiRateLimitPerMinute: integer(
+      "API_RATE_LIMIT_PER_MINUTE",
+      env.API_RATE_LIMIT_PER_MINUTE ?? "300",
+      30,
+      100_000,
+    ),
+    webhookRateLimitPerMinute: integer(
+      "WEBHOOK_RATE_LIMIT_PER_MINUTE",
+      env.WEBHOOK_RATE_LIMIT_PER_MINUTE ?? "60",
+      10,
+      100_000,
     ),
     logLevel: enumValue("LOG_LEVEL", env.LOG_LEVEL ?? "info", [
       "debug",

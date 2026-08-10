@@ -277,6 +277,70 @@ export class PostgresPolicyStore {
     }
   }
 
+  // Durable evidence that every registered route in this policy was exercised
+  // live and answered correctly. Written by scripts/policy-canary.ts after a
+  // real round trip through AiGateway; read by validate(), which refuses to
+  // advance a draft without it.
+  //
+  // Fails closed in three ways: an empty result set proves nothing and is
+  // refused; any failing route refuses the whole batch, so a partial canary
+  // cannot be laundered into a pass; and the evidence is bound to the policy's
+  // sha256, so editing the draft afterwards invalidates it.
+  async recordCanaryEvidence(
+    id: string,
+    expectedVersion: number,
+    actorId: string,
+    now: Date,
+    results: ReadonlyArray<{
+      provider: string;
+      requestedModelId: string;
+      ok: boolean;
+      detail: string;
+    }>,
+  ): Promise<void> {
+    assertBoundedNonblank(actorId, "actorId");
+    if (results.length === 0)
+      throw new Error("Canary evidence requires at least one route result");
+    const failed = results.filter((result) => !result.ok);
+    if (failed.length > 0)
+      throw new Error(
+        `Canary evidence rejected: ${failed.length} of ${results.length} routes failed`,
+      );
+
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const policy = await fetchPolicy(client, id);
+      if (!policy) throw new Error("Policy not found");
+      if (policy.version !== expectedVersion)
+        throw new Error("Version mismatch");
+
+      await insertEvent(
+        client,
+        policy.policyKey,
+        policy.version,
+        "canary_passed",
+        actorId,
+        now,
+        {
+          policySha256: policy.policySha256,
+          routeCount: results.length,
+          routes: results.map((result) => ({
+            provider: result.provider,
+            requestedModelId: result.requestedModelId,
+            detail: result.detail,
+          })),
+        },
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async validate(
     id: string,
     expectedVersion: number,
@@ -296,6 +360,34 @@ export class PostgresPolicyStore {
       const validatedErrors = validatePolicy(runtimePolicy);
       if (validatedErrors.length > 0)
         throw new Error("Policy validation failed");
+
+      // Structural validation above proves the routing table is well formed.
+      // It cannot prove any route in it actually works -- that is what
+      // scripts/policy-canary.ts exercises live, and until CONTRACT-015 M4 the
+      // only thing making anyone run it was a sentence in docs/RESUME.md. A
+      // safety check that depends on operator memory is not a safety check.
+      //
+      // The canary is not invoked from here. It calls real providers and
+      // spends real money, and a repository method is the wrong place for
+      // network I/O and billing. Instead it records durable evidence via
+      // recordCanaryEvidence(), and validation refuses to proceed without a
+      // passing record for this exact policy content.
+      //
+      // Matching on policy_sha256 rather than on (key, version) is deliberate:
+      // a draft can be edited in place, so evidence gathered against earlier
+      // content must not carry over to a policy that has since changed.
+      const canary = await client.query(
+        `SELECT 1 FROM policy_events
+          WHERE policy_key = $1 AND policy_version = $2
+            AND event_type = 'canary_passed'
+            AND payload->>'policySha256' = $3
+          LIMIT 1`,
+        [policy.policyKey, policy.version, policy.policySha256],
+      );
+      if (canary.rowCount !== 1)
+        throw new Error(
+          "Policy validation requires a passing canary for this policy content",
+        );
 
       const updated = await client.query(
         `UPDATE orchestration_policies

@@ -1,25 +1,12 @@
-import { isAbsolute, posix, relative, sep } from "node:path";
+import { isAbsolute, relative, sep } from "node:path";
 import type { WorkerCommand, WorkerJob } from "./types.js";
+import { safeRelativePath } from "../safe-path.js";
 const image = /^[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/;
-export function safeWorkerPath(path: string): string {
-  if (
-    path.length === 0 ||
-    isAbsolute(path) ||
-    path.includes("\0") ||
-    path.split(/[\\/]/).includes("..") ||
-    /[*?[:]/.test(path)
-  )
-    throw new Error("unsafe worker path");
-  const normalized = posix.normalize(path.replaceAll("\\", "/"));
-  if (
-    normalized === "." ||
-    normalized === ".git" ||
-    normalized.startsWith(".git/") ||
-    normalized.startsWith("../")
-  )
-    throw new Error("unsafe worker path");
-  return normalized;
-}
+// Governs what an isolated worker may read or write inside its workspace.
+// Shares one implementation with the publication and patch-scope boundaries
+// (src/safe-path.ts) while keeping its own label and tests.
+export const safeWorkerPath = (path: string): string =>
+  safeRelativePath(path, "worker path");
 export function planWorker(job: WorkerJob): WorkerCommand {
   if (
     !isAbsolute(job.isolationRoot) ||

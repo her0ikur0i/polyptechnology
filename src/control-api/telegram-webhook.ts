@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { Request, Response } from "express";
 import { PostgresApprovalRepository } from "../approvals/postgres-repository.js";
 import { hashApprovalToken } from "../approvals/token.js";
@@ -13,9 +14,25 @@ const WEBHOOK_SECRET_HEADER = "x-telegram-bot-api-secret-token";
 // every call as X-Telegram-Bot-Api-Secret-Token), not a bespoke scheme.
 // Absence/mismatch fails closed with no callback processed, matching the
 // same doc's "Telegram outage never grants authority" posture.
+// Compared in constant time, matching requireCsrf in ./auth.ts rather than
+// deviating from the pattern this codebase already established for exactly this
+// kind of comparison. Raised by the CONTRACT-015 M8 review: a plain `!==`
+// leaks position information through timing, and the throttle that made that
+// impractical was itself bypassable until the same review's CRITICAL finding
+// was fixed. Hashing first gives both sides a fixed, equal length, so
+// timingSafeEqual cannot throw on a length mismatch and the comparison reveals
+// nothing about the real secret's length either.
+function matchesWebhookSecret(presented: string | undefined, secret: string) {
+  if (presented === undefined) return false;
+  return timingSafeEqual(
+    createHash("sha256").update(presented).digest(),
+    createHash("sha256").update(secret).digest(),
+  );
+}
+
 export function requireTelegramWebhookSecret(secret: string) {
   return (req: Request, res: Response, next: () => void): void => {
-    if (req.header(WEBHOOK_SECRET_HEADER) !== secret) {
+    if (!matchesWebhookSecret(req.header(WEBHOOK_SECRET_HEADER), secret)) {
       res.status(401).json({ error: "invalid webhook secret" });
       return;
     }

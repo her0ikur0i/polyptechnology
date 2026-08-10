@@ -3,7 +3,28 @@ import type {
   TelegramSettings,
   TelegramSettingsCommand,
 } from "./types.js";
-import { parseDashboardSnapshot } from "./validation.js";
+import {
+  parseActivePolicy,
+  parseCodexOverrideResult,
+  parseConversationAttachment,
+  parseConversationAttachmentList,
+  parseConversationMessageList,
+  parseConversationProposal,
+  parseConversationStartResult,
+  parseConversationSummary,
+  parseConversationSummaryList,
+  parseDashboardSnapshot,
+  parseFactoryProjectResult,
+  parseGenerationTaskResult,
+  parsePolicyStateResult,
+  parseProposalApprovalResult,
+  parseProposalCreationResult,
+  parseProposalDraftResult,
+  parseReplyTaskStatus,
+  parseSendMessageResult,
+  parseTelegramSettings,
+  parseTranslationTaskResult,
+} from "./validation.js";
 export class DashboardApiError extends Error {
   constructor(
     readonly status: number,
@@ -60,7 +81,7 @@ export async function saveTelegramSettings(
         ? "The settings command was not authorized."
         : "Telegram settings were not saved.",
     );
-  return response.json() as Promise<TelegramSettings>;
+  return parseTelegramSettings(await response.json());
 }
 export interface FactoryProjectCommand {
   slug: string;
@@ -81,11 +102,7 @@ export async function createFactoryProject(
     command.requirements.length < 1
   )
     throw new Error("Project blueprint is incomplete.");
-  return commandRequest<{
-    projectId: string;
-    state: string;
-    repositoryRef: string;
-  }>(
+  return commandRequest(
     "/api/v1/factory/projects",
     {
       ...command,
@@ -93,6 +110,7 @@ export async function createFactoryProject(
       occurredAt: new Date().toISOString(),
     },
     csrfToken,
+    parseFactoryProjectResult,
     signal,
   );
 }
@@ -103,11 +121,13 @@ export async function generateProject(
 ) {
   if (!/^[a-f0-9-]{36}$/.test(projectId))
     throw new Error("Invalid project id.");
-  return commandRequest<{
-    taskId: string;
-    contractId: string;
-    milestoneId: string;
-  }>(`/api/v1/factory/projects/${projectId}/generate`, {}, csrfToken, signal);
+  return commandRequest(
+    `/api/v1/factory/projects/${projectId}/generate`,
+    {},
+    csrfToken,
+    parseGenerationTaskResult,
+    signal,
+  );
 }
 export async function createConversationProposal(
   command: { projectId: string; title: string; objective: string },
@@ -120,11 +140,7 @@ export async function createConversationProposal(
     command.objective.trim().length < 10
   )
     throw new Error("Conversation proposal is incomplete.");
-  return commandRequest<{
-    conversationId: string;
-    proposalId: string;
-    state: string;
-  }>(
+  return commandRequest(
     "/api/v1/orchestrator/proposals",
     {
       ...command,
@@ -132,6 +148,7 @@ export async function createConversationProposal(
       occurredAt: new Date().toISOString(),
     },
     csrfToken,
+    parseProposalCreationResult,
     signal,
   );
 }
@@ -151,13 +168,7 @@ export async function draftProposal(
   csrfToken: string,
   signal?: AbortSignal,
 ) {
-  return commandRequest<{
-    proposalId: string;
-    conversationId: string;
-    state: string;
-    version: number;
-    contractCandidate: string;
-  }>(
+  return commandRequest(
     `/api/v1/orchestrator/conversations/${conversationId}/proposals`,
     {
       ...command,
@@ -165,6 +176,7 @@ export async function draftProposal(
       occurredAt: new Date().toISOString(),
     },
     csrfToken,
+    parseProposalDraftResult,
     signal,
   );
 }
@@ -174,17 +186,11 @@ export async function approveProposal(
   csrfToken: string,
   signal?: AbortSignal,
 ) {
-  return commandRequest<{
-    proposalId: string;
-    projectId: string;
-    conversationId: string;
-    approvalId: string;
-    contractCandidate: string;
-    candidateSha256: string;
-  }>(
+  return commandRequest(
     `/api/v1/orchestrator/proposals/${proposalId}/approve`,
     command,
     csrfToken,
+    parseProposalApprovalResult,
     signal,
   );
 }
@@ -194,10 +200,11 @@ export async function rejectProposal(
   csrfToken: string,
   signal?: AbortSignal,
 ) {
-  return commandRequest<ConversationProposal>(
+  return commandRequest(
     `/api/v1/orchestrator/proposals/${proposalId}/reject`,
     command,
     csrfToken,
+    parseConversationProposal,
     signal,
   );
 }
@@ -217,7 +224,7 @@ export async function getProposal(
   if (response.status === 404) return undefined;
   if (!response.ok)
     throw new DashboardApiError(response.status, "Proposal is unavailable.");
-  return response.json();
+  return parseConversationProposal(await response.json());
 }
 export async function translateProposal(
   proposalId: string,
@@ -225,10 +232,11 @@ export async function translateProposal(
   csrfToken: string,
   signal?: AbortSignal,
 ) {
-  return commandRequest<{ taskId: string }>(
+  return commandRequest(
     `/api/v1/orchestrator/proposals/${proposalId}/translate`,
     command,
     csrfToken,
+    parseTranslationTaskResult,
     signal,
   );
 }
@@ -270,12 +278,7 @@ export async function startConversation(
 ) {
   if (command.title.trim().length < 1)
     throw new Error("Conversation title is required.");
-  return commandRequest<{
-    conversationId: string;
-    projectId: string;
-    title: string;
-    version: number;
-  }>(
+  return commandRequest(
     "/api/v1/orchestrator/conversations",
     {
       ...command,
@@ -283,6 +286,7 @@ export async function startConversation(
       occurredAt: new Date().toISOString(),
     },
     csrfToken,
+    parseConversationStartResult,
     signal,
   );
 }
@@ -294,10 +298,7 @@ export async function sendConversationMessage(
 ) {
   if (command.content.trim().length < 1)
     throw new Error("Message cannot be empty.");
-  return commandRequest<{
-    message: ConversationMessage;
-    replyTaskId: string;
-  }>(
+  return commandRequest(
     `/api/v1/orchestrator/conversations/${conversationId}/messages`,
     {
       ...command,
@@ -305,6 +306,7 @@ export async function sendConversationMessage(
       occurredAt: new Date().toISOString(),
     },
     csrfToken,
+    parseSendMessageResult,
     signal,
   );
 }
@@ -323,7 +325,7 @@ export async function listConversationMessages(
   );
   if (!response.ok)
     throw new DashboardApiError(response.status, "Messages are unavailable.");
-  return response.json();
+  return parseConversationMessageList(await response.json());
 }
 export async function listProjectConversations(
   projectId: string,
@@ -347,7 +349,7 @@ export async function listProjectConversations(
       response.status,
       "Conversations are unavailable.",
     );
-  return response.json();
+  return parseConversationSummaryList(await response.json());
 }
 export async function renameConversation(
   conversationId: string,
@@ -355,10 +357,11 @@ export async function renameConversation(
   csrfToken: string,
   signal?: AbortSignal,
 ): Promise<ConversationSummary> {
-  return commandRequest<ConversationSummary>(
+  return commandRequest(
     `/api/v1/orchestrator/conversations/${conversationId}/rename`,
     command,
     csrfToken,
+    parseConversationSummary,
     signal,
   );
 }
@@ -372,10 +375,11 @@ export async function setConversationArchived(
   csrfToken: string,
   signal?: AbortSignal,
 ): Promise<ConversationSummary> {
-  return commandRequest<ConversationSummary>(
+  return commandRequest(
     `/api/v1/orchestrator/conversations/${conversationId}/archive`,
     command,
     csrfToken,
+    parseConversationSummary,
     signal,
   );
 }
@@ -393,7 +397,7 @@ export async function getReplyTaskStatus(
       response.status,
       "Reply status is unavailable.",
     );
-  return response.json();
+  return parseReplyTaskStatus(await response.json());
 }
 export async function uploadConversationAttachment(
   conversationId: string,
@@ -427,7 +431,7 @@ export async function uploadConversationAttachment(
         : "Upload failed.";
     throw new DashboardApiError(response.status, message);
   }
-  return response.json();
+  return parseConversationAttachment(await response.json());
 }
 export async function listConversationAttachments(
   conversationId: string,
@@ -447,7 +451,7 @@ export async function listConversationAttachments(
       response.status,
       "Attachments are unavailable.",
     );
-  return response.json();
+  return parseConversationAttachmentList(await response.json());
 }
 export interface PolicyStateResult {
   id: string;
@@ -461,10 +465,11 @@ export async function createPolicyDraft(
 ) {
   if (command.policyKey.trim().length < 1)
     throw new Error("Policy key is required.");
-  return commandRequest<PolicyStateResult>(
+  return commandRequest(
     "/api/v1/policy/draft",
     command,
     csrfToken,
+    parsePolicyStateResult,
     signal,
   );
 }
@@ -473,10 +478,11 @@ export async function validatePolicyDraft(
   csrfToken: string,
   signal?: AbortSignal,
 ) {
-  return commandRequest<PolicyStateResult>(
+  return commandRequest(
     "/api/v1/policy/validate",
     command,
     csrfToken,
+    parsePolicyStateResult,
     signal,
   );
 }
@@ -485,10 +491,11 @@ export async function approvePolicyDraft(
   csrfToken: string,
   signal?: AbortSignal,
 ) {
-  return commandRequest<PolicyStateResult>(
+  return commandRequest(
     "/api/v1/policy/approve",
     command,
     csrfToken,
+    parsePolicyStateResult,
     signal,
   );
 }
@@ -497,10 +504,11 @@ export async function activatePolicyDraft(
   csrfToken: string,
   signal?: AbortSignal,
 ) {
-  return commandRequest<PolicyStateResult>(
+  return commandRequest(
     "/api/v1/policy/activate",
     command,
     csrfToken,
+    parsePolicyStateResult,
     signal,
   );
 }
@@ -509,10 +517,11 @@ export async function rollbackPolicy(
   csrfToken: string,
   signal?: AbortSignal,
 ) {
-  return commandRequest<PolicyStateResult>(
+  return commandRequest(
     "/api/v1/policy/rollback",
     command,
     csrfToken,
+    parsePolicyStateResult,
     signal,
   );
 }
@@ -521,10 +530,11 @@ export async function createCodexOverride(
   csrfToken: string,
   signal?: AbortSignal,
 ) {
-  return commandRequest<{ id: string; taskId: string; expiresAt: string }>(
+  return commandRequest(
     "/api/v1/policy/codex-override",
     command,
     csrfToken,
+    parseCodexOverrideResult,
     signal,
   );
 }
@@ -548,12 +558,17 @@ export async function loadActivePolicy(
       response.status,
       "Active policy is unavailable.",
     );
-  return response.json();
+  return parseActivePolicy(await response.json());
 }
+// parse is mandatory, not optional: a new call site can't compile without
+// wiring a validator, which is exactly the gap this milestone closes --
+// every one of these commands used to hand its response to the caller on
+// an unchecked `as` cast (CONTRACT-015 M5).
 async function commandRequest<T>(
   path: string,
   command: unknown,
   csrfToken: string,
+  parse: (value: unknown) => T,
   signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch(path, {
@@ -574,5 +589,5 @@ async function commandRequest<T>(
         ? "Owner authorization is required."
         : "The command was not accepted.",
     );
-  return response.json() as Promise<T>;
+  return parse(await response.json());
 }
