@@ -347,7 +347,18 @@ test("streamed and buffered answers settle the ledger the same way", async () =>
   assert.equal(result.content, "answer");
   assert.equal(result.attempt.outcome, "succeeded");
   assert.equal(result.attempt.route.provider, "claude");
-  assert.ok(result.attempt.usage!.costUsdMicros > 0);
+  // Usage really was settled, asserted on tokens rather than dollars.
+  //
+  // This used to assert `costUsdMicros > 0`, which quietly depended on the
+  // ledger recording a cost for Claude -- and Claude is reached over a
+  // subscription, where no per-token charge exists. The CLI reports what the
+  // tokens *would* have cost on metered pricing and the gateway banked it, so
+  // this assertion was passing on money nobody was ever charged. Tokens are
+  // the real signal for a subscription plan; the dollar figure is now zero and
+  // that is the truthful value.
+  assert.ok(result.attempt.usage!.inputTokens > 0);
+  assert.ok(result.attempt.usage!.outputTokens > 0);
+  assert.equal(result.attempt.usage!.costUsdMicros, 0);
 });
 
 test("the prompt never appears in argv", async () => {

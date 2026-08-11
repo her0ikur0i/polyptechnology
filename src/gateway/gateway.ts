@@ -9,6 +9,7 @@ import type {
   ModelRoute,
 } from "./types.js";
 import { ManagedInvocationError } from "./types.js";
+import { withTruthfulCost } from "./provider-billing.js";
 const stable = (value: unknown) =>
   JSON.stringify(value, (_key, item) =>
     item instanceof Set ? [...item].sort() : item,
@@ -109,7 +110,7 @@ export class AiGateway {
       // buffered one, or the two would drift and only one would be tested.
       const streaming =
         request.onDelta !== undefined && adapter.invokeStreaming !== undefined;
-      const result = streaming
+      const rawResult = streaming
         ? await adapter.invokeStreaming!(
             route,
             request.messages,
@@ -125,6 +126,11 @@ export class AiGateway {
             request.signal,
             request.resumeSessionId,
           );
+      // Subscription providers report what their tokens *would* have cost on
+      // metered pricing. Recording that as spend made 97% of this system's
+      // reported spend money nobody was charged, and exhausted real budget
+      // scopes with it. Tokens are kept; the imaginary dollars are not.
+      const result = withTruthfulCost(route, rawResult);
       let rejection: string | undefined;
       if (result.resolvedModelId !== route.requestedModelId)
         rejection = "resolved_model_mismatch";

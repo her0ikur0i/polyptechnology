@@ -89,11 +89,22 @@ test("a failure with no provider attempt says so instead of blaming the provider
   });
 
   const text = textOf(transport);
-  // The old wording accused the provider of returning unusable output on
+  // The first wording accused the provider of returning unusable output on
   // failures where no provider was ever called — visible to the owner as
   // "0 in · 0 out" on the same message.
   assert.ok(!text.includes("provider returned unusable output"));
-  assert.ok(text.includes("the run failed before producing output"));
+  // The second wording, "the run failed before producing output", was the same
+  // mistake one step quieter: `invalid_output` is a catch-all for every throw
+  // from every driver, including throws that happen long after output exists.
+  // The owner received "the run failed before producing output" directly above
+  // "patch failed to apply cleanly: corrupt patch at line 76" — a patch that
+  // failed to apply is output, and the two lines contradicted each other.
+  assert.ok(!text.includes("before producing output"));
+  // A catch-all may claim only what a catch-all knows.
+  assert.ok(text.includes("the run failed"));
+  // And the real error is still carried, which is the line that actually says
+  // what happened.
+  assert.ok(text.includes("idempotency intent mismatch"));
   assert.ok(text.includes("idempotency intent mismatch"));
   assert.ok(text.includes("No provider call was made"));
 });

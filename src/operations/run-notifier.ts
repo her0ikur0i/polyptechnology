@@ -213,13 +213,25 @@ export const DETAIL_LIMIT = 600;
 // `invalid_output` used to read "provider returned unusable output". That is a
 // specific, checkable accusation, and it was false every time the driver threw
 // before reaching a provider — which the owner could see, because the same
-// message said `0 in · 0 out` and `$0.00`. The catch-all now describes what is
-// actually known (the run threw) and the real error is carried alongside it.
+// message said `0 in · 0 out` and `$0.00`.
+//
+// Its replacement, "the run failed before producing output", was the same
+// mistake one step quieter. `invalid_output` is a catch-all for *every* throw
+// from every driver, so it also covers throws that happen long after output
+// exists. The owner read this on their phone:
+//
+//   ❌ Patch failed · the run failed before producing output
+//      patch failed to apply cleanly: error: corrupt patch at line 76
+//
+// A patch that failed to apply is output. The two lines contradict each other,
+// and the detail line is the honest one. The catch-all now claims only what a
+// catch-all can know -- that the run failed -- and lets the carried error say
+// what happened.
 const REASON_TEXT: Record<string, string> = {
   policy: "refused by routing policy",
   verification: "verification gate failed",
   worker: "worker or transport failure",
-  invalid_output: "the run failed before producing output",
+  invalid_output: "the run failed",
 };
 
 export class TelegramRunNotifier implements RunNotifier {

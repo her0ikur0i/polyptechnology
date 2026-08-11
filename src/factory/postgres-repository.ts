@@ -166,8 +166,39 @@ export class PostgresProjectFactory {
     blueprintVersionId: string;
     expectedVersion: number;
   }): Promise<GeneratedProject> {
+    // The project adopts the blueprint's display name.
+    //
+    // It never did, so a project stayed "Untitled project" for its whole life
+    // even after the factory had derived a real name for it. Every Telegram
+    // report the owner received read:
+    //
+    //   ✅ Blueprint translation succeeded
+    //   Untitled project
+    //
+    // fourteen times in one evening, for fourteen different projects, one of
+    // which the blueprint had named "Slugify". Naming work in human terms is a
+    // standing rule (CONTRACT-017B); it cannot be met by a surface reading a
+    // column nothing ever fills in.
+    //
+    // Only `display_name` is adopted. `slug` stays as created, because
+    // `repository_ref`, `workspace_ref`, `database_namespace` and
+    // `budget_scope` were all derived from it at creation
+    // (isolatedProjectReferences) and are identity, not labels -- renaming
+    // those would desync a workspace that already exists on disk.
     const result = await this.pool.query(
-      "UPDATE generated_projects g SET blueprint_id=v.blueprint_id, blueprint_version_id=$2, version=g.version+1, updated_at=CURRENT_TIMESTAMP FROM project_blueprint_versions v WHERE g.id=$1 AND v.id=$2 AND v.status='published' AND g.version=$3 RETURNING g.*",
+      `UPDATE generated_projects g
+          SET blueprint_id = v.blueprint_id,
+              blueprint_version_id = $2,
+              display_name = COALESCE(
+                NULLIF(v.document->>'displayName', ''),
+                g.display_name
+              ),
+              version = g.version + 1,
+              updated_at = CURRENT_TIMESTAMP
+         FROM project_blueprint_versions v
+        WHERE g.id = $1 AND v.id = $2 AND v.status = 'published'
+          AND g.version = $3
+      RETURNING g.*`,
       [input.projectId, input.blueprintVersionId, input.expectedVersion],
     );
     if (result.rowCount !== 1)
