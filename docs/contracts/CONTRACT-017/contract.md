@@ -13,6 +13,72 @@ Prioritised ahead of the rest of the chat work at the owner's explicit request
 (2026-08-10), which is why CONTRACT-016 was descoped by its Amendment 1 rather
 than left to absorb this.
 
+## Amendment 1 (2026-08-10, owner-instructed) — the assistant is capable
+
+**This amendment weakens a boundary this contract's own text said it would not
+bend.** It is recorded at the top, in the contract, rather than left to a code
+comment, because that is the difference between a decision and a drift.
+
+The owner instructed that the assistant reachable from Telegram be genuinely
+capable rather than an interviewer that can only ask questions and draft
+proposals. As of M5 it runs with tools — read, write, run commands — inside
+`/root/polyptechnology-next`, as root, under an explicit `--allowedTools`
+list. The trade-off was put to the owner directly and they made the call for a
+single-owner controlled machine.
+
+What that changes, stated exactly:
+
+- The bullet below reading "**Nothing executes because it was asked for in a
+  chat**" no longer holds for the **assistant conversation** path. The assistant
+  can change this repository if the owner asks it to in Telegram.
+- It **still holds for the factory's generation pipeline**. ADR-0002's
+  `draft → owner_review → approved → handed_off` gate is untouched: a
+  conversation cannot cause a blueprint, a generated project, or a publication.
+  `scripts/propose.ts` exists so the assistant's route into factory work is a
+  proposal awaiting the owner's decision, and the system prompt tells it to
+  prefer that over building the owner's product by hand.
+- The **closed command set** (M6) is unchanged and still closed. Commands are
+  not the capable path; conversation is. A command that is not in the set is
+  refused, not interpreted.
+- Identity checking is now load-bearing in a way it was not before. Previously
+  an unauthorized message reaching the handler would have become an untrusted
+  conversation message; now it would reach something that can act. The check
+  runs in the poller, before parsing, against both chat and user id — M7 tests
+  that boundary as the primary security surface of this contract.
+
+The honest summary of the residual risk: **anything the owner can be talked into
+asking for, the assistant can do**, and it does it as root. Reverting is
+`ASSISTANT_TOOLS` in `sequence.env` plus two lines in the unit file.
+
+## Amendment 2 (2026-08-11, owner-instructed) — the resume protocol, and what M0 already covers
+
+Two sessions in a row ended with the connection dropping mid-milestone. Nothing
+was lost either time, but only because the working tree survived — `docs/RESUME.md`
+itself was wrong, claiming M5 had not started when its evidence file was already
+written, and quoting a test count three milestones stale. A resume file that is
+updated only when someone remembers is not a protocol.
+
+- **`docs/RESUME.md` is updated as the last step of every milestone**, not at
+  the end of the contract. `scripts/resume-checkpoint.ts` regenerates the
+  volatile part of it — milestone state from `evidence/M<n>-*.md`, `git log`,
+  `git status` — so the update is mechanical and cannot silently rot.
+- The owner reconfirmed on 2026-08-11 that the standing M0 authority covers, for
+  the remainder of this contract: applying migration `0015` to the **real**
+  staging database, restarting `polyp-sequence.service`, live Telegram drills
+  that spend real provider money, and the single commit and push at M8. It still
+  excludes DNS, public exposure, secrets, production promotion, and
+  `polyptech-dashboard.service`.
+
+**Session-based continuity is explicitly deferred to CONTRACT-017A**, by owner
+decision on 2026-08-11. Conversation history today is unbounded: every turn
+replays the entire transcript, so cost climbs with thread length and a long
+enough thread will eventually be refused by the provider. `SYSTEM_PROMPT_FINGERPRINT`
+(`src/operations/conversation-reply-driver.ts`) is a workaround for one symptom
+of that design — a stale transcript contradicting a changed prompt — not a fix
+for the design. The real fix is storing a provider session id per conversation
+and resuming it. That touches `src/gateway/**` and needs a schema column, so it
+is its own contract rather than a widening of this one at M6 of M8.
+
 ## Depends on
 
 CONTRACT-006/010 (accepted): `src/approvals/**` — the approval record, the
@@ -58,7 +124,9 @@ Concretely, and these are constraints on the design rather than aspirations:
   same classification and the same handling as one typed into the workspace.
 - **Nothing executes because it was asked for in a chat.** Work still reaches
   execution only through the existing `draft → owner_review → approved →
-handed_off` proposal gate.
+handed_off` proposal gate. **Revised by Amendment 1 above**: this still governs
+  the factory's generation pipeline, and no longer governs what the assistant
+  itself can do in this repository at the owner's instruction.
 - "Commands" therefore means a **closed set**: read-only status queries, and
   decisions on approvals and proposals that already exist and already require an
   owner's answer. Not arbitrary instruction, not shell, not "run this".
@@ -76,12 +144,26 @@ handed_off` proposal gate.
   transitions, verification-gate results, contract and task completion, budget
   thresholds, and incidents — **failures included, not only successes**, since a
   channel that only reports good news is worse than no channel.
-- **Plain-text formatting, deliberately.** The live probe's first attempt failed
-  on MarkdownV2 escaping, because report text quotes file paths, parentheses and
-  identifiers constantly. A failure report that itself fails to send, precisely
-  when something is wrong, is the worst possible bug in a notifier. Either
-  escape rigorously or send plain text; this contract sends plain text and says
-  so.
+- **Reports that read like a summary, not a log dump.** Added at the owner's
+  request (2026-08-10): outcome first, a category icon on every line that has a
+  category, and **token usage and budget inside the report itself** — the
+  numbers already recorded by the gateway ledger, surfaced where the owner
+  actually reads them instead of only in a dashboard they would have to open.
+- **HTML parse mode, not plain text and not MarkdownV2.** This revises the
+  earlier plain-text decision, which was made in reaction to the live probe's
+  MarkdownV2 failure and traded away all structure to avoid it. MarkdownV2
+  requires escaping about eighteen characters and report text quotes file paths,
+  parentheses and identifiers constantly, which is why it broke. **HTML mode
+  needs exactly three** — `<`, `>`, `&` — so bold, `code` spans and hierarchy are
+  available at a fraction of the fragility. Every interpolated value passes
+  through one escaper; a failure report that itself fails to send, precisely
+  when something is wrong, remains the worst bug this surface can have.
+- **Confirmations as buttons.** Inline keyboards so the owner taps rather than
+  types. `TelegramApprovalGateway.deliver()` already sends
+  `approve:<token>`/`deny:<token>` buttons and `parseTelegramCallback()` already
+  validates the token shape; what is missing is the context around them — what
+  is being approved, what it will cost, and what budget remains — so a decision
+  can be made from the message alone.
 - **Inbound long polling.** A poller that runs in the supervisor process,
   survives restarts by persisting its update offset, backs off on failure, and
   never lets a Telegram outage affect anything else.
@@ -151,6 +233,8 @@ when execution is already authorized.
 - Full suite, dashboard suite, `typecheck`, `format:check`, `npm audit`, and
   `verify-contract.ts` pass with zero skips, measured with the standing
   zero-skip invocation.
+- `resume-checkpoint.ts --check` passes — `docs/RESUME.md` agrees with the
+  evidence actually on disk. A milestone is not closed until it does.
 
 ## Acceptance
 
@@ -185,6 +269,7 @@ safely.
 - `docs/RESUME.md`
 - `CLAUDE.md`
 - `src/telegram/**`
+- `src/gateway/**`
 - `src/control-api/**`
 - `src/orchestrator/**`
 - `src/operations/**`
@@ -192,6 +277,22 @@ safely.
 - `src/config.ts`
 - `migrations/**`
 - `deploy/**`
+- `scripts/**`
 - `tests/**`
 - `package.json`
 - `package-lock.json`
+
+`src/gateway/**` is here for a reason worth stating rather than assuming.
+CONTRACT-016 closed believing its streaming path was finished. Turning the
+supervisor on for real showed it was not: `--output-format stream-json` emits
+complete assistant messages, so the first live reply arrived as one
+938-character blob rather than a stream. The fix — `--include-partial-messages`,
+plus a guard against the duplicate complete message that flag also produces —
+lands here because this is the contract that ran the thing and found out.
+Reopening a closed contract to hold it would have been worse bookkeeping and no
+better engineering.
+
+`scripts/**` holds the two operator entry points this contract adds:
+`propose.ts`, the assistant's only route from a conversation into factory work
+(Amendment 1), and `resume-checkpoint.ts`, which regenerates the resume state
+(Amendment 2).

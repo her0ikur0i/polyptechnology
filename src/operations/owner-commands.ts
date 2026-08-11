@@ -15,6 +15,22 @@ export class OwnerCommandService {
     private readonly conversations: ConversationStore,
     private readonly expectedCsrfToken: string,
     private readonly orchestrator: OrchestratorService,
+    // How a queued assistant reply gets created. Injected rather than imported
+    // so the service owns the *sequence* -- append, then queue -- while the
+    // caller supplies the mechanism.
+    //
+    // This exists because the sequence used to live in the Express route
+    // instead. A second caller (Telegram) went through this service precisely
+    // to avoid building a weaker second door, stored the message correctly, and
+    // never queued a reply -- because half the behaviour was in the transport
+    // layer where only one caller could reach it. Optional so existing
+    // constructions keep compiling; a caller that omits it gets no reply
+    // queued, which is now a visible choice rather than an accident.
+    private readonly queueReply?: (input: {
+      conversationId: string;
+      projectId: string;
+      expectedVersion: number;
+    }) => Promise<{ taskId: string }>,
   ) {
     if (expectedCsrfToken.length < 32)
       throw new Error("CSRF secret is too short");
@@ -250,7 +266,7 @@ export class OwnerCommandService {
     const messageId = deterministicUuid(
       `${context.actorId}:${command.idempotencyKey}:message`,
     );
-    return this.conversations.appendMessage(
+    const appended = await this.conversations.appendMessage(
       {
         id: messageId,
         conversationId: command.conversationId,
@@ -269,6 +285,20 @@ export class OwnerCommandService {
       command.expectedVersion,
       command.idempotencyKey,
     );
+
+    // Queued after the append, and only if the append succeeded: a reply to a
+    // message that was never stored would answer a question nobody asked.
+    // expectedVersion advances by one because the owner's message is now in
+    // the thread.
+    const reply = await this.queueReply?.({
+      conversationId: command.conversationId,
+      projectId: command.projectId,
+      expectedVersion: command.expectedVersion + 1,
+    });
+
+    return reply === undefined
+      ? appended
+      : { ...appended, replyTaskId: reply.taskId };
   }
   // Compiles the conversation's actual message history into a narrative
   // brief and drafts a real proposal from it, then immediately requests

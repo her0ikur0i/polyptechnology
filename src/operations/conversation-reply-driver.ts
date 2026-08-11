@@ -98,17 +98,54 @@ export function parseConversationReplyTaskInput(
   };
 }
 
-// Deliberately not a code-generation prompt -- ADR-0002's boundary applies
-// to this reply as much as to the owner's own messages: the assistant must
-// never claim an action was taken. Only an owner's later, explicit approval
-// of a proposal (src/orchestrator/service.ts) can authorize anything.
-const SYSTEM_PROMPT =
-  "You are a collaborative interviewer helping the owner clarify what they " +
-  "want to build, through conversation. Ask focused clarifying questions, " +
-  "summarize what has been agreed so far, and never claim an action has " +
-  "been taken or a file has been changed -- you have no execution " +
-  "authority. Only the owner's later, explicit approval of a proposal can " +
-  "authorize anything.";
+// The owner overruled the interviewer-only posture on 2026-08-10, with the
+// concern stated and understood: this is their own controlled single-owner
+// machine, and they want the assistant to be genuinely capable from their
+// phone rather than a suggestion box.
+//
+// What that means concretely, recorded so nobody later mistakes it for drift:
+// the assistant has real tools and a real working directory, so it can read
+// and change this repository. ADR-0002's proposal gate still governs the
+// *factory's* generation pipeline; it no longer governs this conversation.
+// That is a deliberate, owner-authorised reduction in scope for that boundary,
+// not an oversight.
+export const SYSTEM_PROMPT =
+  "You are the owner's AI colleague for the Polyp AI Factory, reachable from " +
+  "Telegram and from the dashboard. Take whichever role the moment needs -- " +
+  "engineer, architect, reviewer, planner -- but your first job is always to " +
+  "be sure you understand what the owner actually wants.\n\n" +
+  "Judge intent before acting. When a request is clear, do it and report what " +
+  "you did. When it is ambiguous, or when the obvious reading would be " +
+  "expensive or hard to undo, ask one focused question first. Make clear " +
+  "which of the two you are doing, so the owner is never left guessing " +
+  "whether you understood them.\n\n" +
+  "You have real tools and run inside the project repository: read files, run " +
+  "commands, change code. Prefer checking the repository over speculating, " +
+  "and never present a guess as a finding -- if you did not verify it, say " +
+  "so. When you change something, say exactly what changed.\n\n" +
+  "Once intent is settled, follow through into something concrete: a plan, a " +
+  "stack decision, a document, a change. For work the factory itself should " +
+  "build, that means a proposal the owner approves -- not something you do by " +
+  "hand.\n\n" +
+  "Answers are usually read on a phone. Be concise and lead with the answer.";
+
+// A short fingerprint of the prompt above.
+//
+// The prompt is not the only thing the model reads: the whole conversation
+// history is replayed into every request, including the assistant's own past
+// turns. When this prompt changed from "you are an interviewer with no
+// execution authority" to a capable assistant, the old thread still contained
+// replies saying "I cannot read files" -- and the model stayed consistent with
+// its own transcript, answering a question correctly and then recanting it two
+// turns later.
+//
+// Deriving the fingerprint from the prompt text means any future change to it
+// starts a fresh conversation automatically, instead of depending on someone
+// remembering that stale turns now contradict the new instructions.
+export const SYSTEM_PROMPT_FINGERPRINT = createHash("sha256")
+  .update(SYSTEM_PROMPT)
+  .digest("hex")
+  .slice(0, 12);
 
 // The real "assistant replies" half of CONTRACT-014 M2: routes one
 // interview turn through AiGateway (taskClass "orchestration" -- Claude
@@ -138,6 +175,23 @@ export class ConversationReplyDriver implements OperationDriver {
     );
     const messages = [
       { role: "system" as const, content: SYSTEM_PROMPT },
+      // The assistant's own conversation id, plus the one action that turns a
+      // conversation into factory work. Injected per request rather than baked
+      // into SYSTEM_PROMPT so the prompt fingerprint -- and therefore the
+      // thread -- does not change every time a conversation does.
+      {
+        role: "system" as const,
+        content:
+          `You are in conversation ${stored.conversationId}.\n` +
+          "When the owner has settled on something the factory should build, " +
+          "draft it as a proposal for their approval by running:\n" +
+          `  node --import tsx scripts/propose.ts ${stored.conversationId}\n` +
+          "That records a proposal awaiting their decision. It does not " +
+          "authorise anything: nothing is translated into a blueprint or " +
+          "generated until they approve. Prefer this over building the " +
+          "owner's product by hand -- constructing it yourself bypasses the " +
+          "factory that exists to construct it.",
+      },
       // Same exclusion rule src/orchestrator/context.ts's compileContext()
       // already enforces (classification !== "secret") -- currently inert,
       // since nothing produces a "secret"-classified message today

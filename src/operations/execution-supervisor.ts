@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import { PostgresWorkRepository } from "../work/postgres-repository.js";
 import type { Lease } from "../work/types.js";
+import type { RunNotifier } from "./run-notifier.js";
 
 export interface OperationTaskSpec {
   taskId: string;
@@ -47,8 +48,60 @@ export class ExecutableTaskSupervisor {
     private readonly drivers: ReadonlyMap<string, OperationDriver>,
     private readonly workerId: string,
     private readonly ttlMs = 30_000,
+    // Optional: without it the supervisor behaves exactly as before. Reporting
+    // is never allowed to be load-bearing for execution.
+    private readonly notifier?: RunNotifier,
   ) {}
+  // Moves retries that have come due back into the queue.
+  //
+  // Without this, `retry_wait` is terminal in practice. `engine.ts` parks a
+  // failed attempt there with a `next_attempt_at`, and
+  // `PostgresWorkRepository.controlTransition()` will happily promote it once
+  // that time passes -- but nothing ever called it, so nothing ever did. Three
+  // real tasks were found sitting in `retry_wait` on staging, due by 13 to 23
+  // hours, one of them a reply the owner had asked for in Telegram and never
+  // received. A transient provider failure became permanent silence.
+  //
+  // The SELECT only proposes candidates. `controlTransition()` re-checks both
+  // the state and `next_attempt_at<=CURRENT_TIMESTAMP` in the same statement,
+  // so two supervisors racing cannot both promote the same task, and a task
+  // that stopped being due between the two queries is refused rather than
+  // retried early. Failures are ignored for exactly that reason: losing a race
+  // is the normal outcome, not an error.
+  // Public because it is meaningful on its own -- an operator draining a
+  // backlog after an outage wants exactly this and nothing else -- and because
+  // testing it through runOne() means running a supervisor against a shared
+  // database, where it leases whatever other suites have queued and fails
+  // their tasks with a driver map that cannot serve them. That produced a
+  // flaky suite, which is worse than a slightly wider surface.
+  async promoteDueRetries(): Promise<number> {
+    // Same eligibility as the lease query below, deliberately. Promoting a
+    // retry whose contract or milestone is no longer active just moves it to
+    // `queued`, where the next lease() flips it straight to failed: churn that
+    // looks like progress. A sweep should only wake work that can actually run.
+    const due = await this.pool.query<{ id: string }>(
+      `SELECT t.id FROM tasks t
+         JOIN operation_task_specs s ON s.task_id=t.id
+         JOIN milestones m ON m.id=t.milestone_id
+         JOIN factory_contracts c ON c.id=t.contract_id
+        WHERE t.state='retry_wait' AND t.next_attempt_at<=CURRENT_TIMESTAMP
+          AND m.status='active' AND c.status='active'
+        ORDER BY t.next_attempt_at LIMIT 20`,
+    );
+    let promoted = 0;
+    for (const row of due.rows) {
+      try {
+        await this.work.controlTransition(row.id, "retry_wait", "queued");
+        promoted += 1;
+      } catch {
+        continue;
+      }
+    }
+    return promoted;
+  }
+
   async runOne(signal: AbortSignal) {
+    await this.promoteDueRetries();
     const candidate = await this.pool.query<{ task_id: string }>(
       "SELECT s.task_id FROM operation_task_specs s JOIN tasks t ON t.id=s.task_id JOIN milestones m ON m.id=t.milestone_id JOIN factory_contracts c ON c.id=t.contract_id CROSS JOIN factory_controls f WHERE t.state='queued' AND m.status='active' AND c.status='active' AND NOT f.emergency_stopped ORDER BY t.id LIMIT 20",
     );
@@ -59,7 +112,23 @@ export class ExecutableTaskSupervisor {
       } catch {
         continue;
       }
-      return this.executeLease(lease, signal);
+      const outcome = await this.executeLease(lease, signal);
+      // One hook, at the single point every lease resolves through, rather than
+      // scattered across the success and failure paths -- which is how a
+      // notifier ends up reporting three of the four ways work can end.
+      // taskFinished() never throws by contract; awaiting it here only means
+      // the report is sent before the next task is picked up.
+      await this.notifier?.taskFinished({
+        taskId: outcome.summary.taskId,
+        attemptOrdinal: outcome.summary.attemptOrdinal,
+        outcome: outcome.task.state,
+        // The success and failure summaries are different shapes; only the
+        // failure one carries a reason.
+        ...("reason" in outcome.summary
+          ? { reason: outcome.summary.reason }
+          : {}),
+      });
+      return outcome;
     }
     return undefined;
   }
@@ -141,6 +210,19 @@ export class ExecutableTaskSupervisor {
       };
     } catch (error) {
       if (heartbeatFailure !== undefined) throw heartbeatFailure;
+      // `invalid_output` is a catch-all: every throw from every driver lands
+      // here and the error itself was discarded, so the durable record said
+      // only that something went wrong. Diagnosing three failed tasks then
+      // meant reading five database tables to *infer* a cause that the process
+      // had known exactly and thrown away. Log it; the record stays as it was.
+      console.error(
+        JSON.stringify({
+          event: "supervisor.attempt.failed",
+          taskId: current.taskId,
+          attemptOrdinal: current.attemptOrdinal,
+          detail: error instanceof Error ? error.message : "unknown",
+        }),
+      );
       return this.fail(
         current,
         error instanceof Error && error.name === "AbortError"

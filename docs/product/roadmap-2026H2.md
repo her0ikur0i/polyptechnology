@@ -111,6 +111,31 @@ runs, pending approvals, budget, and answering decisions that already exist —
 confirmed sufficient by the owner. Nothing executes because it was asked for in
 a chat.
 
+## CONTRACT-017A — Session-based conversation continuity
+
+**Objective.** Replace whole-transcript replay with real provider sessions.
+Today every conversation turn re-sends the entire thread as one text blob: cost
+grows with thread length, prompt-cache reads climb into six figures of tokens
+per turn, and a long enough thread will eventually be refused outright by the
+provider. The CLI already supports resuming a session it holds; this system
+does not use it.
+
+Scope: a provider session id stored per conversation, resumption on the next
+turn, and the failure modes handled honestly — expired session, lost id, a
+provider that reports no session at all — each falling back to replay rather
+than losing the reply.
+
+It also retires a workaround. `SYSTEM_PROMPT_FINGERPRINT` starts a fresh thread
+whenever the prompt changes, because a stale transcript once made the assistant
+recant a correct answer it had just given. That is one symptom of unbounded
+replay, fixed at the symptom. Sessions fix the cause, and continuity across a
+prompt change stops requiring the owner to lose their thread.
+
+Inserted 2026-08-11 by owner decision, after CONTRACT-017 closes and before
+CONTRACT-018 — the dashboard chat window is the second seat on the same
+conversation path, so it should be built on the fixed mechanism, not the
+workaround.
+
 ## CONTRACT-018 — Chat experience on the streaming foundation
 
 **Objective.** What CONTRACT-016 was originally going to carry, now built on the

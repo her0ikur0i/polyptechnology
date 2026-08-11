@@ -60,7 +60,16 @@ test(
         "integration-worker",
         5_000,
       );
-      const result = await supervisor.runOne(new AbortController().signal);
+      // runOne() takes the first eligible task across the whole shared test
+      // database, so it can pick up work another suite left queued -- and
+      // since the supervisor now sweeps due retries back into the queue, it
+      // can surface stale ones too. Drive it until it reaches this test's own
+      // task instead of assuming the first call does.
+      let result = await supervisor.runOne(new AbortController().signal);
+      for (let i = 0; i < 40 && result?.summary.taskId !== task.id; i += 1)
+        result = await supervisor.runOne(new AbortController().signal);
+
+      assert.equal(result?.summary.taskId, task.id, "never reached this task");
       assert.equal(result?.task.state, "succeeded");
       assert.deepEqual(result?.summary, {
         taskId: task.id,
@@ -110,16 +119,20 @@ test(
         checkpoint.rows[0]!.checkpoint.lastOperation.taskId,
         task.id,
       );
-      assert.equal(
-        await new ExecutableTaskSupervisor(
-          pool,
-          new PostgresWorkRepository(pool),
-          new Map([["deterministic_sha256", new DeterministicSha256Driver()]]),
-          "reconstructed",
-          5_000,
-        ).runOne(new AbortController().signal),
-        undefined,
-      );
+      // A supervisor rebuilt from scratch must not pick this task up a second
+      // time. Asserting `undefined` here asserted that the *entire* database
+      // had no eligible work left, which was only ever true because no other
+      // suite happened to be mid-flight -- and stopped being true once due
+      // retries started being swept back into the queue. The property under
+      // test is that a completed task is not re-run, so test that.
+      const reconstructed = await new ExecutableTaskSupervisor(
+        pool,
+        new PostgresWorkRepository(pool),
+        new Map([["deterministic_sha256", new DeterministicSha256Driver()]]),
+        "reconstructed",
+        5_000,
+      ).runOne(new AbortController().signal);
+      assert.notEqual(reconstructed?.summary.taskId, task.id);
       const incorrect = await work.submit({
         contractId,
         milestoneId,

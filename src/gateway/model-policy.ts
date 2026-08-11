@@ -109,7 +109,11 @@ const routes: Record<TaskClass, ReadonlyArray<ModelRoute>> = {
       provider: "claude",
       requestedModelId: "claude-sonnet-5",
       role: "orchestrator",
-      effort: "high",
+      // Lowered from "high" on 2026-08-10: conversation is read on a phone and
+      // ten seconds for a simple question is too slow. High effort buys careful
+      // reasoning that a chat turn rarely needs, and the escalation tier is
+      // still there for when it does.
+      effort: "medium",
     },
     {
       provider: "claude",

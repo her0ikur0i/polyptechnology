@@ -28,6 +28,7 @@ import type {
   ManagedCompletion,
   ManagedProviderAdapter,
 } from "../src/gateway/types.js";
+import { runOwnTask } from "./run-own-task.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const dockerAvailable = (() => {
@@ -208,7 +209,7 @@ test(
         "generation-pipeline-test",
         30_000,
       );
-      const result = await supervisor.runOne(new AbortController().signal);
+      const result = await runOwnTask(supervisor, taskId);
       assert.equal(result?.task.id, taskId);
       assert.equal(result?.task.state, "succeeded", JSON.stringify(result));
 

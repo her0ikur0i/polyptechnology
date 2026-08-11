@@ -5,12 +5,37 @@ Wants=network-online.target
 
 [Service]
 Type=notify
-User=polyp-factory
-Group=polyp-factory
+# Node cannot send a unix datagram without a native module, so readiness and
+# watchdog pings go through /usr/bin/systemd-notify -- a child process. With the
+# default NotifyAccess=main, systemd rejects those with "reception only
+# permitted for main PID" and the unit never becomes ready, then start times
+# out. This is the documented setting for notifications sent by helper
+# processes.
+#
+# The trade-off, stated rather than glossed: any process in this cgroup can now
+# send notifications, including the provider CLIs this service spawns. In a
+# trust model where we already execute those CLIs' output behind an approval
+# gate, a forged WATCHDOG=1 is a marginal escalation -- but it is a real one,
+# and the alternative was dropping the watchdog entirely from a long-running
+# worker, which is worse.
+NotifyAccess=all
+# Runs as root, at the owner's explicit instruction (2026-08-10).
+#
+# The assistant reachable from Telegram is meant to be genuinely capable, which
+# means reading and changing this repository. The repository lives under /root,
+# which is mode 0700 -- an unprivileged service user cannot even traverse into
+# it, so tools would have been decoration.
+#
+# Stated plainly rather than buried: the provider CLI now runs as root with
+# tools enabled and permission prompts bypassed. Anything the owner can be
+# talked into asking for, the assistant can do. The owner made that call for a
+# single-owner controlled machine after the trade-off was put to them directly.
+# Reverting is a two-line change here plus ASSISTANT_TOOLS in sequence.env.
+User=root
 WorkingDirectory=/opt/polyp-ai-factory/current
 EnvironmentFile=/etc/polyp-ai-factory/sequence.env
-ExecStartPre=/usr/bin/node --jitless dist/src/operations/readiness-main.js
-ExecStart=/usr/bin/node --jitless dist/src/orchestrator/sequence-main.js
+ExecStartPre=/usr/bin/node dist/src/operations/readiness-main.js
+ExecStart=/usr/bin/node dist/src/orchestrator/sequence-main.js
 Restart=on-failure
 RestartSec=10s
 WatchdogSec=45s
@@ -22,7 +47,8 @@ PrivateDevices=true
 ProtectClock=true
 ProtectHostname=true
 ProtectSystem=strict
-ProtectHome=true
+# Off: the repository the assistant works in lives under /root.
+ProtectHome=false
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
@@ -30,12 +56,29 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 RestrictRealtime=true
 LockPersonality=true
-MemoryDenyWriteExecute=true
+# Turned OFF, deliberately, after it broke a real run.
+#
+# MemoryDenyWriteExecute forbids writable-executable mappings, which is
+# incompatible with a V8 JIT. The workaround was --jitless, and --jitless also
+# disables WebAssembly -- the supervisor then died mid-run with
+# "ReferenceError: WebAssembly is not defined" immediately after producing a
+# real reply. Neither the flag nor the workaround survives contact with a Node
+# workload that spawns Node children.
+#
+# The reasoning for accepting this: this unit runs *our* code. Untrusted
+# AI-authored code never executes here -- it runs in the Docker sandbox
+# (src/worker/planner.ts) with --read-only, --cap-drop=ALL, --network=none and
+# its own limits. Hardening the wrong process at the cost of the service
+# running at all is not a security win.
+MemoryDenyWriteExecute=false
 CapabilityBoundingSet=
 AmbientCapabilities=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-ReadWritePaths=/var/lib/polyp-ai-factory /var/log/polyp-ai-factory
-MemoryMax=512M
+ReadWritePaths=/var/lib/polyp-ai-factory /var/log/polyp-ai-factory /root/polyptechnology-next
+# Raised from 512M: this process spawns provider CLIs as child processes, and
+# a child Node runtime counts against the same cgroup. 512M killed the parent
+# before the child could answer.
+MemoryMax=1500M
 CPUQuota=100%
 TasksMax=64
 StateDirectory=polyp-ai-factory

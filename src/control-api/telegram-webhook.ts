@@ -40,7 +40,7 @@ export function requireTelegramWebhookSecret(secret: string) {
   };
 }
 
-class PostgresTelegramDecisionService implements TelegramDecisionService {
+export class PostgresTelegramDecisionService implements TelegramDecisionService {
   constructor(
     private readonly repository: PostgresApprovalRepository,
     private readonly authorizedChatId: string,

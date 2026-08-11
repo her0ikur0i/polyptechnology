@@ -70,7 +70,16 @@ test(
         "UPDATE tasks SET next_attempt_at=CURRENT_TIMESTAMP WHERE id=$1",
         [first.id],
       );
-      await repo.controlTransition(first.id, "retry_wait", "queued");
+      // The moment this task becomes due, any supervisor running concurrently
+      // in another suite may sweep it back to `queued` first -- that is the
+      // point of the sweep. What this test asserts is the transition's own
+      // rule: refused while the backoff holds, allowed once it does not.
+      const promoted = await pool.query<{ state: string }>(
+        "SELECT state FROM tasks WHERE id=$1",
+        [first.id],
+      );
+      if (promoted.rows[0]?.state === "retry_wait")
+        await repo.controlTransition(first.id, "retry_wait", "queued");
       const second = await repo.submit({
         contractId,
         milestoneId,

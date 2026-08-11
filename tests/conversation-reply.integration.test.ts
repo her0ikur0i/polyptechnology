@@ -17,6 +17,7 @@ import type {
   ManagedCompletion,
   ManagedProviderAdapter,
 } from "../src/gateway/types.js";
+import { runOwnTask } from "./run-own-task.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -165,7 +166,7 @@ test(
         "conversation-reply-secret-test",
         30_000,
       );
-      const result = await supervisor.runOne(new AbortController().signal);
+      const result = await runOwnTask(supervisor, queued.taskId);
       assert.equal(result?.task.id, queued.taskId);
       assert.equal(result?.task.state, "succeeded", JSON.stringify(result));
 
@@ -237,7 +238,7 @@ test(
         30_000,
       );
 
-      const result = await supervisor.runOne(new AbortController().signal);
+      const result = await runOwnTask(supervisor, queued.taskId);
       assert.equal(result?.task.id, queued.taskId);
       assert.equal(result?.task.state, "succeeded", JSON.stringify(result));
 

@@ -1,24 +1,45 @@
+import { renderApproval } from "./report.js";
+import type { ApprovalPrompt } from "./report.js";
 export interface TelegramTransport {
   send(method: string, body: unknown): Promise<void>;
 }
 
-export class TelegramHttpTransport implements TelegramTransport {
+// Separate from TelegramTransport because sending and asking are genuinely
+// different needs: everything that reports to the owner only sends, and giving
+// those callers a method that returns provider data would invite them to start
+// depending on it.
+export interface TelegramRequester {
+  call(method: string, body: unknown): Promise<unknown>;
+}
+
+export class TelegramHttpTransport
+  implements TelegramTransport, TelegramRequester
+{
   constructor(
     private readonly botToken: string,
     private readonly fetcher: typeof fetch = fetch,
+    // Long polling deliberately holds a request open, so it cannot share the
+    // 10 s ceiling that suits a fire-and-forget send.
+    private readonly timeoutMs = 10_000,
   ) {}
+
   async send(method: string, body: unknown): Promise<void> {
+    await this.call(method, body);
+  }
+
+  async call(method: string, body: unknown): Promise<unknown> {
     const response = await this.fetcher(
       `https://api.telegram.org/bot${this.botToken}/${method}`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(this.timeoutMs),
       },
     );
     if (!response.ok)
       throw new Error(`Telegram ${method} failed with HTTP ${response.status}`);
+    return response.json();
   }
 }
 
@@ -27,22 +48,32 @@ export class TelegramApprovalGateway {
     private readonly transport: TelegramTransport,
     private readonly chatId: string,
   ) {}
+  // `context` is optional so every existing caller keeps working, but supplying
+  // it is the point: the message used to be a bare summary line and an ISO
+  // timestamp, which is not enough to decide from on a phone. With cost and
+  // remaining budget in the message, the owner can tap Approve without opening
+  // the dashboard first -- which is the whole reason for asking here.
   async deliver(
     summary: string,
     token: string,
     expiresAt: Date,
+    context?: Pick<
+      ApprovalPrompt,
+      "subject" | "detail" | "usage" | "budget" | "evidence"
+    >,
   ): Promise<void> {
+    const { text, reply_markup } = renderApproval({
+      category: "approval",
+      title: summary,
+      token,
+      expiresAt,
+      ...(context ?? {}),
+    });
     await this.transport.send("sendMessage", {
       chat_id: this.chatId,
-      text: `${summary}\nExpires: ${expiresAt.toISOString()}`,
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: "Approve", callback_data: `approve:${token}` },
-            { text: "Deny", callback_data: `deny:${token}` },
-          ],
-        ],
-      },
+      text,
+      parse_mode: "HTML",
+      reply_markup,
     });
   }
 }

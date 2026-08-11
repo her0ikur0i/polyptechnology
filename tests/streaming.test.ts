@@ -13,12 +13,11 @@ import type {
   ModelRoute,
 } from "../src/gateway/types.js";
 
-const route: ModelRoute = {
-  provider: "claude",
-  requestedModelId: "claude-sonnet-5",
-  role: "orchestrator",
-  effort: "high",
-};
+// Taken from the policy rather than hard-coded: a literal here drifts the
+// moment the policy's effort or model changes, and the gateway then rejects the
+// override as "outside policy" -- which is a confusing way to learn that a test
+// fixture went stale.
+const route: ModelRoute = modelRoutes("orchestration")[0]!;
 
 const resultEvent = (text: string) =>
   JSON.stringify({
@@ -76,6 +75,96 @@ test("streaming emits deltas and returns the envelope's completion", async () =>
   assert.equal(completion.providerRequestId, "session-1");
   assert.equal(completion.resolvedModelId, "claude-sonnet-5");
   assert.equal(completion.usage.outputTokens, 4);
+});
+
+const partialDelta = (text: string) =>
+  JSON.stringify({
+    type: "stream_event",
+    event: {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text },
+    },
+  });
+
+test("token-level deltas are emitted as they arrive", async () => {
+  // The shape was captured from real CLI output under
+  // --include-partial-messages, not inferred: an earlier version of this
+  // adapter read only whole `assistant` events, which is why a real run
+  // produced exactly one 938-character fragment instead of a stream.
+  const seen: string[] = [];
+  const adapter = new ClaudeCliAdapter(
+    undefined,
+    3,
+    streamOf([
+      JSON.stringify({
+        type: "stream_event",
+        event: { type: "message_start" },
+      }),
+      partialDelta("Batas "),
+      partialDelta("otoritas "),
+      partialDelta("lebih penting."),
+      resultEvent("Batas otoritas lebih penting."),
+    ]),
+  );
+
+  const completion = await adapter.invokeStreaming(
+    route,
+    [{ role: "user", content: "hello" }],
+    512,
+    (fragment) => seen.push(fragment),
+  );
+
+  assert.deepEqual(seen, ["Batas ", "otoritas ", "lebih penting."]);
+  assert.equal(completion.content, "Batas otoritas lebih penting.");
+});
+
+test("the final assistant event does not double an already-streamed answer", async () => {
+  // With --include-partial-messages the CLI emits BOTH the deltas and a
+  // complete `assistant` message carrying the same text. Emitting both would
+  // show every answer twice.
+  const seen: string[] = [];
+  const adapter = new ClaudeCliAdapter(
+    undefined,
+    3,
+    streamOf([
+      partialDelta("once "),
+      partialDelta("only"),
+      assistantEvent("once only"),
+      resultEvent("once only"),
+    ]),
+  );
+
+  await adapter.invokeStreaming(
+    route,
+    [{ role: "user", content: "hello" }],
+    512,
+    (fragment) => seen.push(fragment),
+  );
+
+  assert.deepEqual(seen, ["once ", "only"]);
+  assert.equal(seen.join(""), "once only");
+});
+
+test("a CLI build without partial messages still streams whole messages", async () => {
+  // The fallback must stay: if no delta ever arrives, the complete assistant
+  // event is the only text there is, and dropping it would mean no progress at
+  // all rather than coarse progress.
+  const seen: string[] = [];
+  const adapter = new ClaudeCliAdapter(
+    undefined,
+    3,
+    streamOf([assistantEvent("whole answer"), resultEvent("whole answer")]),
+  );
+
+  await adapter.invokeStreaming(
+    route,
+    [{ role: "user", content: "hello" }],
+    512,
+    (fragment) => seen.push(fragment),
+  );
+
+  assert.deepEqual(seen, ["whole answer"]);
 });
 
 test("a malformed progress line is skipped, not fatal", async () => {
@@ -259,4 +348,102 @@ test("streamed and buffered answers settle the ledger the same way", async () =>
   assert.equal(result.attempt.outcome, "succeeded");
   assert.equal(result.attempt.route.provider, "claude");
   assert.ok(result.attempt.usage!.costUsdMicros > 0);
+});
+
+test("the prompt never appears in argv", async () => {
+  // argv is world-readable through /proc/<pid>/cmdline, and the prompt is the
+  // owner's whole conversation. This repository already forbids secrets in
+  // argv; a private conversation deserves the same treatment.
+  const secretish = "OWNER_PRIVATE_PLANNING_TEXT";
+  let seenArgs: ReadonlyArray<string> = [];
+  let seenInput: string | undefined;
+
+  const adapter = new ClaudeCliAdapter(
+    undefined,
+    3,
+    async (_file, args, options, onLine) => {
+      seenArgs = args;
+      seenInput = options.input;
+      onLine(resultEvent("ok"));
+      return { stderr: "", exitCode: 0 };
+    },
+  );
+  await adapter.invokeStreaming(
+    route,
+    [{ role: "user", content: secretish }],
+    512,
+    () => {},
+  );
+
+  assert.equal(
+    seenArgs.some((arg) => arg.includes(secretish)),
+    false,
+    "prompt leaked into argv",
+  );
+  assert.ok(seenInput?.includes(secretish), "prompt must arrive on stdin");
+});
+
+test("tools are allowed by name when capability is granted, never bypassed", async () => {
+  // The CLI refuses --permission-mode bypassPermissions as root, and this
+  // service must run as root to reach a repository under /root. Pre-approving
+  // named tools avoids the prompt without the blanket bypass, which is what
+  // makes both requirements satisfiable at once.
+  let seenArgs: ReadonlyArray<string> = [];
+  const adapter = new ClaudeCliAdapter(
+    undefined,
+    3,
+    async (_f, args, _o, onLine) => {
+      seenArgs = args;
+      onLine(resultEvent("ok"));
+      return { stderr: "", exitCode: 0 };
+    },
+    { tools: true, workingDirectory: "/tmp" },
+  );
+  await adapter.invokeStreaming(
+    route,
+    [{ role: "user", content: "hi" }],
+    512,
+    () => {},
+  );
+
+  assert.ok(seenArgs.includes("--allowedTools"));
+  assert.ok(seenArgs.includes("Bash"));
+  assert.equal(
+    seenArgs.includes("--permission-mode"),
+    false,
+    "root refuses bypass",
+  );
+  assert.equal(seenArgs.includes("--disallowedTools"), false);
+  // Investigating costs turns: read, grep, then answer. Three was sized for a
+  // single buffered reply and produced claude_max_turns the first time tools
+  // were enabled.
+  assert.equal(seenArgs[seenArgs.indexOf("--max-turns") + 1], "12");
+});
+
+test("the provider is invoked with tools denied by default", async () => {
+  // This CLI is Claude Code: as a provider it otherwise arrives with Bash,
+  // Edit, Read and the rest, running as the service user. That would void the
+  // authority claim that nothing executes because a chat asked for it -- the
+  // provider could execute while composing the answer, outside the proposal
+  // gate.
+  let seenArgs: ReadonlyArray<string> = [];
+  const adapter = new ClaudeCliAdapter(
+    undefined,
+    3,
+    async (_file, args, _options, onLine) => {
+      seenArgs = args;
+      onLine(resultEvent("ok"));
+      return { stderr: "", exitCode: 0 };
+    },
+  );
+  await adapter.invokeStreaming(
+    route,
+    [{ role: "user", content: "hello" }],
+    512,
+    () => {},
+  );
+
+  assert.ok(seenArgs.includes("--disallowedTools"));
+  for (const tool of ["Bash", "Edit", "Write", "Read", "Task", "WebFetch"])
+    assert.ok(seenArgs.includes(tool), `${tool} must be denied`);
 });

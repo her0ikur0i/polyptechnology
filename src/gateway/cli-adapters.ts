@@ -14,14 +14,30 @@ export interface CliResult {
 export type CliRunner = (
   file: string,
   args: ReadonlyArray<string>,
-  options: { signal?: AbortSignal; timeout: number; maxBuffer: number },
+  options: {
+    signal?: AbortSignal;
+    timeout: number;
+    maxBuffer: number;
+    // The prompt, delivered on stdin rather than as an argv element.
+    //
+    // argv is world-readable through /proc/<pid>/cmdline, and the prompt is the
+    // owner's entire conversation history. This repository already forbids
+    // secrets in argv for exactly that reason; a private conversation deserves
+    // the same treatment. Found while fixing an unrelated failure, which is the
+    // only reason it was noticed at all.
+    input?: string;
+    // Where the CLI runs. For a tool-enabled provider this is what it can
+    // see, so it is the difference between a useful assistant and one that
+    // answers questions about an empty release directory.
+    cwd?: string;
+  },
 ) => Promise<CliResult>;
 const defaultRunner: CliRunner = (file, args, options) =>
   new Promise((resolve, reject) => {
     const child = execFile(
       file,
       [...args],
-      options,
+      { ...options, ...(options.cwd ? { cwd: options.cwd } : {}) },
       (error, stdout, stderr) => {
         if (error !== null && typeof error.code !== "number") {
           reject(error);
@@ -34,6 +50,7 @@ const defaultRunner: CliRunner = (file, args, options) =>
         });
       },
     );
+    if (options.input !== undefined) child.stdin?.write(options.input);
     child.stdin?.end();
   });
 // The Claude CLI's terminal envelope, identical whether it arrives as the whole
@@ -69,12 +86,26 @@ export interface ClaudeEnvelope {
 interface ClaudeStreamEvent {
   type?: string;
   message?: { content?: Array<{ type?: string; text?: string }> };
+  // --include-partial-messages wraps the provider's own SSE events. This is
+  // where token-level text actually arrives:
+  //   {"type":"stream_event","event":{"type":"content_block_delta",
+  //     "delta":{"type":"text_delta","text":"1"}}}
+  // Confirmed by capturing real CLI output, not inferred.
+  event?: {
+    type?: string;
+    delta?: { type?: string; text?: string };
+  };
 }
 
 export type CliStreamRunner = (
   file: string,
   args: ReadonlyArray<string>,
-  options: { signal?: AbortSignal; timeout: number },
+  options: {
+    signal?: AbortSignal;
+    timeout: number;
+    input?: string;
+    cwd?: string;
+  },
   onLine: (line: string) => void,
 ) => Promise<{ stderr: string; exitCode: number }>;
 
@@ -99,8 +130,11 @@ export const defaultStreamRunner: CliStreamRunner = (
   new Promise((resolve, reject) => {
     const child = spawn(file, [...args], {
       ...(options.signal ? { signal: options.signal } : {}),
-      stdio: ["ignore", "pipe", "pipe"],
+      ...(options.cwd ? { cwd: options.cwd } : {}),
+      stdio: ["pipe", "pipe", "pipe"],
     });
+    if (options.input !== undefined) child.stdin?.write(options.input);
+    child.stdin?.end();
     let pending = "";
     let stderr = "";
     let timedOut = false;
@@ -161,6 +195,17 @@ export class ClaudeCliAdapter implements ManagedProviderAdapter {
     private readonly runner: CliRunner = defaultRunner,
     private readonly maxTurns = 3,
     private readonly streamRunner: CliStreamRunner = defaultStreamRunner,
+    // Owner-authorised capability, off by default.
+    //
+    // This CLI is Claude Code: given tools it can read and change whatever the
+    // service user can reach, from inside the working directory below. The
+    // owner asked for exactly that on 2026-08-10 after the trade-off was put to
+    // them plainly. Default-off keeps every other caller -- and any future
+    // deployment that has not made that choice -- on the restricted path.
+    private readonly capability: {
+      tools?: boolean;
+      workingDirectory?: string;
+    } = {},
   ) {}
   async listModels() {
     return [
@@ -176,11 +221,15 @@ export class ClaudeCliAdapter implements ManagedProviderAdapter {
     maxOutputTokens: number,
     signal?: AbortSignal,
   ): Promise<ManagedCompletion> {
-    const args = this.argsFor(route, messages, "json");
+    const args = this.argsFor(route, "json");
     const { stdout, stderr, exitCode } = await this.runner("claude", args, {
       ...(signal === undefined ? {} : { signal }),
       timeout: 180_000,
       maxBuffer: Math.max(1_000_000, maxOutputTokens * 8),
+      input: this.promptFor(messages),
+      ...(this.capability.workingDirectory
+        ? { cwd: this.capability.workingDirectory }
+        : {}),
     });
     let body: ClaudeEnvelope;
     try {
@@ -211,7 +260,7 @@ export class ClaudeCliAdapter implements ManagedProviderAdapter {
     onDelta: (fragment: string) => void,
     signal?: AbortSignal,
   ): Promise<ManagedCompletion> {
-    const args = this.argsFor(route, messages, "stream-json");
+    const args = this.argsFor(route, "stream-json");
     let envelope: ClaudeEnvelope | undefined;
     // The same ceiling invoke() gives execFile as maxBuffer. Without it the
     // streaming path would forward unbounded text from a provider that
@@ -221,12 +270,17 @@ export class ClaudeCliAdapter implements ManagedProviderAdapter {
     // but the progress illusion.
     const deltaCeiling = Math.max(1_000_000, maxOutputTokens * 8);
     let deltaBytes = 0;
+    let sawPartialDeltas = false;
     const { stderr, exitCode } = await this.streamRunner(
       "claude",
       args,
       {
         ...(signal === undefined ? {} : { signal }),
         timeout: 180_000,
+        input: this.promptFor(messages),
+        ...(this.capability.workingDirectory
+          ? { cwd: this.capability.workingDirectory }
+          : {}),
       },
       (line) => {
         // A malformed line is skipped rather than fatal: the answer's truth is
@@ -244,7 +298,29 @@ export class ClaudeCliAdapter implements ManagedProviderAdapter {
           envelope = event as unknown as ClaudeEnvelope;
           return;
         }
-        if (event.type !== "assistant" || deltaBytes >= deltaCeiling) return;
+        if (deltaBytes >= deltaCeiling) return;
+
+        // Token-level text, from --include-partial-messages. This is what makes
+        // an answer appear as it is written rather than arriving whole.
+        if (event.type === "stream_event") {
+          const delta = event.event;
+          if (
+            delta?.type === "content_block_delta" &&
+            delta.delta?.type === "text_delta" &&
+            typeof delta.delta.text === "string"
+          ) {
+            sawPartialDeltas = true;
+            deltaBytes += delta.delta.text.length;
+            onDelta(delta.delta.text);
+          }
+          return;
+        }
+
+        // The complete assistant message. With partial messages enabled this
+        // arrives *in addition to* the deltas above and carries the same text,
+        // so emitting both would double every answer. It is only used as the
+        // fallback for a CLI build that does not support partial messages.
+        if (event.type !== "assistant" || sawPartialDeltas) return;
         for (const block of event.message?.content ?? [])
           if (block.type === "text" && typeof block.text === "string") {
             deltaBytes += block.text.length;
@@ -259,14 +335,18 @@ export class ClaudeCliAdapter implements ManagedProviderAdapter {
     return this.completionFrom(envelope, route);
   }
 
-  private argsFor(
-    route: ModelRoute,
-    messages: GatewayRequest["messages"],
-    outputFormat: "json" | "stream-json",
-  ): string[] {
-    const prompt = messages
+  // The prompt is returned separately from the flags, because it now goes on
+  // stdin rather than into argv.
+  private promptFor(messages: GatewayRequest["messages"]): string {
+    return messages
       .map((message) => `${message.role.toUpperCase()}:\n${message.content}`)
       .join("\n\n");
+  }
+
+  private argsFor(
+    route: ModelRoute,
+    outputFormat: "json" | "stream-json",
+  ): string[] {
     return [
       "-p",
       "--model",
@@ -274,11 +354,77 @@ export class ClaudeCliAdapter implements ManagedProviderAdapter {
       "--effort",
       route.effort ?? "high",
       "--max-turns",
-      String(this.maxTurns),
+      // Investigating with tools costs turns: read a directory, grep a file,
+      // then answer. Three was sized for a single buffered reply and is what
+      // produced claude_max_turns the first time tools were tried.
+      String(this.capability.tools === true ? 12 : this.maxTurns),
       "--output-format",
       outputFormat,
-      ...(outputFormat === "stream-json" ? ["--verbose"] : []),
-      prompt,
+      // --include-partial-messages is what turns stream-json from
+      // "whole messages as they complete" into token-level deltas.
+      ...(outputFormat === "stream-json"
+        ? ["--verbose", "--include-partial-messages"]
+        : []),
+      // The provider must not have tools.
+      //
+      // This CLI is Claude Code: invoked as a provider it arrives with Bash,
+      // Edit, Read, WebFetch and the rest, running as the service user in the
+      // release directory. That silently voids this system's central authority
+      // claim -- ADR-0002 says nothing executes because a chat asked for it,
+      // but the *provider* could execute while composing the answer, entirely
+      // outside the proposal gate.
+      //
+      // Found when a Telegram question ("how many contracts are in this
+      // project?") made the model try to investigate with those tools, burn its
+      // turn budget and return claude_max_turns with no answer. The visible
+      // symptom was a failed reply; the real problem was that it could have
+      // succeeded.
+      //
+      // Listed explicitly rather than via an empty --allowedTools, because that
+      // flag is variadic and swallows the next argument.
+      ...(this.capability.tools === true
+        ? // Tools on, at the owner's instruction, via an explicit allow-list.
+          //
+          // NOT --permission-mode bypassPermissions: the CLI refuses that
+          // outright when running as root ("cannot be used with root/sudo
+          // privileges"), and this service must run as root to reach a
+          // repository under /root at all. Pre-approving named tools avoids the
+          // prompt without asking for the blanket bypass, so the two
+          // requirements stop being mutually exclusive.
+          //
+          // Safe to pass as a variadic flag only because the prompt now travels
+          // on stdin; as an argv element it would have been swallowed as a tool
+          // name.
+          [
+            "--allowedTools",
+            "Bash",
+            "Read",
+            "Write",
+            "Edit",
+            "Glob",
+            "Grep",
+            "WebFetch",
+            "WebSearch",
+            "NotebookEdit",
+          ]
+        : [
+            "--disallowedTools",
+            "Bash",
+            "Edit",
+            "Write",
+            "Read",
+            "Glob",
+            "Grep",
+            "Task",
+            "WebFetch",
+            "WebSearch",
+            "NotebookEdit",
+            "Skill",
+            "ToolSearch",
+            "TaskCreate",
+            "TaskUpdate",
+            "SendMessage",
+          ]),
     ];
   }
 
@@ -457,12 +603,14 @@ export class CodexCliAdapter implements ManagedProviderAdapter {
         route.requestedModelId,
         "--config",
         `model_reasoning_effort=${route.effort ?? "high"}`,
-        prompt,
+        // Prompt omitted here on purpose -- see `input` below. Same reasoning
+        // as the Claude adapter: argv is world-readable through /proc.
       ],
       {
         ...(signal === undefined ? {} : { signal }),
         timeout: 300_000,
         maxBuffer: Math.max(1_000_000, maxOutputTokens * 8),
+        input: prompt,
       },
     );
     if (stdout.trim().length === 0)

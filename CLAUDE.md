@@ -67,9 +67,14 @@ ADR before changing a boundary it governs.
 ## Invariants that must not be weakened
 
 - **Model output is untrusted.** Chat text, attachments, and AI-authored patches
-  are suggestions, never authorization. Everything passes the proposal
-  `draft → owner_review → approved → handed_off` gate before it can reach
-  execution (`docs/architecture/adr-0002-conversation-authority-boundary.md`).
+  are suggestions, never authorization. Everything reaching the **factory's
+  generation pipeline** passes the proposal
+  `draft → owner_review → approved → handed_off` gate first
+  (`docs/architecture/adr-0002-conversation-authority-boundary.md`).
+  **One owner-instructed carve-out**, CONTRACT-017 Amendment 1: the assistant
+  the owner talks to directly runs with tools in this repository, so a
+  conversation _can_ change this repo. It still cannot reach the generation
+  pipeline except through a proposal the owner approves.
 - **One path guard.** `src/safe-path.ts` is the single implementation for the
   worker, publication, and patch-scope boundaries. Do not add a fourth private
   copy — three existed and drifted, which is why it was unified. It is a
@@ -93,6 +98,13 @@ ADR before changing a boundary it governs.
 Work happens in small contracts, each with several milestones. **Exactly one
 commit and push per contract**, after every gate is green — not per milestone.
 Milestone evidence lives in `docs/contracts/CONTRACT-NNN/evidence/*.md`.
+
+**Closing a milestone has two steps, not one:** write its
+`evidence/M<n>-*.md`, then regenerate the resume checkpoint with
+`node --import tsx scripts/resume-checkpoint.ts`. Since one commit covers a
+whole contract, an interrupted session's only durable record of where it got to
+is that pair. `--check` fails when `docs/RESUME.md` has drifted from the
+evidence on disk.
 
 Since CONTRACT-015, each contract opens with **M0, its only owner checkpoint**:
 scope approval, record corrections, and advance approval for the staging

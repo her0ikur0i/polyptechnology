@@ -7,6 +7,7 @@ import {
   ExecutableTaskSupervisor,
   type OperationDriver,
 } from "../src/operations/execution-supervisor.js";
+import { runOwnTask } from "./run-own-task.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -50,13 +51,16 @@ test(
           return { verified: true, status: "accepted" };
         },
       };
-      const acceptedResult = await new ExecutableTaskSupervisor(
-        pool,
-        work,
-        new Map([["ai_patch_executor", acceptDriver]]),
-        "ai-patch-worker",
-        5_000,
-      ).runOne(new AbortController().signal);
+      const acceptedResult = await runOwnTask(
+        new ExecutableTaskSupervisor(
+          pool,
+          work,
+          new Map([["ai_patch_executor", acceptDriver]]),
+          "ai-patch-worker",
+          5_000,
+        ),
+        acceptedTask.id,
+      );
       assert.equal(acceptedResult?.task.state, "succeeded");
 
       const rejectedTask = await work.submit({
@@ -76,13 +80,16 @@ test(
           return { verified: false, status: "rejected" };
         },
       };
-      const rejectedResult = await new ExecutableTaskSupervisor(
-        pool,
-        work,
-        new Map([["ai_patch_executor", rejectDriver]]),
-        "ai-patch-worker",
-        5_000,
-      ).runOne(new AbortController().signal);
+      const rejectedResult = await runOwnTask(
+        new ExecutableTaskSupervisor(
+          pool,
+          work,
+          new Map([["ai_patch_executor", rejectDriver]]),
+          "ai-patch-worker",
+          5_000,
+        ),
+        rejectedTask.id,
+      );
       assert.equal(rejectedResult?.task.state, "failed");
     } finally {
       await pool.end();

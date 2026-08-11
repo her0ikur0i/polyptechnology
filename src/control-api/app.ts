@@ -53,6 +53,10 @@ export function createControlApi(deps: ControlApiDeps): Express {
     conversations,
     csrfSecret,
     orchestrator,
+    // Queues the assistant reply as a real background task -- never a
+    // synchronous AiGateway call inside a request/response cycle, matching how
+    // /generate queues rather than executes inline.
+    (input) => queueConversationReply(pool, input),
   );
   const policyStore = new PostgresPolicyStore(pool);
   const policy = new OwnerPolicyService(policyStore, csrfSecret);
@@ -478,18 +482,15 @@ export function createControlApi(deps: ControlApiDeps): Express {
           },
           { ...req.body, conversationId },
         );
-        // Queues the assistant reply as a real background task -- never a
-        // synchronous AiGateway call inside this request/response cycle,
-        // matching how /generate queues rather than executes inline (M5).
-        // The reply won't actually run until a supervisor process with
-        // real provider credentials is running, which the Control API
-        // process deliberately never is (CONTRACT-013 M9 decision 4).
-        const reply = await queueConversationReply(pool, {
-          conversationId,
-          projectId: message.projectId,
-          expectedVersion: message.ordinal,
-        });
-        res.status(201).json({ message, replyTaskId: reply.taskId });
+        // The reply is queued by OwnerCommandService, not here. It used to be
+        // queued in this route, which meant a second caller could go through
+        // the service, store a message correctly, and silently never get a
+        // reply -- exactly what happened to the Telegram path. Sequencing that
+        // belongs to the domain does not live in a transport handler.
+        const { replyTaskId, ...stored } = message as typeof message & {
+          replyTaskId?: string;
+        };
+        res.status(201).json({ message: stored, replyTaskId });
       } catch (error) {
         res.status(400).json({
           error: error instanceof Error ? error.message : "message send failed",
