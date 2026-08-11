@@ -213,7 +213,33 @@ six screens have been built to operate it.
 So **CONTRACT-017C and CONTRACT-017D are inserted here**, and everything from
 CONTRACT-018 onward keeps its content and moves down the queue.
 
-### CONTRACT-017C — Generate a dummy project, for real
+### CONTRACT-017C — Generate a dummy project, for real (closed)
+
+**Delivered.** The factory generates software end to end. Two consecutive deep
+drills took a brief through conversation → proposal → approval → blueprint →
+workspace → generation → verification → publication with nothing human after
+the brief, each producing a different correct implementation that passes its
+own gates and ten independent behaviour cases. Both accepted on
+`deepseek-v4-flash`, the cheapest tier; an earlier run escalated through
+`deepseek-v4-pro` to `codex:gpt-5.6-terra` before acceptance, so the execution
+policy is demonstrated in both directions.
+
+Nine defects stood between the written code and one successful run, every one
+of them at a boundary between components. Three worth carrying forward:
+
+- **The verification sandbox had never seen a file.** `PrivateTmp=yes` on the
+  supervisor meant Docker bind-mounted a host path that did not exist, so every
+  verification in this system's history ran against an empty directory.
+- **The escalation chain could not leave tier one**, because with no owner
+  policy active the route resolver returned the same fallback forever.
+- **The budget was counting imaginary money.** Subscription providers' notional
+  costs were banked as spend — 97% of the recorded total — and exhausted real
+  scopes, refusing runs that had spent a third of a cent. Found by the owner
+  comparing a Telegram report against the providers' own dashboards.
+
+Charter and evidence in `docs/contracts/CONTRACT-017C/`.
+
+### Original scope
 
 **Objective.** Drive conversation → proposal → approval → blueprint →
 workspace → patch → verify → publish against the real staging database until a

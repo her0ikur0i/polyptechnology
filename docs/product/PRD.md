@@ -75,42 +75,73 @@ cold start, from `ai_usage_events`.
 
 ### R2 — Generation (G1)
 
-The product's reason for existing, and its least evidenced area.
+The product's reason for existing. Until 2026-08-11 it was also its least
+evidenced area: the pipeline had never run once.
 
-| ID   | Requirement                                                                       | Status      | Owner |
-| ---- | --------------------------------------------------------------------------------- | ----------- | ----- |
-| R2.1 | A conversation becomes a proposal the owner explicitly approves                   | Unproven    | 017C  |
-| R2.2 | An approved proposal becomes a validated blueprint                                | Unproven    | 017C  |
-| R2.3 | A blueprint provisions a real, isolated, git-initialised workspace                | **Blocked** | 017C  |
-| R2.4 | A generation task produces a patch from a real provider call                      | Unproven    | 017C  |
-| R2.5 | The patch is applied and verified in an isolated container before acceptance      | Unproven    | 017C  |
-| R2.6 | A failed attempt escalates to the next provider tier on verified failure evidence | **Broken**  | 017C  |
-| R2.7 | A generated project reaches a terminal successful lifecycle state                 | **Absent**  | 017C  |
-| R2.8 | The whole path runs unattended and reproducibly from a clean database             | Absent      | 017D  |
-| R2.9 | Generation supports runtimes other than Node/TypeScript                           | Absent      | 021   |
+| ID   | Requirement                                                                       | Status     | Owner |
+| ---- | --------------------------------------------------------------------------------- | ---------- | ----- |
+| R2.1 | A conversation becomes a proposal the owner explicitly approves                   | **Proven** | 017C  |
+| R2.2 | An approved proposal becomes a validated blueprint                                | **Proven** | 017C  |
+| R2.3 | A blueprint provisions a real, isolated, git-initialised workspace                | **Proven** | 017C  |
+| R2.4 | A generation task produces a patch from a real provider call                      | **Proven** | 017C  |
+| R2.5 | The patch is applied and verified in an isolated container before acceptance      | **Proven** | 017C  |
+| R2.6 | A failed attempt escalates to the next provider tier on verified failure evidence | **Proven** | 017C  |
+| R2.7 | A generated project reaches a terminal successful lifecycle state                 | **Proven** | 017C  |
+| R2.8 | The whole path runs unattended and reproducibly from a clean database             | Partial    | 017D  |
+| R2.9 | Generation supports runtimes other than Node/TypeScript                           | Absent     | 021   |
 
-**As of 2026-08-11 this pipeline has never run.** Staging holds 7 generated
-projects, all in `idea` state, 0 proposals and 0 generation tasks. The only
-drivers ever executed are `conversation_reply` and `deterministic_sha256`.
+**As of 2026-08-11 the factory generates software end to end.** Two consecutive
+deep-drill runs took a brief through conversation → proposal → approval →
+blueprint → workspace → generation → verification → publication, with nothing
+human after the brief, and produced two different correct implementations that
+pass their own gates and ten independent behaviour cases each.
 
-R2.3 is blocked by a deployment permission defect, R2.6 by a fixed idempotency
-key that makes every retry fail before reaching a provider, and R2.7 because
-nothing in the codebase ever transitions a project past `blueprint`. Analysis:
-`docs/contracts/CONTRACT-017C/evidence/M1-predicted-failures.md`.
+Both accepted on `deepseek-v4-flash`, the cheapest tier. An earlier run
+escalated `deepseek-v4-flash → deepseek-v4-pro → codex:gpt-5.6-terra` before
+acceptance, so R2.6 is proven in both directions.
+
+R2.8 is **Partial** rather than Proven: the drill is repeatable and was run many
+times, but not yet from a genuinely clean database with nothing else queued.
+CONTRACT-017D owns that.
+
+Nine defects stood between the code and a single successful run, every one
+found by running it. Analysis in
+`docs/contracts/CONTRACT-017C/evidence/M1-predicted-failures.md` and the M2–M6
+evidence beside it. The three worth carrying:
+
+- **The verification sandbox had never seen a file.** `PrivateTmp=yes` on the
+  supervisor meant Docker bind-mounted a host path that did not exist, so every
+  verification in this system's history ran against an empty directory.
+- **The escalation chain could not leave tier one**, because with no owner
+  policy active the route resolver returned the same fallback forever.
+- **A missing trailing newline** made models' correct diffs unapplicable.
 
 ### R3 — Multi-provider routing (G1, G3)
 
-| ID   | Requirement                                                                       | Status  | Owner     |
-| ---- | --------------------------------------------------------------------------------- | ------- | --------- |
-| R3.1 | No provider or model is hard-coded in core logic                                  | Proven  | 011       |
-| R3.2 | Cheapest viable tier runs first; escalation needs verified failure evidence       | Partial | 011, 017C |
-| R3.3 | Every call is reserved, settled and attributed in a durable ledger                | Proven  | 011       |
-| R3.4 | Budgets exist per scope and produce an explicit blocked state, never silent spend | Proven  | 011       |
-| R3.5 | The owner selects among providers and models, with routing modes                  | Absent  | new       |
-| R3.6 | The UI explains why a model was chosen, what was rejected, and the fallback chain | Absent  | new       |
+| ID   | Requirement                                                                       | Status     | Owner     |
+| ---- | --------------------------------------------------------------------------------- | ---------- | --------- |
+| R3.1 | No provider or model is hard-coded in core logic                                  | Proven     | 011       |
+| R3.2 | Cheapest viable tier runs first; escalation needs verified failure evidence       | **Proven** | 011, 017C |
+| R3.3 | Every call is reserved, settled and attributed in a durable ledger                | Proven     | 011, 017C |
+| R3.4 | Budgets exist per scope and produce an explicit blocked state, never silent spend | Proven     | 011, 017C |
+| R3.5 | The owner selects among providers and models, with routing modes                  | Absent     | new       |
+| R3.6 | The UI explains why a model was chosen, what was rejected, and the fallback chain | Absent     | new       |
 
-R3.2 is Proven for conversation replies and Broken for generation — the same
-mechanism, fixed in one caller only. That inconsistency is R2.6.
+R3.2 was Proven for conversation replies and Broken for generation — the same
+mechanism, fixed in one caller only. CONTRACT-017C closed that, and the chain
+has since been observed walking `deepseek-v4-flash → deepseek-v4-pro →
+codex:gpt-5.6-terra` to an acceptance, and stopping at tier one when tier one
+succeeds.
+
+**R3.3 and R3.4 carry a correction.** The ledger recorded per-token dollar
+costs for **every** provider, including the two reached over subscription
+plans, where no such charge exists. The Claude CLI reports what its tokens
+would have cost on metered pricing and the gateway banked it, so 97% of
+recorded spend was money nobody paid — and it exhausted real budget scopes,
+refusing runs that had spent a third of a cent. Providers now declare how they
+actually bill (`src/gateway/provider-billing.ts`); subscription completions
+keep their token counts and lose the imaginary dollars. Found by the owner
+comparing a Telegram report against the providers' own dashboards.
 
 R3.5/R3.6 are specified in `SYSTEM-SPECIFICATION.md` §13 with six modes — Auto
 Balanced, Lowest Cost, Highest Quality, Fastest, Manual, Policy Locked — and
@@ -135,14 +166,14 @@ only while the deployment is private.
 
 ### R5 — Operating surfaces (G2, G4)
 
-| ID   | Requirement                                                          | Status     | Owner |
-| ---- | -------------------------------------------------------------------- | ---------- | ----- |
-| R5.1 | Telegram delivers reports, approvals, conversation and commands      | Proven     | 017   |
-| R5.2 | Reports state terminal outcomes only and never contradict the ledger | Proven     | 017B  |
-| R5.3 | Factory Live shows agents working, from real data                    | **Absent** | 019   |
-| R5.4 | A usage surface shows spend per scope, model and turn                | Absent     | new   |
-| R5.5 | A system surface shows host, services and databases                  | Absent     | new   |
-| R5.6 | The dashboard shell matches the information architecture in §20      | Absent     | 020   |
+| ID   | Requirement                                                          | Status     | Owner      |
+| ---- | -------------------------------------------------------------------- | ---------- | ---------- |
+| R5.1 | Telegram delivers reports, approvals, conversation and commands      | Proven     | 017        |
+| R5.2 | Reports state terminal outcomes only and never contradict the ledger | Proven     | 017B, 017C |
+| R5.3 | Factory Live shows agents working, from real data                    | **Absent** | 019        |
+| R5.4 | A usage surface shows spend per scope, model and turn                | Absent     | new        |
+| R5.5 | A system surface shows host, services and databases                  | Absent     | new        |
+| R5.6 | The dashboard shell matches the information architecture in §20      | Absent     | 020        |
 
 R5.3 is the sharpest example of the vocabulary in §3: the Canvas renderer is
 well built and fully tested — against fixtures. Both routes it calls are

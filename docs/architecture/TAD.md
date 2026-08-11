@@ -118,6 +118,15 @@ why generation retries have never reached a provider.
 turn of a resumed conversation. Per-call identity is `ai_gateway_attempts.id`.
 Two unique constraints assumed otherwise and were dropped in migration `0017`.
 
+**Not every provider charges money.** `src/gateway/provider-billing.ts` records
+which do. DeepSeek is metered through an API key; Claude and Codex are reached
+over subscription CLIs where no per-token charge exists — but the Claude CLI
+reports what its tokens _would_ have cost, and the gateway banked that as spend
+until 2026-08-11. It made 97% of recorded spend imaginary and exhausted real
+budget scopes with it. Subscription completions now keep their token counts and
+record zero cost. An unknown provider is assumed metered, which errs toward a
+stricter budget rather than a blind one.
+
 ## 5. The generation pipeline
 
 The product's core path, end to end.
@@ -132,28 +141,47 @@ conversation
    → provider call       AiGateway, taskClass 'bulk_code'
    → patch scope check   validatePatchScope against the ownership manifest
    → git apply           into the workspace
+   → workspace           NodeWorkspaceProvisioner → project → 'provisioned'
+   → normalise           extractUnifiedDiff: unwrap fences, trailing newline
+   → patch scope check   validatePatchScope against the ownership manifest
+   → git apply --recount into the workspace (revert on rejection)
+   → format              the project's own Prettier, run from THIS package
    → verification        copy without .git → docker run → typecheck && format:check && test
-   → artifact record     provider_artifacts: accepted | rejected
-   → ???                 no terminal project state exists
+   → artifact record     provider_artifacts: accepted | rejected, with output
+   → lifecycle           project → 'development'
+   → publication         commit into the generated project's own repository
 ```
 
-**Structural defects in this path, confirmed by reading on 2026-08-11.** They
-are recorded here rather than only in a contract because they are architecture,
-not incidents:
+**This path was written, unit-tested, audited and security-reviewed without
+ever being executed in sequence.** CONTRACT-017C ran it and found nine defects,
+every one of them at a boundary between components rather than inside one. The
+four that were architecture rather than incidents:
 
-- **No terminal state.** `ProjectLifecycle` defines
-  `idea → blueprint → provisioned → development → …`, and nothing in the
-  codebase ever transitions past `blueprint`. There is no representation of "the
-  factory finished building this."
-- **Retry is impossible.** §4's key rule, unapplied here.
-- **The patch target is the real repository.** `PatchApplier`'s interface says
-  the workspace must already be an isolated copy; `createGenerationTask` passes
-  the project repo itself. A rejected patch is never reverted.
-- **`ProjectLifecycle` holds its replay records in an in-memory `Map`**, so
-  idempotent replay of a transition does not survive a restart. Persistence is
-  in `PostgresProjectFactory`; the in-memory map is a second, weaker layer.
+- **There was no terminal state.** `ProjectLifecycle` defined
+  `idea → blueprint → provisioned → development → …` and nothing in the codebase
+  ever wrote the last two, so a flawless generation left a project at
+  `blueprint` forever. `FactoryLifecycleAdvancer` now writes both.
+- **Retry was impossible** — §4's key rule, unapplied here, so attempt 1 was the
+  only attempt a generation task could make.
+- **The escalation chain could not leave tier one.** With no owner policy active
+  (the normal state) the route resolver returned the same fallback on every
+  attempt, so the `deepseek → codex → claude` chain existed only on paper.
+- **The patch target is the real repository.** Still true, and now deliberate:
+  a rejected patch is reverted, an accepted one is committed.
 
-CONTRACT-017C owns all four.
+One more was deployment rather than code, and was the most consequential of
+all: `polyp-sequence.service` sets `PrivateTmp=yes`, and the verification
+workspace was created under `tmpdir()`. Docker bind-mounts by **host** path, so
+the daemon mounted an empty directory — **no patch this system produced had
+ever been verified.** The workspace now lives beside the repository under
+`PROJECT_WORKSPACES_ROOT`, a path the service, the API and the Docker daemon
+all agree about. Anything that must cross from a service process into a
+container must not live in `/tmp`.
+
+**`ProjectLifecycle` still holds its replay records in an in-memory `Map`**, so
+idempotent replay of a transition does not survive a restart. Persistence is in
+`PostgresProjectFactory`; the in-memory map is a second, weaker layer. Not yet
+addressed.
 
 ## 6. Isolation
 

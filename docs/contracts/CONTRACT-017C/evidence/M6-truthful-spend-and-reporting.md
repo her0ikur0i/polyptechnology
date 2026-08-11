@@ -1,6 +1,6 @@
 # M6 — The budget was measuring imaginary money
 
-Date: 2026-08-11. Status: **in progress.**
+Date: 2026-08-11. Status: **done.** The contract's closing milestone: the deep drill ran clean twice, spend is reported truthfully, and the documents are updated.
 
 Every finding here came from the owner reading their own Telegram transcript
 and checking it against the providers' dashboards. None of it was visible from
@@ -140,3 +140,76 @@ behaviour this milestone corrected — one expected the contradictory failure
 text, one asserted `costUsdMicros > 0` on a Claude call and so was passing on
 money nobody was charged. Both now assert the truthful behaviour, with the
 reasoning recorded in place.
+
+## The owner's phone confirms both fixes
+
+```
+✅ Blueprint translation succeeded
+Slugify
+🤖 claude-sonnet-5 · claude
+💰 $0.00
+📊 ░░░░░░░░░░ 0% · $1.00 left of $1.00
+```
+
+The project has its real name and the subscription provider costs nothing.
+Confirmed where it matters — on the surface the owner actually reads, not in a
+query I wrote.
+
+## The final deep drill
+
+Two complete runs, back to back, on the deployed release.
+
+|               | final-a             | final-b             |
+| ------------- | ------------------- | ------------------- |
+| Stages passed | 9 of 9              | 9 of 9              |
+| Accepted by   | `deepseek-v4-flash` | `deepseek-v4-flash` |
+| Changed lines | 26                  | 36                  |
+| Commit        | `0d646b531db2`      | `3310fe3f85f1`      |
+| Working tree  | clean               | clean               |
+| Project state | `development`       | `development`       |
+
+Both accepted on the **first and cheapest tier**, with no escalation needed —
+which is what the execution policy is for. Neither run was a repeat of the
+other: different implementations, different test counts, both correct.
+
+### Verified independently, and the harness was wrong before the code was
+
+Each project was checked outside the pipeline: `typecheck`, `format:check` and
+`npm test` run directly, git history inspected, and ten behaviour cases the
+models never saw.
+
+The first pass reported a mismatch in **both** projects:
+
+```
+MISMATCH "ABC123!@#def" got "abc123-def" want "abc123def"
+```
+
+**My expectation was wrong.** The requirement says runs of non-alphanumeric
+characters become _a single hyphen_; `!@#` is such a run, so `abc123-def` is
+correct and `abc123def` was my error. Recorded because the reflex on seeing two
+independent models "fail" the same case should be to doubt the case — and
+because a verification harness that is wrong in the generous direction would
+have passed bad code just as confidently.
+
+With the expectation corrected: **10 of 10 cases pass in both projects.**
+
+| Check                                 | final-a   | final-b   |
+| ------------------------------------- | --------- | --------- |
+| `typecheck` / `format:check` / `test` | OK        | OK        |
+| Tests shipped by the factory          | 6 passing | 5 passing |
+| Independent behaviour cases           | 10/10     | 10/10     |
+
+## Spend, truthfully
+
+The whole deep drill — two full end-to-end generations — cost **$0.0007**.
+
+| Provider | Calls | Tokens | Cost                 |
+| -------- | ----- | ------ | -------------------- |
+| deepseek | 3     | 3,406  | $0.0007              |
+| claude   | 6     | 2,797  | $0.00 (subscription) |
+
+The all-time ledger still shows `claude $2.4233`. That is historical and is
+**not** being rewritten: the audit tables are immutable by trigger, and
+retroactively editing a ledger to make a past number look better is the
+opposite of what a ledger is for. Every call recorded from this release
+forward is truthful; the old rows stay as evidence of the defect.

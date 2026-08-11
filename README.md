@@ -55,6 +55,31 @@ npm test
 No production mutation is permitted from a development command. Deterministic
 tests never send live Telegram messages.
 
+## What it does today
+
+**The factory generates software.** A brief becomes a proposal the owner
+approves, then a blueprint, a provisioned git workspace, generated code, a
+verification pass inside a network-free Docker sandbox, and a commit in the
+generated project's own repository — with nothing human after the brief.
+
+Work routes `deepseek → codex → claude`, cheapest viable tier first, escalating
+only on verified failure evidence. Both directions are observed: runs that
+accept on the first tier, and runs that walk to a fallback before accepting.
+
+Two things that took nine defects to learn, and that anything touching this
+path should know:
+
+- **A green test suite proves the units agree with their tests, not that the
+  system works.** The verification sandbox in this repository had never seen a
+  file — Docker was bind-mounting a host path the service could not create,
+  because of `PrivateTmp=yes` — while its integration tests passed throughout.
+  Every serious defect this pipeline had lived at a boundary between
+  components, where no component's own tests were looking.
+- **Not every provider charges money.** DeepSeek is metered; Claude and Codex
+  are subscription CLIs. The Claude CLI reports what its tokens _would_ cost,
+  and banking that made 97% of recorded spend imaginary — which then exhausted
+  real budget scopes. See `src/gateway/provider-billing.ts`.
+
 ## Operating it
 
 The owner runs this factory from their phone. Telegram is a full control

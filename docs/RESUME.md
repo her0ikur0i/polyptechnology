@@ -7,14 +7,18 @@ repository is the truth.
 
 ## Current state
 
-Contracts 001–017, 017B and 017A are all closed and pushed. **`CONTRACT-017A`
-(session-based conversation continuity) closed at `d016de0`** with 371 backend
-tests passing and zero skipped, 38 dashboard tests, and a clean security review
-run before the push. Telegram is a working two-way control surface — reports,
-approvals, conversation, a closed command set — it reports terminal outcomes
-only, names work in human terms, and cannot contradict itself about a budget.
-Conversation turns now **resume a provider session** instead of replaying the
-thread, so a long conversation costs about what a short one costs.
+Contracts 001–017, 017A, 017B and 017C are all closed and pushed.
+**`CONTRACT-017C` (the factory generates software) closed on 2026-08-11** with
+406 backend tests passing and zero skipped, 38 dashboard tests, and three
+security reviews run before their pushes — two of which found real defects in
+this contract's own code.
+
+**The factory now generates software end to end**, unattended after the brief:
+conversation → proposal → approval → blueprint → workspace → generation →
+verification in a network-free Docker sandbox → commit. Work routes
+`deepseek → codex → claude`, cheapest tier first, and both directions have been
+observed. Telegram remains a working two-way control surface, now naming
+projects correctly and reporting only money that was actually charged.
 
 ## Closed: CONTRACT-017B — truthful reporting and a real backoff
 
@@ -49,25 +53,42 @@ session, dropped it, and cold-started — so the owner saw a correct answer, the
 system reported success, and continuity never happened. It was found in one
 line of the supervisor log, which exists because CONTRACT-017B added it.
 
-## Next: CONTRACT-017C — generate a dummy project, for real
+## Closed: CONTRACT-017C — the factory generates software
 
-**M0 done, M1 next.** Charter at `docs/contracts/CONTRACT-017C/contract.md`.
+**CLOSED.** Charter and evidence in `docs/contracts/CONTRACT-017C/`.
 
-**Read this before planning anything:** the generation pipeline has never run.
-Queried against staging on 2026-08-11 — 7 generated projects, **all in `idea`
-state**, **0** conversation proposals, **0** generation tasks ever executed.
-The only drivers that have ever run are `conversation_reply` (24) and
-`deterministic_sha256` (2). Goal 1 is unevidenced, and CONTRACT-013's "complete
-generation pipeline" describes code, not a demonstrated capability.
+When this contract opened, the generation pipeline had **never run**: 7
+projects on staging, all in `idea`, 0 proposals, 0 generation tasks. It now
+runs end to end. Two consecutive deep drills each took a brief through
+conversation → proposal → approval → blueprint → workspace → generation →
+verification → publication with nothing human after the brief, and produced two
+different correct implementations. Both accepted on `deepseek-v4-flash`; an
+earlier run escalated to `codex:gpt-5.6-terra` before accepting.
 
-017C drives conversation → proposal → approval → blueprint → workspace → patch
-→ verify → publish against staging until a project reaches a terminal
-successful state, fixing whatever it hits on the way. **CONTRACT-017D** then
-makes that drill reproducible and unattended.
+**Nine defects, every one at a boundary between components.** The three that
+must not be re-learned:
 
-Inserted 2026-08-11 by owner decision — "backend first, make sure everything
-connected and the pipeline works and wild tested it until success generating
-dummy project, then move to frontend".
+- **`PrivateTmp=yes` meant the verification sandbox had never seen a file.**
+  The verify workspace was created under `tmpdir()`; Docker bind-mounts by host
+  path, so the daemon mounted an empty directory and every verification in this
+  system's history ran against nothing. Its integration tests passed throughout.
+  **Anything crossing from a service process into a container must not live in
+  `/tmp`.**
+- **The escalation chain could not leave tier one.** With no owner policy
+  active — the normal state — the route resolver returned the same fallback
+  forever, so `deepseek → codex → claude` existed only on paper.
+- **The budget counted imaginary money.** Subscription providers' notional
+  costs were banked as spend (97% of the total) and exhausted real scopes.
+  `src/gateway/provider-billing.ts` records who actually bills.
+
+**CONTRACT-017D is next:** the same drill from a genuinely clean database,
+unattended and reproducible, plus the two items 017C left open — the escalation
+chain is invisible in Telegram reports (a failure names one model while the run
+walked four tiers), and **$11.70 sits held in stale reservations** from
+attempts stranded before the classification fix. Releasing those needs
+`scripts/reconcile-provider-attempt.ts` and a real evidence SHA, which is
+deliberately not invented; it blocks nothing, since each generation task gets a
+fresh scope.
 
 ## Deferred: CONTRACT-018 — chat experience
 
@@ -117,9 +138,9 @@ node --import tsx scripts/resume-checkpoint.ts --check  # fail if stale
 | M5        | verification gates → publication, reaching a terminal successful state                           | done — `M5-first-generated-project.md`      |
 | M6        | the full drill run clean from a standing start; spend reported; README, security review, close   | done — `M6-truthful-spend-and-reporting.md` |
 
-- **HEAD:** `b3b2953 CONTRACT-017C M5: the factory generates, verifies and publishes a project`
-- **Working tree:** 8 changed path(s) — expected while a contract is in flight, since this repository commits once per contract
-- **Last touched:** `docs/contracts/CONTRACT-017C/evidence/M6-truthful-spend-and-reporting.md` at 2026-08-11T13:27Z — if a session ended abruptly, work was here
+- **HEAD:** `7de5391 CONTRACT-017C M6: the budget was measuring imaginary money`
+- **Working tree:** 6 changed path(s) — expected while a contract is in flight, since this repository commits once per contract
+- **Last touched:** `docs/contracts/CONTRACT-017C/evidence/M6-truthful-spend-and-reporting.md` at 2026-08-11T13:47Z — if a session ended abruptly, work was here
 - **Next action:** every milestone is evidenced; CONTRACT-017C is ready to close
 
 <!-- resume:auto:end -->
