@@ -139,9 +139,20 @@ export class AiGateway {
         route.provider !== "codex"
       )
         rejection = "untrusted_model_resolution";
+      // An empty answer is its own failure, not an accounting one.
+      //
+      // This used to be folded into `invalid_provider_accounting`, so a model
+      // that returned nothing at all was reported to the owner as a numbers
+      // problem. `deepseek-v4-pro` does exactly that on hard briefs: it is a
+      // thinking model, spends its budget reasoning, and returns 2,458
+      // reasoning tokens with no content. Naming that "invalid provider
+      // accounting" sends whoever reads it looking at the ledger.
       else if (
         result.providerRequestId.length === 0 ||
-        result.content.trim().length === 0 ||
+        result.content.trim().length === 0
+      )
+        rejection = "empty_provider_response";
+      else if (
         result.usage.inputTokens < 0 ||
         result.usage.outputTokens < 0 ||
         result.usage.costUsdMicros < 0 ||
@@ -172,15 +183,28 @@ export class AiGateway {
       };
     } catch (error) {
       if (error instanceof GatewayInvocationError) throw error;
+      // Every validation rejection above throws GatewayInvocationError, which
+      // the line before this one re-throws — so by the time execution reaches
+      // here, the error is either a ManagedInvocationError from the adapter or
+      // something genuinely unexpected.
+      //
+      // This used to also match four message prefixes ("resolved model
+      // mismatch", "invalid provider", "invalid per-model", and one I added
+      // for `empty_provider_response`) in order to classify those as *known*
+      // outcomes. All four were unreachable, and three of them could never
+      // have matched anyway: the real rejection codes are underscored
+      // (`resolved_model_mismatch`), so the spaced strings never corresponded
+      // to anything the code emits. Dead conditions that look like they are
+      // protecting the ledger are worse than no conditions, because the next
+      // reader trusts them. A security review caught mine on the way in.
+      //
+      // What is left is the honest rule: an adapter says whether its own
+      // failure leaves the outcome unknown, and anything unexpected is
+      // unknown, because we cannot say otherwise.
       const unknown =
         error instanceof ManagedInvocationError
           ? error.outcomeUnknown || error.providerRequestId !== undefined
-          : !(
-              error instanceof Error &&
-              (error.message.startsWith("resolved model mismatch") ||
-                error.message.startsWith("invalid provider") ||
-                error.message.startsWith("invalid per-model"))
-            );
+          : true;
       const failed = await this.ledger.fail(
         initial.id,
         error instanceof ManagedInvocationError

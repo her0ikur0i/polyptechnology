@@ -222,3 +222,72 @@ test("a policyStore that throws falls back to the static route rather than faili
   const route = await flaky.resolve("bulk_code", "t1", fallback);
   assert.deepEqual(route, modelRoutes("bulk_code")[0]);
 });
+
+// A tier that fails WITHOUT recording a verdict must not be retried forever.
+//
+// `provider_artifacts` only records tiers that reached a judgement. A tier
+// whose CLI timed out or returned unparseable telemetry leaves no row, so it
+// stayed "untried" and was selected again on every remaining attempt.
+//
+// Observed on the first genuinely hard brief: deepseek-flash, deepseek-pro and
+// codex-terra each recorded a rejection, then gpt-5.6-sol failed three times
+// running with `invalid Codex JSONL telemetry` and consumed every remaining
+// attempt. claude-sonnet-5 -- the final tier, and the one most likely to
+// succeed on hard work -- was never reached at all.
+const settled = (count: number) =>
+  modelRoutes("bulk_code")
+    .slice(0, count)
+    .map((tier) => ({
+      taskId: "t1",
+      providerId: tier.provider,
+      requestedModelId: tier.requestedModelId,
+      status: "rejected" as const,
+      reason: "verification_failed",
+    }));
+
+test("a tier that recorded no verdict is retried exactly once", async () => {
+  const chain = modelRoutes("bulk_code");
+  // Three tiers judged and rejected; attempt 4 is the first at tier four.
+  const first = await resolver({ artifacts: settled(3) }).resolve(
+    "bulk_code",
+    "t1",
+    fallback,
+    4,
+  );
+  assert.deepEqual(first, chain[3]);
+
+  // Attempt 5: tier four produced no artifact, so it gets its one retry --
+  // a timeout says nothing about whether that model could do the work.
+  const retry = await resolver({ artifacts: settled(3) }).resolve(
+    "bulk_code",
+    "t1",
+    fallback,
+    5,
+  );
+  assert.deepEqual(retry, chain[3]);
+
+  // Attempt 6: still no verdict after two tries, so the chain moves on and
+  // the final tier finally gets asked.
+  const escalated = await resolver({ artifacts: settled(3) }).resolve(
+    "bulk_code",
+    "t1",
+    fallback,
+    6,
+  );
+  assert.deepEqual(escalated, chain[4]);
+});
+
+test("verdicts still drive escalation ahead of the retry allowance", async () => {
+  const chain = modelRoutes("bulk_code");
+  // Every attempt so far reached a verdict, so there is nothing to retry and
+  // each attempt simply takes the next tier.
+  for (let judged = 0; judged < chain.length; judged++) {
+    const route = await resolver({ artifacts: settled(judged) }).resolve(
+      "bulk_code",
+      "t1",
+      fallback,
+      judged + 1,
+    );
+    assert.deepEqual(route, chain[judged], `after ${judged} verdicts`);
+  }
+});

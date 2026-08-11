@@ -92,7 +92,18 @@ ADR before changing a boundary it governs.
   files, never on a command line — `/proc/<pid>/cmdline` is world-readable.
 - **Cheapest viable model tier first.** `deepseek → codex → claude`, escalating
   only on verified same-task failure evidence. A transport failure retries the
-  same tier rather than escalating.
+  same tier — **once**, then the chain moves on.
+
+  The "once" was added on 2026-08-11 and the invariant is weaker for it, so the
+  reason is recorded rather than assumed. As originally written, a tier that
+  failed without recording a verdict was retried indefinitely: it left no
+  `provider_artifacts` row, so it never looked "tried". On the first hard brief
+  the Codex CLI returned unparseable telemetry three times running, consumed
+  every remaining attempt, and **`claude-sonnet-5` — the last tier, and the one
+  most likely to succeed — was never asked at all.** A rule meant to stop
+  premature escalation had become a rule that guaranteed the chain never
+  finished. One retry keeps the original intent (a timeout says nothing about
+  whether that model could do the work) without the dead end.
 
 ## Delivery discipline
 

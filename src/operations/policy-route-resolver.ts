@@ -54,6 +54,7 @@ export class PostgresPolicyRouteResolver {
     taskClass: TaskClass,
     taskId: string,
     fallback: ModelRoute,
+    attemptOrdinal = 1,
   ): Promise<ModelRoute> {
     if (!isProgrammingTaskClass(taskClass)) return fallback;
 
@@ -74,7 +75,7 @@ export class PostgresPolicyRouteResolver {
     // tried, and take the next tier. The owner policy still overrides
     // completely when one is active; this is what happens in its absence.
     if (active === undefined)
-      return this.nextStaticTier(taskClass, taskId, fallback);
+      return this.nextStaticTier(taskClass, taskId, fallback, attemptOrdinal);
 
     const attempts = await this.artifacts.forTask(taskId);
     const failures = deriveFailureEvidence(attempts);
@@ -119,19 +120,46 @@ export class PostgresPolicyRouteResolver {
     taskClass: TaskClass,
     taskId: string,
     fallback: ModelRoute,
+    attemptOrdinal: number,
   ): Promise<ModelRoute> {
     const chain = modelRoutes(taskClass);
     if (chain.length === 0) return fallback;
 
     const attempts = await this.artifacts.forTask(taskId).catch(() => []);
-    const tried = new Set(
+    const settled = new Set(
       attempts.map((a) => `${a.providerId}:${a.requestedModelId}`),
     );
-    const next = chain.find(
-      (route) => !tried.has(`${route.provider}:${route.requestedModelId}`),
+    const remaining = chain.filter(
+      (route) => !settled.has(`${route.provider}:${route.requestedModelId}`),
     );
-    // Every tier exhausted: stay on the last one. The work engine's own
-    // maxAttempts is what stops the task, not this.
-    return next ?? chain[chain.length - 1]!;
+    // Every tier has reached a verdict: stay on the last one. The work
+    // engine's maxAttempts is what stops the task, not this.
+    if (remaining.length === 0) return chain[chain.length - 1]!;
+
+    // A tier that failed without reaching a verdict gets one retry, then the
+    // chain moves on.
+    //
+    // `provider_artifacts` only records tiers that produced a *judgement* --
+    // accepted or rejected. A tier that never got that far, because the CLI
+    // timed out or returned unparseable telemetry, leaves no row, so it stayed
+    // "untried" and was selected again on every remaining attempt.
+    //
+    // Observed on the first genuinely hard brief: deepseek-flash, deepseek-pro
+    // and codex-terra each recorded a rejection, then `gpt-5.6-sol` failed
+    // three times running with `invalid Codex JSONL telemetry` and consumed
+    // every remaining attempt. **claude-sonnet-5, the final tier and the one
+    // most likely to succeed on hard work, was never reached** -- the task
+    // exhausted maxAttempts without ever asking it.
+    //
+    // Retrying the same tier once keeps the intent of the standing rule -- a
+    // transport failure retries its own tier, because a timeout says nothing
+    // about whether that model could do the work -- while removing the dead
+    // end. The rule as originally written said "retries the same tier" with no
+    // limit, and that is what let one stalled tier consume every attempt.
+    // CLAUDE.md's invariant was amended to say "once" rather than left to
+    // disagree with this code.
+    const unsettled = Math.max(0, attemptOrdinal - 1 - attempts.length);
+    const skip = Math.floor(unsettled / 2);
+    return remaining[Math.min(skip, remaining.length - 1)]!;
   }
 }

@@ -261,6 +261,18 @@ entangled with widening it.
 runs again from a clean database, unattended, and produces the same terminal
 result. Whatever 017C had to do by hand becomes something the system does.
 
+**Scope grew after the deep drill (2026-08-11).** Every success 017C recorded
+came from one brief — a single pure function in one file. A deliberately harder
+brief failed on every tier, twice, and **the gates were right to fail it**:
+DeepSeek produced code that would not compile, Codex produced code that failed
+4 of its own 17 tests. No false negatives, which is the first real evidence
+that verification rejects bad work, since in 017C it had never seen a file.
+
+So this contract also owns: Codex attempts that end in `dispatched` without a
+verdict, an escalation chain that exhausts its attempt budget before reaching
+`claude-sonnet-5`, and reports that name one model when the run walked four.
+Fully specified in `docs/contracts/CONTRACT-017D/contract.md`.
+
 ## CONTRACT-018 — Chat experience on the streaming foundation
 
 **Re-sequenced after 017C/017D.** Content unchanged; it now builds on a

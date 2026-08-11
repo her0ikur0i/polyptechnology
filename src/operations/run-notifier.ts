@@ -232,6 +232,7 @@ const REASON_TEXT: Record<string, string> = {
   verification: "verification gate failed",
   worker: "worker or transport failure",
   invalid_output: "the run failed",
+  empty_provider_response: "the model returned an empty answer",
 };
 
 export class TelegramRunNotifier implements RunNotifier {

@@ -657,7 +657,15 @@ export class CodexCliAdapter implements ManagedProviderAdapter {
       ],
       {
         ...(signal === undefined ? {} : { signal }),
-        timeout: 300_000,
+        // Ten minutes, raised from five.
+        //
+        // On the first genuinely hard brief, three consecutive Codex attempts
+        // died with `invalid Codex JSONL telemetry` -- the stream carried
+        // `thread.started` and `turn.started` and no completed item, which is
+        // what a killed process leaves behind. Harder work legitimately takes
+        // longer, and the work engine's lease is heartbeated, so a long call
+        // costs nothing but time. The task's own maxAttempts still bounds it.
+        timeout: 600_000,
         maxBuffer: Math.max(1_000_000, maxOutputTokens * 8),
         input: prompt,
       },

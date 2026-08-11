@@ -132,6 +132,10 @@ export interface RouteResolver {
     taskClass: StoredAiPatchTaskInput["taskClass"],
     taskId: string,
     fallback: StoredAiPatchTaskInput["route"],
+    // Which attempt this is. A tier that fails without recording a verdict
+    // would otherwise be retried until the task runs out of attempts, so the
+    // resolver needs to know how many have already been spent.
+    attemptOrdinal?: number,
   ): Promise<StoredAiPatchTaskInput["route"]>;
 }
 
@@ -162,10 +166,12 @@ export class AiPatchOperationDriver implements OperationDriver {
     context?: OperationContext,
   ): Promise<unknown> {
     const stored = parseStoredAiPatchTaskInput(input);
+    const attemptOrdinalForRoute = context?.attemptOrdinal ?? 1;
     const route = await this.routeResolver.resolve(
       stored.taskClass,
       stored.taskId,
       stored.route,
+      attemptOrdinalForRoute,
     );
     // One ledger entry per attempt, exactly as ConversationReplyDriver does.
     //

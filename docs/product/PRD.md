@@ -104,6 +104,14 @@ R2.8 is **Partial** rather than Proven: the drill is repeatable and was run many
 times, but not yet from a genuinely clean database with nothing else queued.
 CONTRACT-017D owns that.
 
+**Proven on a simple brief, not yet on a hard one.** Every acceptance recorded
+so far came from one brief: a single pure function in one file. A deliberately
+harder brief — several exported functions, error cases that must throw, an
+allocator that must not lose a cent — failed on every tier, twice. The
+rejections were all legitimate (code that would not compile; code that failed
+4 of its own 17 tests), so this is a statement about how much work the factory
+can land per attempt, not about the plumbing. CONTRACT-017D carries it.
+
 Nine defects stood between the code and a single successful run, every one
 found by running it. Analysis in
 `docs/contracts/CONTRACT-017C/evidence/M1-predicted-failures.md` and the M2–M6

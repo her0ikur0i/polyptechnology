@@ -96,7 +96,9 @@ export async function runDrill(
   pool: Pool,
   runLabel: string,
   workspacesRoot: string,
+  depth: "simple" | "deep" = "simple",
 ): Promise<DrillReport> {
+  const brief = depth === "deep" ? DEEP_BRIEF : SIMPLE_BRIEF;
   const identity = runIdentity(runLabel);
   const stages: StageReport[] = [];
   const conversations = new PostgresConversationStore(pool);
@@ -166,7 +168,7 @@ export async function runDrill(
       expectedVersion: conversationVersion,
       idempotencyKey: deterministicUuid(`drill:${runLabel}:brief`),
       occurredAt: new Date().toISOString(),
-      content: DUMMY_PROJECT_BRIEF,
+      content: brief,
     });
     // appendMessage() returns the message, not the conversation, so the
     // fence is tracked here rather than read back.
@@ -513,7 +515,9 @@ const STAGE_NAMES = [
 
 // Small enough to verify quickly and cheaply, real enough that passing means
 // something: it has behaviour worth testing, and the tests can genuinely fail.
-const DUMMY_PROJECT_BRIEF = [
+// Small enough to verify quickly and cheaply, real enough that passing means
+// something: it has behaviour worth testing, and the tests can genuinely fail.
+const SIMPLE_BRIEF = [
   "Build a tiny Node/TypeScript library called `slugify`.",
   "",
   "Requirements:",
@@ -524,6 +528,41 @@ const DUMMY_PROJECT_BRIEF = [
   "- Cover every rule above with tests using node:test.",
   "",
   "Stack: node runtime, no framework, no database.",
+].join("\n");
+
+// Deliberately harder, and harder along the axes that actually broke things.
+//
+// Every success so far came from the one brief above: a single pure function
+// in a single file. That proves the pipeline runs; it does not prove the
+// pipeline generalises, and the difference matters because the failures this
+// contract fixed were mostly about diff *shape* -- multi-file patches, new
+// directories, hunks against files that already have content.
+//
+// So this asks for several exported functions with interacting rules, error
+// cases that must throw, and enough surface that a model will naturally split
+// it across files.
+const DEEP_BRIEF = [
+  "Build a Node/TypeScript library called `moneybag` for handling money without",
+  "floating-point error.",
+  "",
+  "Requirements:",
+  "- Represent an amount as integer minor units (cents) plus a 3-letter",
+  "  uppercase currency code.",
+  '- Export `fromString(text: string)`, parsing forms like "USD 12.34",',
+  '  "usd 12.3" and "EUR 0.05" into that representation. Reject anything else',
+  "  by throwing an Error.",
+  "- Export `add(a, b)` and `subtract(a, b)`. Both throw when the currencies",
+  "  differ.",
+  "- Export `allocate(amount, ratios: number[])`, splitting an amount across",
+  "  ratios so that no minor unit is lost -- the parts must sum exactly to the",
+  "  original. Distribute any remainder one unit at a time to the earliest",
+  "  parts.",
+  '- Export `format(amount): string` returning e.g. "USD 12.34", always with',
+  "  two decimal places.",
+  "- Cover every rule and every error case with tests using node:test,",
+  "  including that allocate never loses or invents a cent.",
+  "",
+  "Stack: node runtime, no framework, no database. No dependencies.",
 ].join("\n");
 
 function message(error: unknown): string {
@@ -544,13 +583,14 @@ if (invoked) {
   const runLabel = process.argv[2] ?? "default";
   const workspacesRoot =
     process.env.PROJECT_WORKSPACES_ROOT ?? "/var/lib/polyp/project-workspaces";
+  const depth = process.argv[3] === "deep" ? "deep" : "simple";
   if (databaseUrl === undefined) {
     console.error("DATABASE_URL is required");
     process.exitCode = 1;
   } else {
     const pool = new Pool({ connectionString: databaseUrl });
     try {
-      const report = await runDrill(pool, runLabel, workspacesRoot);
+      const report = await runDrill(pool, runLabel, workspacesRoot, depth);
       console.log(renderReport(report));
       if (!report.ok) process.exitCode = 1;
     } finally {
