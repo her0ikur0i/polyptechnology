@@ -58,6 +58,40 @@ export interface UsageLine {
 export interface BudgetLine {
   spentUsdMicros: number;
   limitUsdMicros: number;
+  // Committed but not yet charged. Optional so a caller that genuinely has no
+  // reservation figure is not forced to invent a zero, but every caller in
+  // this repository supplies it.
+  reservedUsdMicros?: number;
+}
+
+// The one budget calculation.
+//
+// There were two. A run report showed a scope at 6% with "$4.68 left" while
+// /budget showed the same scope at 18% with "$0.60 reserved", because the
+// report counted spend and the command counted spend plus reservations. The
+// owner read both in the same batch of messages. Reservations are money that
+// is committed and cannot be spent again, so excluding them overstates the
+// headroom by exactly the amount most likely to be stuck.
+//
+// Both surfaces now call this, which is the only way two numbers stay equal.
+export function budgetSummary(line: BudgetLine): {
+  bar: string;
+  percent: number;
+  committedUsdMicros: number;
+  remainingUsdMicros: number;
+  reservedUsdMicros: number;
+} {
+  const reservedUsdMicros = Math.max(0, line.reservedUsdMicros ?? 0);
+  const committedUsdMicros =
+    Math.max(0, line.spentUsdMicros) + reservedUsdMicros;
+  const { bar, percent } = budgetBar(committedUsdMicros, line.limitUsdMicros);
+  return {
+    bar,
+    percent,
+    committedUsdMicros,
+    remainingUsdMicros: Math.max(0, line.limitUsdMicros - committedUsdMicros),
+    reservedUsdMicros,
+  };
 }
 
 export interface Report {
@@ -140,16 +174,15 @@ export function renderReport(report: Report): string {
   }
 
   if (report.budget !== undefined) {
-    const { bar, percent } = budgetBar(
-      report.budget.spentUsdMicros,
-      report.budget.limitUsdMicros,
-    );
-    const remaining = Math.max(
-      0,
-      report.budget.limitUsdMicros - report.budget.spentUsdMicros,
-    );
+    const { bar, percent, remainingUsdMicros, reservedUsdMicros } =
+      budgetSummary(report.budget);
     lines.push(
-      `${ICONS.budget} ${bar} ${percent}% · ${formatUsd(remaining)} left of ${formatUsd(report.budget.limitUsdMicros)}`,
+      `${ICONS.budget} ${bar} ${percent}% · ${formatUsd(remainingUsdMicros)} left of ${formatUsd(report.budget.limitUsdMicros)}` +
+        // Named only when there is one. A "$0.00 reserved" on every report is
+        // exactly the kind of zero-valued line this contract is removing.
+        (reservedUsdMicros > 0
+          ? ` · ${formatUsd(reservedUsdMicros)} reserved`
+          : ""),
     );
   }
 
@@ -187,20 +220,38 @@ export function splitForTelegram(text: string, maxLength = 4_000): string[] {
     const line = window.lastIndexOf("\n");
     const space = window.lastIndexOf(" ");
 
-    const cut =
+    const cut = safeCut(
+      remaining,
       paragraph > half
         ? paragraph + 2
         : line > half
           ? line + 1
           : space > half
             ? space + 1
-            : maxLength;
+            : maxLength,
+    );
 
     chunks.push(remaining.slice(0, cut).trimEnd());
     remaining = remaining.slice(cut).trimStart();
   }
   if (remaining.length > 0) chunks.push(remaining);
   return chunks.filter((chunk) => chunk.length > 0);
+}
+
+// Moves a cut back off the middle of a surrogate pair.
+//
+// JavaScript string indices are UTF-16 code units, and every emoji outside the
+// basic plane is two of them. The paragraph/line/space branches land on ASCII
+// by construction, but the `maxLength` fallback is a raw index — so a 4,000
+// character answer with no break point in its second half could be cut through
+// the middle of a 🔨, and both halves render as `�`. In a formatter whose only
+// job is delivering text intact, that is the whole job failing.
+export function safeCut(text: string, cut: number): number {
+  if (cut <= 0 || cut >= text.length) return cut;
+  const code = text.charCodeAt(cut - 1);
+  // A high surrogate immediately before the cut means its low half is on the
+  // other side.
+  return code >= 0xd800 && code <= 0xdbff ? cut - 1 : cut;
 }
 
 export interface ApprovalPrompt extends Report {

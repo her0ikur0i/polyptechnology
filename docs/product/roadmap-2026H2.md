@@ -111,6 +111,33 @@ runs, pending approvals, budget, and answering decisions that already exist —
 confirmed sufficient by the owner. Nothing executes because it was asked for in
 a chat.
 
+## CONTRACT-017B — Truthful reporting and a real backoff
+
+**Objective.** Make the Telegram control surface tell the owner the truth,
+briefly. Inserted 2026-08-11, ahead of 017A, because three of its four defects
+make the surface actively mislead — which is worse than a missing feature.
+
+Every defect here was found the same way: the owner read a full day of their
+own transcript. None had been caught by a test or a database query, because
+each is only visible as a message a person reads on a phone.
+
+- Retries were spaced by a hardcoded flat second, so a task burned all three
+  attempts in two seconds and reached a terminal `failed` faster than any
+  outage worth retrying through could clear. Invisible until CONTRACT-017's
+  sweep made retries happen at all.
+- Failures were attributed to "provider returned unusable output" on runs where
+  no provider was ever called — contradicted three lines later by `0 in · 0
+out` in the same message.
+- The same budget scope read 6% in a run report and 18% in `/budget`, because
+  each surface did its own arithmetic and only one counted reservations.
+- Tasks were headlined by uuid.
+
+**Excludes.** Session continuity and the idempotency defect (017A owns both);
+releasing the $0.60 held by three `outcome_unknown` ledger rows, which needs a
+real evidence SHA.
+
+Fully specified in `docs/contracts/CONTRACT-017B/contract.md`.
+
 ## CONTRACT-017A — Session-based conversation continuity
 
 **Objective.** Replace whole-transcript replay with real provider sessions.

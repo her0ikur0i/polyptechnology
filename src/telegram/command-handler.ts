@@ -3,12 +3,13 @@ import type { TelegramRequester } from "./gateway.js";
 import type { TelegramUpdateHandler, UpdateOrigin } from "./poller.js";
 import {
   ICONS,
-  budgetBar,
+  budgetSummary,
   escapeHtml,
   formatUsd,
   renderReport,
   splitForTelegram,
 } from "./report.js";
+import { kindOf, trimSubject } from "./task-label.js";
 
 // The closed command set.
 //
@@ -149,6 +150,9 @@ export class TelegramCommandService {
         : {
             budget: {
               spentUsdMicros: facts.budget.spentUsdMicros,
+              // Carried through so the status line agrees with /budget. Its
+              // absence here was half of the 6%-versus-18% contradiction.
+              reservedUsdMicros: facts.budget.reservedUsdMicros,
               limitUsdMicros: facts.budget.limitUsdMicros,
             },
           }),
@@ -167,20 +171,38 @@ export class TelegramCommandService {
     return renderReport({
       category: "running",
       title: `${runs.length} active run${runs.length === 1 ? "" : "s"}`,
-      detail: runs.flatMap((run) => [
-        {
-          icon: "build" as const,
-          text: `${run.driver ?? "task"} — ${run.state}`,
-        },
-        {
-          // The short id is enough to match a run against a report in the same
-          // chat, and a full uuid per line makes the message unreadable on a
-          // phone.
-          text: `  ${run.taskId.slice(0, 8)} · attempt ${run.attemptCount}/${run.maxAttempts}${
-            run.leasedBy === undefined ? "" : ` · ${run.leasedBy}`
-          } · ${formatUsd(run.spentUsdMicros)}`,
-        },
-      ]),
+      detail: runs.flatMap((run) => {
+        const kind = kindOf(run.driver);
+        const subject = trimSubject(run.subject);
+        return [
+          {
+            icon: "build" as const,
+            // "Chat reply — running", not "conversation_reply — running".
+            text: `${kind} — ${run.state}`,
+          },
+          {
+            // The subject if there is one, the attempt count only when it is
+            // not the first, the spend only when something was spent. A line
+            // of "1/3 · $0.00" on every row is three facts and no information.
+            text: [
+              subject === undefined
+                ? undefined
+                : kind === "Chat reply"
+                  ? `"${subject}"`
+                  : subject,
+              run.attemptCount > 1
+                ? `attempt ${run.attemptCount}/${run.maxAttempts}`
+                : undefined,
+              run.leasedBy,
+              run.spentUsdMicros > 0
+                ? formatUsd(run.spentUsdMicros)
+                : undefined,
+            ]
+              .filter((part) => part !== undefined)
+              .join(" · "),
+          },
+        ].filter((line) => line.text.length > 0);
+      }),
     });
   }
 
@@ -221,18 +243,22 @@ export class TelegramCommandService {
 
     const lines: string[] = [`${ICONS.budget} <b>Budget</b>`, ""];
     for (const account of accounts) {
-      const { bar, percent } = budgetBar(
-        account.spentUsdMicros + account.reservedUsdMicros,
-        account.limitUsdMicros,
-      );
+      // budgetSummary(), not a second local calculation. This surface and the
+      // run report disagreed about the same scope -- 18% here, 6% there --
+      // because each did its own arithmetic. There is now one.
+      const { bar, percent, remainingUsdMicros, reservedUsdMicros } =
+        budgetSummary({
+          spentUsdMicros: account.spentUsdMicros,
+          reservedUsdMicros: account.reservedUsdMicros,
+          limitUsdMicros: account.limitUsdMicros,
+        });
       lines.push(`<code>${escapeHtml(account.scopeId)}</code>`);
       lines.push(
-        `${bar} ${percent}% · ${formatUsd(account.spentUsdMicros)} spent of ${formatUsd(account.limitUsdMicros)}`,
+        `${bar} ${percent}% · ${formatUsd(remainingUsdMicros)} left of ${formatUsd(account.limitUsdMicros)}` +
+          (reservedUsdMicros > 0
+            ? ` · ${formatUsd(reservedUsdMicros)} reserved`
+            : ""),
       );
-      // Reservations are money that is committed but not yet charged. Leaving
-      // them out makes the remaining figure look larger than it is spendable.
-      if (account.reservedUsdMicros > 0)
-        lines.push(`  ${formatUsd(account.reservedUsdMicros)} reserved`);
     }
     return lines.join("\n");
   }

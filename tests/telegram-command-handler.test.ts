@@ -175,7 +175,8 @@ test("/runs shows what is executing, /approvals what is waiting", async () => {
         {
           taskId: "0d5f3a9c-1111-4222-8333-444455556666",
           state: "running",
-          driver: "ai_patch",
+          driver: "ai_patch_executor",
+          subject: "add the SSE resume route",
           attemptCount: 2,
           maxAttempts: 3,
           leasedBy: "polyp:1234",
@@ -196,10 +197,16 @@ test("/runs shows what is executing, /approvals what is waiting", async () => {
 
   const runs = await service.render("runs");
   assert.ok(runs.includes("1 active run"));
-  assert.ok(runs.includes("ai_patch — running"));
-  // Short id, not a full uuid: a phone-width line has to stay readable.
-  assert.ok(runs.includes("0d5f3a9c · attempt 2/3"));
-  assert.ok(!runs.includes("0d5f3a9c-1111"));
+  // "Patch", not "ai_patch_executor": a driver id is an internal enum and the
+  // owner reads these on a phone.
+  assert.ok(runs.includes("Patch — running"));
+  assert.ok(runs.includes("add the SSE resume route"));
+  assert.ok(runs.includes("attempt 2/3"));
+  assert.ok(runs.includes("polyp:1234"));
+  assert.ok(runs.includes("$0.12"));
+  // No id at all, not even a short one. The owner asked for work to be named
+  // by what it is, and the subject line is what correlates a run to a report.
+  assert.ok(!runs.includes("0d5f3a9c"));
 
   const approvals = await service.render("approvals", { now: NOW });
   assert.ok(approvals.includes("1 approval waiting"));
@@ -249,7 +256,7 @@ test("a failing query answers in the chat instead of throwing into the poller", 
   assert.ok(String(sent[0]?.text).includes("database is down"));
 });
 
-test("a long answer is split rather than truncated", async () => {
+test("/runs stays one readable message however absurd the underlying data", async () => {
   const { sent, requester } = recorder();
   const handler = new TelegramCommandHandler({
     service: new TelegramCommandService(
@@ -257,7 +264,12 @@ test("a long answer is split rather than truncated", async () => {
         runs: Array.from({ length: 10 }, (_, index) => ({
           taskId: `${index}`.repeat(8),
           state: "running",
+          // Neither of these reaches the owner verbatim any more: the driver
+          // becomes a human kind, and the subject is collapsed and bounded.
+          // This test used to rely on the raw driver being echoed to force a
+          // split, which is exactly the leak that was removed.
           driver: "x".repeat(600),
+          subject: "y ".repeat(3_000),
           attemptCount: 1,
           maxAttempts: 3,
           spentUsdMicros: 0,
@@ -272,10 +284,10 @@ test("a long answer is split rather than truncated", async () => {
     { updateId: 1, chatId: "42", userId: "42" },
   );
 
-  assert.ok(sent.length > 1, "expected the answer to be split across messages");
-  for (const message of sent)
-    assert.ok(
-      String(message.text).length <= 4_000,
-      "every part must be within Telegram's limit",
-    );
+  assert.equal(sent.length, 1, "ten runs should not need multiple messages");
+  const text = String(sent[0]!.text);
+  assert.ok(text.length <= 4_000, "within Telegram's limit");
+  assert.ok(!text.includes("xxxxx"), "the raw driver id must not leak");
+  for (const line of text.split("\n"))
+    assert.ok(line.length < 200, `line stayed readable: ${line.slice(0, 40)}…`);
 });

@@ -11,6 +11,9 @@ export interface RunLine {
   taskId: string;
   state: string;
   driver?: string;
+  // What the work is about, for a headline a person can read. Optional: some
+  // drivers genuinely have no subject.
+  subject?: string;
   attemptCount: number;
   maxAttempts: number;
   leasedBy?: string;
@@ -103,12 +106,29 @@ export class PostgresCommandFacts implements CommandFacts {
   }
 
   async activeRuns(limit: number): Promise<ReadonlyArray<RunLine>> {
+    // The subject joins exist so /runs can name work the way a person would:
+    // the owner's own question for a chat reply, the project name for a
+    // generation. The uuid casts are guarded by a shape test, because
+    // `input` is jsonb written by several drivers and one malformed value
+    // would otherwise fail the whole command with a cast error rather than
+    // just missing a label.
     const result = await this.pool.query(
       `SELECT t.id, t.state, t.attempt_count, t.max_attempts, t.spent_usd_micros,
-              s.driver, l.worker_id
+              s.driver, l.worker_id, q.content AS asked, g.display_name AS project_name
          FROM tasks t
          LEFT JOIN operation_task_specs s ON s.task_id = t.id
          LEFT JOIN task_leases l ON l.task_id = t.id AND l.expires_at > now()
+         LEFT JOIN LATERAL (
+           SELECT m.content FROM conversation_messages m
+            WHERE m.conversation_id = CASE
+                    WHEN s.input->>'conversationId' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                    THEN (s.input->>'conversationId')::uuid END
+              AND m.role = 'owner'
+            ORDER BY m.ordinal DESC LIMIT 1
+         ) q ON true
+         LEFT JOIN generated_projects g ON g.id = CASE
+                   WHEN s.input->>'projectId' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                   THEN (s.input->>'projectId')::uuid END
         WHERE t.state = ANY($1::text[])
         ORDER BY t.state, t.id
         LIMIT $2`,
@@ -123,6 +143,8 @@ export class PostgresCommandFacts implements CommandFacts {
         spent_usd_micros: string;
         driver: string | null;
         worker_id: string | null;
+        asked: string | null;
+        project_name: string | null;
       }>
     ).map((row) => ({
       taskId: row.id,
@@ -132,6 +154,13 @@ export class PostgresCommandFacts implements CommandFacts {
       spentUsdMicros: Number(row.spent_usd_micros),
       ...(row.driver === null ? {} : { driver: row.driver }),
       ...(row.worker_id === null ? {} : { leasedBy: row.worker_id }),
+      // The question wins over the project name: for a chat reply both may be
+      // present, and the owner recognises their own sentence faster.
+      ...(row.asked !== null
+        ? { subject: row.asked }
+        : row.project_name !== null
+          ? { subject: row.project_name }
+          : {}),
     }));
   }
 

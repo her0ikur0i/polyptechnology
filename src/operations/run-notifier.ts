@@ -6,6 +6,12 @@ import type {
   UsageLine,
 } from "../telegram/report.js";
 import type { TelegramTransport } from "../telegram/gateway.js";
+import {
+  kindOf,
+  subjectLine,
+  taskHeadline,
+  type TaskDescription,
+} from "../telegram/task-label.js";
 
 export interface TaskFinished {
   taskId: string;
@@ -13,6 +19,8 @@ export interface TaskFinished {
   outcome: string;
   reason?: string;
   driver?: string;
+  // The error the supervisor actually caught, when it caught one.
+  detail?: string;
 }
 
 // Deliberately narrow. The supervisor should not know that Telegram exists, and
@@ -71,11 +79,16 @@ export class PostgresRunFacts {
     };
 
     const budget = await this.pool.query(
-      "SELECT spent_usd_micros, max_cost_usd_micros FROM ai_budget_accounts WHERE scope_id = $1",
+      "SELECT spent_usd_micros, reserved_usd_micros, max_cost_usd_micros FROM ai_budget_accounts WHERE scope_id = $1",
       [row.budget_scope_id],
     );
     const account = budget.rows[0] as
-      { spent_usd_micros: string; max_cost_usd_micros: string } | undefined;
+      | {
+          spent_usd_micros: string;
+          reserved_usd_micros: string;
+          max_cost_usd_micros: string;
+        }
+      | undefined;
 
     return account === undefined
       ? { usage }
@@ -83,9 +96,62 @@ export class PostgresRunFacts {
           usage,
           budget: {
             spentUsdMicros: Number(account.spent_usd_micros),
+            // Reservations were missing here and present in /budget, which is
+            // how the same scope came to read 6% in one message and 18% in
+            // the next.
+            reservedUsdMicros: Number(account.reserved_usd_micros),
             limitUsdMicros: Number(account.max_cost_usd_micros),
           },
         };
+  }
+
+  // What to call this task in front of a person.
+  //
+  // The kind comes from the driver; the subject comes from whatever that kind
+  // of work is actually about. For a chat reply that is the owner's own
+  // question, which is the most recognisable thing a report could possibly
+  // carry — they wrote it minutes earlier.
+  async describe(taskId: string): Promise<TaskDescription> {
+    const spec = await this.pool.query(
+      `SELECT s.driver, s.input->>'conversationId' AS conversation_id,
+              s.input->>'projectId' AS project_id
+         FROM operation_task_specs s WHERE s.task_id = $1`,
+      [taskId],
+    );
+    const row = spec.rows[0] as
+      | {
+          driver: string;
+          conversation_id: string | null;
+          project_id: string | null;
+        }
+      | undefined;
+    if (row === undefined) return { kind: kindOf(undefined) };
+
+    const kind = kindOf(row.driver);
+
+    if (row.conversation_id !== null) {
+      const asked = await this.pool.query(
+        `SELECT content FROM conversation_messages
+          WHERE conversation_id = $1 AND role = 'owner'
+          ORDER BY ordinal DESC LIMIT 1`,
+        [row.conversation_id],
+      );
+      const content = (asked.rows[0] as { content: string } | undefined)
+        ?.content;
+      if (content !== undefined) return { kind, subject: content };
+    }
+
+    if (row.project_id !== null) {
+      const project = await this.pool.query(
+        "SELECT display_name FROM generated_projects WHERE id = $1",
+        [row.project_id],
+      );
+      const name = (project.rows[0] as { display_name: string } | undefined)
+        ?.display_name;
+      if (name !== undefined) return { kind, subject: name };
+    }
+
+    return { kind };
   }
 
   // The assistant's answer for a finished conversation_reply task, but only
@@ -123,16 +189,37 @@ const CATEGORY_FOR: Record<string, ReportCategory> = {
   succeeded: "success",
   failed: "failure",
   cancelled: "stopped",
-  retry_wait: "warning",
 };
+
+// Outcomes that are progress rather than news, and are therefore silent.
+//
+// A retry is not a decision, cannot be acted on, and says nothing the eventual
+// outcome will not say better — but it used to send a message each time, so
+// three doomed tasks produced six notifications in ten seconds.
+//
+// Written as a deny-list, not an allow-list of terminal states. An allow-list
+// would silently swallow any state a later contract adds, and "the owner was
+// never told" is the exact failure this contract exists to fix. Anything
+// unrecognised still reports, as a warning.
+export const SILENT_OUTCOMES = new Set(["retry_wait"]);
+
+// How much of a caught error a report will carry. Enough to identify the
+// failure, far short of Telegram's 4096-character ceiling.
+export const DETAIL_LIMIT = 600;
 
 // Failure reasons the work engine produces, phrased as something a person
 // woken by their phone can act on rather than as an enum value.
+//
+// `invalid_output` used to read "provider returned unusable output". That is a
+// specific, checkable accusation, and it was false every time the driver threw
+// before reaching a provider — which the owner could see, because the same
+// message said `0 in · 0 out` and `$0.00`. The catch-all now describes what is
+// actually known (the run threw) and the real error is carried alongside it.
 const REASON_TEXT: Record<string, string> = {
   policy: "refused by routing policy",
   verification: "verification gate failed",
   worker: "worker or transport failure",
-  invalid_output: "provider returned unusable output",
+  invalid_output: "the run failed before producing output",
 };
 
 export class TelegramRunNotifier implements RunNotifier {
@@ -180,6 +267,10 @@ export class TelegramRunNotifier implements RunNotifier {
     // malformed chat id, a rate limit -- none of them are reasons to fail a
     // task that already succeeded, or to mask one that already failed.
     try {
+      // Progress is silent; anything that ended, or that this build does not
+      // recognise, is reported.
+      if (SILENT_OUTCOMES.has(event.outcome)) return;
+
       const category = CATEGORY_FOR[event.outcome] ?? "warning";
       const facts =
         this.facts === undefined
@@ -211,37 +302,83 @@ export class TelegramRunNotifier implements RunNotifier {
         }
       }
 
+      // Losing the label must cost the label, not the report. `.catch()` alone
+      // is not enough: a facts object that throws *synchronously* — an older
+      // deployment without describe(), a stubbed one in a test — throws before
+      // the catch is attached, and the outer handler would swallow the entire
+      // message. The owner would be told nothing, which is worse than being
+      // told "Task failed" without a nice name.
+      let description: TaskDescription = { kind: kindOf(event.driver) };
+      try {
+        if (this.facts !== undefined)
+          description = await this.facts.describe(event.taskId);
+      } catch {
+        // Keep the driver-derived fallback.
+      }
+
       const detail: Array<{ icon?: ReportCategory; text: string }> = [];
-      if (event.driver !== undefined)
-        detail.push({ icon: "build", text: event.driver });
-      detail.push({
-        icon: "contract",
-        text: `attempt ${event.attemptOrdinal}`,
-      });
+
+      // Attempts are worth reporting only when there was more than one. "1 of
+      // 3" on every successful task is a line that has never once told the
+      // owner anything.
+      if (event.attemptOrdinal > 1)
+        detail.push({
+          icon: "contract",
+          text: `after ${event.attemptOrdinal} attempts`,
+        });
+
       if (event.reason !== undefined)
         detail.push({
           icon: "gate",
           text: REASON_TEXT[event.reason] ?? event.reason,
         });
 
+      // The real error, when the supervisor caught one. This is the line that
+      // would have said `idempotency intent mismatch` instead of sending the
+      // owner to look at a provider that had never been called.
+      //
+      // Bounded, because a driver is free to throw a stack trace or a whole
+      // provider payload. Telegram rejects anything over 4096 characters, and
+      // this notifier swallows send failures by design — so an unbounded error
+      // string would turn "the task failed" into total silence, which is the
+      // exact failure this contract exists to remove.
+      if (event.detail !== undefined && event.detail !== "unknown")
+        detail.push({ text: event.detail.slice(0, DETAIL_LIMIT) });
+
+      // No usage row means the gateway was never reached. Saying so is the
+      // difference between "your provider misbehaved" and "we refused this
+      // before spending anything", and only one of them is true.
+      if (category === "failure" && facts.usage === undefined)
+        detail.push({
+          text: "No provider call was made, nothing was charged.",
+        });
+
+      // A chat reply's subject is the owner's own words, so it is quoted.
+      // A project name is the system's own noun, so it is not.
+      const subject = subjectLine(
+        description,
+        description.kind === "Chat reply",
+      );
+
       const text = renderReport({
         category,
-        title:
-          category === "success"
-            ? "Task succeeded"
-            : category === "failure"
-              ? "Task failed"
-              : `Task ${event.outcome}`,
-        subject: event.taskId,
+        title: taskHeadline(description, event.outcome),
+        ...(subject === undefined ? {} : { subject }),
         detail,
         ...facts,
       });
 
-      await this.transport.send("sendMessage", {
-        chat_id: this.chatId,
-        text,
-        parse_mode: "HTML",
-      });
+      // Split like every other outbound path. This one sent the whole report
+      // as a single message, which was safe only while every field in it was
+      // bounded — and this contract added a caught error message to it. A
+      // report Telegram refuses for length is indistinguishable from no
+      // report at all, because the catch below is deliberately silent.
+      for (const part of splitForTelegram(text))
+        await this.transport.send("sendMessage", {
+          chat_id: this.chatId,
+          text: part,
+          parse_mode: "HTML",
+        });
     } catch {
       // Intentionally silent. A notifier that can throw into the execution path
       // is worse than no notifier: it converts "we could not tell you" into

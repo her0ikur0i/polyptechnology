@@ -41,6 +41,37 @@ export class DeterministicSha256Driver implements OperationDriver {
     return { sha256: digest(input) };
   }
 }
+// How long to wait before a failed attempt becomes eligible again.
+//
+// This was a hardcoded 1,000 ms for every attempt, which nobody noticed while
+// `retry_wait` was terminal in practice and no retry ever ran. The moment
+// CONTRACT-017's sweep made retries real, the owner watched three tasks burn
+// attempts 1, 2 and 3 inside two seconds and reach `failed` — a worse outcome
+// than being stuck, because `failed` is terminal and two seconds is shorter
+// than any outage worth retrying through.
+//
+// Doubling from one second, capped at five minutes: 1s, 2s, 4s … so three
+// attempts span seven seconds and ten span roughly seventeen minutes. No
+// jitter — jitter solves a thundering herd, and this host runs one supervisor.
+export const RETRY_BASE_MS = 1_000;
+export const RETRY_CAP_MS = 300_000;
+
+export function retryDelayMs(
+  attemptOrdinal: number,
+  baseMs = RETRY_BASE_MS,
+  capMs = RETRY_CAP_MS,
+): number {
+  // Ordinals are 1-based, so attempt 1 waits one base interval. A nonsense
+  // ordinal falls back to the base rather than to zero: retrying instantly is
+  // the failure mode being fixed here.
+  const exponent = Number.isSafeInteger(attemptOrdinal)
+    ? Math.max(0, attemptOrdinal - 1)
+    : 0;
+  // 2**exponent overflows into Infinity long before this matters; Math.min
+  // handles it, but clamp the exponent anyway so the intermediate stays finite.
+  return Math.min(capMs, baseMs * 2 ** Math.min(exponent, 30));
+}
+
 export class ExecutableTaskSupervisor {
   constructor(
     private readonly pool: Pool,
@@ -126,6 +157,9 @@ export class ExecutableTaskSupervisor {
         // failure one carries a reason.
         ...("reason" in outcome.summary
           ? { reason: outcome.summary.reason }
+          : {}),
+        ...("detail" in outcome.summary && outcome.summary.detail !== undefined
+          ? { detail: outcome.summary.detail }
           : {}),
       });
       return outcome;
@@ -215,12 +249,13 @@ export class ExecutableTaskSupervisor {
       // only that something went wrong. Diagnosing three failed tasks then
       // meant reading five database tables to *infer* a cause that the process
       // had known exactly and thrown away. Log it; the record stays as it was.
+      const detail = error instanceof Error ? error.message : "unknown";
       console.error(
         JSON.stringify({
           event: "supervisor.attempt.failed",
           taskId: current.taskId,
           attemptOrdinal: current.attemptOrdinal,
-          detail: error instanceof Error ? error.message : "unknown",
+          detail,
         }),
       );
       return this.fail(
@@ -228,6 +263,7 @@ export class ExecutableTaskSupervisor {
         error instanceof Error && error.name === "AbortError"
           ? "worker"
           : "invalid_output",
+        detail,
       );
     } finally {
       clearInterval(heartbeat);
@@ -237,12 +273,13 @@ export class ExecutableTaskSupervisor {
   private async fail(
     lease: Lease,
     reason: "policy" | "verification" | "worker" | "invalid_output",
+    detail?: string,
   ) {
     const task = await this.work.fail(
       lease.taskId,
       lease.fencingToken,
       reason,
-      1_000,
+      retryDelayMs(lease.attemptOrdinal),
     );
     return {
       task,
@@ -251,6 +288,11 @@ export class ExecutableTaskSupervisor {
         attemptOrdinal: lease.attemptOrdinal,
         outcome: task.state,
         reason,
+        // The thrown error, carried through to whoever reports this. Without
+        // it the notifier can only render the four-value enum above, which is
+        // how "provider returned unusable output" came to be shown for
+        // failures where no provider was ever called.
+        ...(detail === undefined ? {} : { detail }),
       },
     };
   }
