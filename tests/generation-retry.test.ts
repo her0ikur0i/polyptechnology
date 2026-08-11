@@ -80,6 +80,9 @@ const applier: PatchApplier = {
     return { changedLines: 2 };
   },
   async revert() {},
+  async commit() {
+    return "deadbeef";
+  },
 };
 
 const runner = (exitCode: number): WorkerRunner => ({

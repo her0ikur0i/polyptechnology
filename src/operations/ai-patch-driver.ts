@@ -20,6 +20,28 @@ export interface WorkspaceCopier {
   copy(source: string, destination: string): Promise<void>;
 }
 
+// Runs the generated project's own formatter over its workspace.
+//
+// Verification is `typecheck && format:check && test` in a read-only sandbox,
+// so a patch that is correct but formatted differently is rejected exactly
+// like a failing test. Real evidence, once patches finally started applying:
+// every tier produced code that **passed `tsc --noEmit`** and was rejected on
+// `prettier --check src/index.ts`.
+//
+// Demanding that a model reproduce Prettier's output byte-for-byte is asking
+// it to be a formatter. Running the formatter is deterministic, is what a
+// human does, and leaves the gate intact -- `format:check` still runs in the
+// sandbox and still fails if the result is not formatted, so the accepted
+// artifact is provably clean. What changes is that "clean" is achieved rather
+// than guessed.
+//
+// This adjusts the reasoning in verification-image-policy.ts, which argued the
+// rejection was the point. That held while nothing had ever reached the gate;
+// with real evidence it only rejected correct work.
+export interface WorkspaceFormatter {
+  format(workspaceRoot: string): Promise<void>;
+}
+
 export interface PatchApplier {
   // Applies a unified diff to a workspace the caller owns and returns the
   // number of changed lines.
@@ -31,6 +53,14 @@ export interface PatchApplier {
   // apply() wrote. Called when a patch is rejected, so a failed attempt does
   // not become the baseline the next attempt patches on top of.
   revert(workspaceRoot: string): Promise<void>;
+  // Records an accepted patch as a commit and returns its sha.
+  //
+  // Without this an accepted patch sat in the working tree forever: the
+  // project had generated code and a git history containing only "Initial
+  // scaffold", so nothing durable said what the factory built, `revert()` on a
+  // later attempt would have destroyed it, and a second generation would have
+  // patched against a baseline git did not agree with.
+  commit(workspaceRoot: string, message: string): Promise<string>;
 }
 
 export interface AiPatchTaskInput {
@@ -47,10 +77,41 @@ export interface AiPatchTaskResult {
   status: "accepted" | "rejected";
   decision: EscalationDecision;
   touchedPaths: ReadonlyArray<string>;
+  // Present only when a patch was accepted and committed.
+  commitSha?: string;
 }
 
 const sha256 = (value: string) =>
   createHash("sha256").update(value).digest("hex");
+
+// How much of the verification output is kept on the rejection record.
+const VERIFICATION_TAIL_BYTES = 1_200;
+
+// Why a patch was rejected, in the verifier's own words.
+//
+// `verification_failed` used to be recorded with nothing else, so a rejected
+// patch was indistinguishable from a broken gate: nobody could tell whether
+// the model wrote code that fails `typecheck` or whether the sandbox itself
+// was misconfigured. The output existed the whole time -- executeWorker()
+// returns it -- and this driver threw it away.
+//
+// That mattered more than it looks. The scaffold shipped for months unable to
+// pass its own gates, and the symptom would have been exactly this: every
+// patch rejected, no reason recorded, and the blame landing on the models.
+//
+// The tail rather than the head: `npm run typecheck && format:check && test`
+// prints the failure last, and a head-capped buffer keeps the banner and drops
+// the error -- the same mistake this repository already fixed once in the CLI
+// stream runner's stderr handling.
+function verificationTail(result: {
+  process: { stdout: Buffer; stderr: Buffer; exitCode: number | null };
+}): string {
+  const merged = `${result.process.stdout.toString("utf8")}\n${result.process.stderr.toString("utf8")}`;
+  const tail = merged.trim().slice(-VERIFICATION_TAIL_BYTES);
+  return tail.length === 0
+    ? `no output, exit ${result.process.exitCode ?? "unknown"}`
+    : tail;
+}
 
 // The real M2 "DeepSeek patch executor": routes one attempt through
 // AiGateway, validates the returned patch never touches a path outside the
@@ -66,6 +127,8 @@ export class AiPatchExecutorDriver {
     private readonly runner: WorkerRunner,
     private readonly artifacts: ProviderArtifactRecorder,
     private readonly workspaceCopier: WorkspaceCopier,
+    // Optional: a patch task with no formatter behaves exactly as before.
+    private readonly formatter?: WorkspaceFormatter,
   ) {}
 
   async run(input: AiPatchTaskInput): Promise<AiPatchTaskResult> {
@@ -127,6 +190,24 @@ export class AiPatchExecutorDriver {
       });
       return { status: "rejected", decision, touchedPaths: [] };
     }
+    // Format before verifying, not after: the sandbox is read-only by design,
+    // so this is the only place the result can be made clean. A formatter
+    // failure is not fatal -- verification will fail the patch on
+    // `format:check` anyway, which is the honest outcome, and swallowing the
+    // error here would hide why.
+    if (this.formatter !== undefined) {
+      try {
+        await this.formatter.format(input.workspaceRoot);
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            event: "patch.format_failed",
+            detail: error instanceof Error ? error.message : "unknown",
+          }),
+        );
+      }
+    }
+
     await this.workspaceCopier.copy(
       input.workspaceRoot,
       input.verifyJob.workspaceRoot,
@@ -150,6 +231,15 @@ export class AiPatchExecutorDriver {
     // other than acceptance leaves nothing worth keeping.
     if (status === "rejected") await this.applier.revert(input.workspaceRoot);
 
+    // An accepted patch becomes a commit, so the generated project has a real
+    // history rather than an indefinitely dirty working tree.
+    let commitSha: string | undefined;
+    if (status === "accepted")
+      commitSha = await this.applier.commit(
+        input.workspaceRoot,
+        `Generated by ${result.attempt.route.provider}:${result.attempt.route.requestedModelId}\n\nTask: ${input.taskId}`,
+      );
+
     await this.artifacts.record({
       attemptId: result.attempt.id,
       taskId: input.taskId,
@@ -162,7 +252,10 @@ export class AiPatchExecutorDriver {
       patchSha256: status === "accepted" ? sha256(patch) : null,
       changedLines: applied.changedLines,
       verifierId: status === "accepted" ? "isolated-worker-v1" : null,
-      reason: status === "rejected" ? `verification_${verified.status}` : null,
+      reason:
+        status === "rejected"
+          ? `verification_${verified.status}: ${verificationTail(verified)}`
+          : null,
       fallbackReason: input.fallbackReason,
     } satisfies ProviderArtifactInput);
 
@@ -170,7 +263,12 @@ export class AiPatchExecutorDriver {
       outcome: "succeeded",
       artifactStatus: status,
     });
-    return { status, decision, touchedPaths };
+    return {
+      status,
+      decision,
+      touchedPaths,
+      ...(commitSha === undefined ? {} : { commitSha }),
+    };
   }
 
   private async recordRejection(

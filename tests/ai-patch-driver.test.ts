@@ -65,6 +65,9 @@ const noopApplier: PatchApplier = {
     return { changedLines: 2 };
   },
   async revert() {},
+  async commit() {
+    return "deadbeef";
+  },
 };
 
 // Records whether the workspace was returned to its committed state, which is
@@ -78,6 +81,9 @@ function recordingApplier() {
     },
     async revert(workspaceRoot) {
       reverted.push(workspaceRoot);
+    },
+    async commit() {
+      return "deadbeef";
     },
   };
   return { applier, reverted };

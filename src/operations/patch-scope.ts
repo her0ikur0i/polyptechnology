@@ -62,7 +62,23 @@ function trimToDiff(text: string): string {
   // answer; anything else is left alone, since git tolerates trailing noise
   // far better than it tolerates a truncated hunk.
   const closing = trimmed.indexOf("\n```");
-  return closing === -1 ? trimmed : trimmed.slice(0, closing + 1);
+  const body = closing === -1 ? trimmed : trimmed.slice(0, closing + 1);
+  // A unified diff must end with a newline, and models routinely strip the
+  // trailing one -- chat APIs trim whitespace, and a diff is the one payload
+  // where the final byte is load-bearing.
+  //
+  // git reports the omission as `corrupt patch at line <n+1>`, pointing one
+  // past the last line, which reads like a truncated or malformed hunk and
+  // sent this contract chasing prompt wording and `--recount` for two
+  // milestones. It was one missing byte. The same captured diffs that git
+  // called corrupt apply cleanly with a newline appended and nothing else
+  // changed:
+  //
+  //   deepseek-v4-flash  corrupt at line 47  ->  4 0 src/index.ts
+  //                                              27 1 tests/scaffold.test.ts
+  //   deepseek-v4-pro    corrupt at line 58  ->  8 0 src/index.ts
+  //                                              38 0 tests/slugify.test.ts
+  return body.endsWith("\n") ? body : `${body}\n`;
 }
 
 export function patchTouchedPaths(patch: string): ReadonlyArray<string> {

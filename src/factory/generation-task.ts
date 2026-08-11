@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { mkdir, readFile, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type { Pool } from "pg";
 import { PostgresWorkRepository } from "../work/postgres-repository.js";
 import { modelRoutes, MODEL_POLICY_VERSION } from "../gateway/model-policy.js";
@@ -129,7 +128,37 @@ export async function createGenerationTask(
   });
   await work.controlTransition(task.id, "draft", "queued");
 
-  const verifyDir = await mkdtemp(join(tmpdir(), "polyp-generate-verify-"));
+  // The verification workspace lives beside the repository, NOT in /tmp.
+  //
+  // This is the single most consequential defect this contract found. The
+  // supervisor unit sets `PrivateTmp=yes`, so its `/tmp` is a private mount
+  // namespace. The workspace was created under `tmpdir()` and the patched
+  // repository was copied into it correctly -- inside that namespace. Docker
+  // then bind-mounts by **host** path, where that directory does not exist, so
+  // the daemon silently created an empty one and mounted it at /workspace.
+  //
+  // Verification therefore ran `npm run typecheck && format:check && test`
+  // against an empty directory and failed with:
+  //
+  //   npm error enoent Could not read package.json:
+  //     ENOENT: no such file or directory, open '/workspace/package.json'
+  //
+  // recorded only as `verification_failed`. **No patch this system has ever
+  // produced has been verified.** The gate that release criterion 5 rests on --
+  // "deterministic verification rejects an intentionally incorrect result" --
+  // could not have rejected anything, because it never saw a file. It passed
+  // its own integration tests throughout, because those run in a process with
+  // no PrivateTmp and a shared /tmp.
+  //
+  // Both paths below are under the project's workspace root, which is a real
+  // host directory the service, the Control API and the Docker daemon all
+  // agree about. `isolationRoot` is the project directory and `workspaceRoot`
+  // the verify subdirectory, satisfying planWorker()'s containment check while
+  // keeping the two distinct.
+  const projectRoot = dirname(repoPath);
+  const verifyDir = join(projectRoot, "verify");
+  await rm(verifyDir, { recursive: true, force: true });
+  await mkdir(verifyDir, { recursive: true });
   const verify = verificationCommandFor("bulk_code");
   const staticRoute = modelRoutes("bulk_code")[0];
   if (staticRoute === undefined) throw new Error("no static bulk_code route");
@@ -174,7 +203,7 @@ export async function createGenerationTask(
     ownedPaths: "unscoped" as const,
     workspaceRoot: repoPath,
     verifyJob: {
-      isolationRoot: tmpdir(),
+      isolationRoot: projectRoot,
       workspaceRoot: verifyDir,
       image: verify.image,
       command: verify.command,

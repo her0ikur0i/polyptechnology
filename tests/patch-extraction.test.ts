@@ -81,3 +81,26 @@ test("diff content is never altered", () => {
     ),
   );
 });
+
+// A unified diff must end with a newline. Chat APIs trim trailing whitespace,
+// so models routinely return one without it, and git rejects the whole patch
+// as `corrupt patch at line <n+1>` -- pointing one past the end, which reads
+// like a truncated hunk. Two captured diffs that git called corrupt applied
+// cleanly with nothing changed but this byte.
+test("a diff missing its trailing newline gets one", () => {
+  const stripped = diff.trimEnd();
+  assert.ok(!stripped.endsWith("\n"));
+  assert.ok(extractUnifiedDiff(stripped).endsWith("\n"));
+});
+
+test("a diff that already ends with a newline is not given a second", () => {
+  assert.ok(diff.endsWith("\n"));
+  assert.equal(extractUnifiedDiff(diff), diff);
+});
+
+test("a fenced diff missing its trailing newline gets one", () => {
+  const answer = "Here you go:\n\n```diff\n" + diff.trimEnd() + "\n```";
+  const extracted = extractUnifiedDiff(answer);
+  assert.ok(extracted.startsWith("diff --git "));
+  assert.ok(extracted.endsWith("\n"));
+});

@@ -59,6 +59,33 @@ export class GitPatchApplier implements PatchApplier {
   // `-x`, so ignored paths survive -- node_modules is ignored and is expensive
   // to reinstall, and the verification sandbox is network-free so it cannot
   // reinstall anything anyway.
+  // Commits everything the accepted patch wrote, and returns the sha.
+  //
+  // `-A` rather than named paths: the formatter runs between apply and verify,
+  // so the committed tree must be the tree that was verified, not the diff as
+  // the model wrote it. Ignored paths stay ignored, so node_modules is not
+  // swept in.
+  async commit(workspaceRoot: string, message: string): Promise<string> {
+    const staged = await runGit(["add", "-A"], workspaceRoot, "");
+    if (staged.exitCode !== 0)
+      throw new Error(`staging failed: ${staged.stderr.trim().slice(0, 500)}`);
+    const committed = await runGit(
+      ["commit", "-q", "--no-verify", "-m", message],
+      workspaceRoot,
+      "",
+    );
+    if (committed.exitCode !== 0)
+      throw new Error(
+        `commit failed: ${committed.stderr.trim().slice(0, 500)}`,
+      );
+    const head = await runGit(["rev-parse", "HEAD"], workspaceRoot, "");
+    if (head.exitCode !== 0)
+      throw new Error(
+        `could not read HEAD: ${head.stderr.trim().slice(0, 500)}`,
+      );
+    return head.stdout.trim();
+  }
+
   async revert(workspaceRoot: string): Promise<void> {
     const reset = await runGit(["reset", "--hard", "HEAD"], workspaceRoot, "");
     if (reset.exitCode !== 0)

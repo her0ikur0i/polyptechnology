@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { join } from "node:path";
 import { Pool } from "pg";
 import { PostgresConversationStore } from "../src/orchestrator/postgres-store.js";
@@ -34,6 +36,8 @@ import type { OwnerContext } from "../src/operations/owner-commands.js";
 // would add CSRF and session mechanics that are tested elsewhere and would
 // obscure which pipeline stage failed. The one thing this loses is the
 // *process identity* of the Control API -- see PERMISSION NOTE below.
+
+const execFileAsync = promisify(execFile);
 
 const OWNER_ACTOR = "generation-drill";
 
@@ -358,14 +362,85 @@ export async function runDrill(
     return { runLabel, reached, stages, ok: false };
   }
 
-  for (const name of STAGE_NAMES.slice(7))
-    stages.push({
-      name,
-      state: "pending",
-      detail: "not implemented until CONTRACT-017C M5",
+  // --- 8. verification ------------------------------------------------------
+  // The Docker gates ran inside the generation stage; this asserts on what they
+  // actually recorded rather than restating the stage above. Read back from the
+  // database, because the point of a drill is that the record agrees.
+  try {
+    const accepted = await pool.query<{
+      provider_id: string;
+      requested_model_id: string;
+      verifier_id: string | null;
+      patch_sha256: string | null;
+      changed_lines: number;
+    }>(
+      `SELECT provider_id, requested_model_id, verifier_id, patch_sha256, changed_lines
+         FROM provider_artifacts
+        WHERE task_id = (SELECT task_id FROM operation_task_specs
+                          WHERE role = 'factory-generation'
+                          ORDER BY created_at DESC LIMIT 1)
+          AND status = 'accepted'
+        ORDER BY created_at DESC LIMIT 1`,
+    );
+    const row = accepted.rows[0];
+    if (row === undefined) throw new Error("no accepted artifact recorded");
+    if (row.verifier_id === null)
+      throw new Error("accepted without a verifier -- the gate did not run");
+    if (row.patch_sha256 === null)
+      throw new Error("accepted without a patch hash");
+    record({
+      name: "verification",
+      state: "passed",
+      facts: {
+        verifier: row.verifier_id,
+        by: `${row.provider_id}:${row.requested_model_id}`,
+        changedLines: String(row.changed_lines),
+      },
     });
+  } catch (error) {
+    record({ name: "verification", state: "failed", detail: message(error) });
+    remaining(8, "nothing verified");
+    return { runLabel, reached, stages, ok: false };
+  }
+
+  // --- 9. publication -------------------------------------------------------
+  // The accepted patch is committed into the generated project's own
+  // repository, so what the factory built is durable rather than a dirty
+  // working tree that the next attempt's revert would erase.
+  try {
+    const repoPath = join(workspacesRoot, projectId, "repo");
+    const head = await gitOutput(repoPath, ["rev-parse", "HEAD"]);
+    const subject = await gitOutput(repoPath, [
+      "log",
+      "-1",
+      "--pretty=format:%s",
+    ]);
+    const dirty = await gitOutput(repoPath, ["status", "--porcelain"]);
+    if (subject.startsWith("Initial scaffold"))
+      throw new Error("only the scaffold commit exists; nothing was published");
+    record({
+      name: "publication",
+      state: "passed",
+      facts: {
+        commit: head.slice(0, 12),
+        subject,
+        workingTree: dirty === "" ? "clean" : "dirty",
+      },
+    });
+  } catch (error) {
+    record({ name: "publication", state: "failed", detail: message(error) });
+    return { runLabel, reached, stages, ok: false };
+  }
 
   return { runLabel, reached, stages, ok: true };
+}
+
+async function gitOutput(
+  cwd: string,
+  args: ReadonlyArray<string>,
+): Promise<string> {
+  const { stdout } = await execFileAsync("git", [...args], { cwd });
+  return stdout.trim();
 }
 
 const GENERATION_TIMEOUT_MS = 900_000;

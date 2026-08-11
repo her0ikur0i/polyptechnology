@@ -14,6 +14,7 @@ import { AiPatchExecutorDriver } from "../operations/ai-patch-driver.js";
 import { AiPatchOperationDriver } from "../operations/ai-patch-operation-driver.js";
 import { GitPatchApplier } from "../operations/git-patch-applier.js";
 import { GitIgnoringWorkspaceCopier } from "../operations/workspace-copy.js";
+import { PrettierWorkspaceFormatter } from "../operations/workspace-formatter.js";
 import { PostgresProviderArtifactStore } from "../operations/provider-artifact-store.js";
 import { PostgresPolicyRouteResolver } from "../operations/policy-route-resolver.js";
 import { ConversationReplyDriver } from "../operations/conversation-reply-driver.js";
@@ -185,6 +186,11 @@ const ttlMs = 30_000,
       new SpawnWorkerRunner(),
       providerArtifacts,
       new GitIgnoringWorkspaceCopier(),
+      // Formats the patched workspace before it is verified. The sandbox is
+      // read-only, so this is the only place the result can be made clean --
+      // and every tier was producing type-correct code that failed only on
+      // `prettier --check`.
+      new PrettierWorkspaceFormatter(process.env.PROJECT_WORKSPACES_ROOT),
     ),
     new PostgresPolicyRouteResolver(
       new PostgresPolicyStore(pool),
