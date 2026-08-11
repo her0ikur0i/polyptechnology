@@ -238,14 +238,23 @@ export function collectFacts(contractId: string): CheckpointFacts {
 // table alignment is cosmetic; neither is drift, and treating them as drift
 // would train everyone to ignore the check.
 export function normaliseForCheck(text: string): string {
-  return text
-    .replace(/, generated \d{4}-\d{2}-\d{2}\./, ".")
-    .replace(/[ \t]+/g, " ")
-    .replace(/ *\| */g, "|")
-    .replace(/-{2,}/g, "--")
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .join("\n");
+  return (
+    text
+      .replace(/, generated \d{4}-\d{2}-\d{2}\./, ".")
+      // HEAD, the dirty-path count and the last-touched file change on every
+      // commit and every edit, so comparing them would report a freshly
+      // regenerated file as stale the moment anything happened -- including
+      // immediately after the commit that closes a contract. They are also the
+      // three facts a resuming session can re-derive in one command each.
+      // Milestone state is what actually rots, and that is what is compared.
+      .replace(/^- \*\*(HEAD|Working tree|Last touched):\*\*.*$/gm, "")
+      .replace(/[ \t]+/g, " ")
+      .replace(/ *\| */g, "|")
+      .replace(/-{2,}/g, "--")
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .join("\n")
+  );
 }
 
 export function resumeCheckpoint(

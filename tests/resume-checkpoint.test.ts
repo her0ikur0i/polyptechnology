@@ -161,6 +161,22 @@ test("normaliseForCheck ignores the generated date and table alignment", () => {
   assert.equal(normaliseForCheck(a), normaliseForCheck(b));
 });
 
+test("normaliseForCheck ignores HEAD, tree state and last-touched", () => {
+  const before = [
+    "- **HEAD:** `b239fe1 something`",
+    "- **Working tree:** 46 changed path(s) — expected",
+    "- **Last touched:** `src/a.ts` at 2026-08-11T01:00Z — here",
+  ].join("\n");
+  const after = [
+    "- **HEAD:** `2e4290b something else`",
+    "- **Working tree:** clean",
+    "- **Last touched:** `src/b.ts` at 2026-08-11T02:00Z — here",
+  ].join("\n");
+  // Otherwise the file is stale the instant a contract is committed, and a
+  // check that fires on a freshly generated file teaches everyone to skip it.
+  assert.equal(normaliseForCheck(before), normaliseForCheck(after));
+});
+
 test("normaliseForCheck still sees a real change in state", () => {
   const a = "| M6 | commands | **next** |";
   const b = "| M6 | commands | done — `M6-x.md` |";
