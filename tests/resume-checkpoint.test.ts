@@ -175,6 +175,13 @@ test("normaliseForCheck ignores HEAD, tree state and last-touched", () => {
   // Otherwise the file is stale the instant a contract is committed, and a
   // check that fires on a freshly generated file teaches everyone to skip it.
   assert.equal(normaliseForCheck(before), normaliseForCheck(after));
+
+  // "Last touched" is omitted entirely once the tree is clean, so the lines
+  // have to be removed whole rather than blanked.
+  const committed = ["- **HEAD:** `x y`", "- **Working tree:** clean"].join(
+    "\n",
+  );
+  assert.equal(normaliseForCheck(before), normaliseForCheck(committed));
 });
 
 test("normaliseForCheck still sees a real change in state", () => {

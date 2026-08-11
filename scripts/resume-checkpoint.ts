@@ -247,7 +247,10 @@ export function normaliseForCheck(text: string): string {
       // immediately after the commit that closes a contract. They are also the
       // three facts a resuming session can re-derive in one command each.
       // Milestone state is what actually rots, and that is what is compared.
-      .replace(/^- \*\*(HEAD|Working tree|Last touched):\*\*.*$/gm, "")
+      // Removed whole, newline included: "Last touched" vanishes entirely once
+      // the tree is clean, so blanking the line would still leave a difference
+      // in blank lines and report stale for the same non-reason.
+      .replace(/^- \*\*(HEAD|Working tree|Last touched):\*\*.*\n?/gm, "")
       .replace(/[ \t]+/g, " ")
       .replace(/ *\| */g, "|")
       .replace(/-{2,}/g, "--")

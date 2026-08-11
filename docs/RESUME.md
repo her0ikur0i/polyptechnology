@@ -63,9 +63,8 @@ node --import tsx scripts/resume-checkpoint.ts --check  # fail if stale
 | M7        | negative tests and an independent security review of the ingress and the authority boundary          | done — `M7-negative-tests-and-review.md`  |
 | M8        | staging configuration, redeploy, evidence reconciliation, one commit, push                           | done — `M8-staging-redeploy-and-close.md` |
 
-- **HEAD:** `7c6f8ac docs: mark CONTRACT-017 closed and point the next session at CONTRACT-017A`
-- **Working tree:** 2 changed path(s) — expected while a contract is in flight, since this repository commits once per contract
-- **Last touched:** `tests/resume-checkpoint.test.ts` at 2026-08-11T01:04Z — if a session ended abruptly, work was here
+- **HEAD:** `46d06ff fix(resume-checkpoint): --check no longer reports a clean tree as stale`
+- **Working tree:** clean
 - **Next action:** every milestone is evidenced; CONTRACT-017 is ready to close
 
 <!-- resume:auto:end -->
