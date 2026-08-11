@@ -5,7 +5,7 @@ import {
   TelegramConversationHandler,
   telegramConversationKey,
 } from "../src/telegram/conversation-handler.js";
-import { SYSTEM_PROMPT_FINGERPRINT } from "../src/operations/conversation-reply-driver.js";
+import { SYSTEM_PROMPT } from "../src/operations/conversation-reply-driver.js";
 import type { UpdateOrigin } from "../src/telegram/poller.js";
 
 // Negative tests for the one path in this contract that can act.
@@ -161,19 +161,25 @@ test("a refused message never reaches the acknowledgement", async () => {
   assert.deepEqual(calls, []);
 });
 
-test("the conversation key is per chat and changes with the system prompt", () => {
+test("the conversation key is per chat and survives a prompt change", () => {
   assert.notEqual(
     telegramConversationKey("111"),
     telegramConversationKey("222"),
   );
+  // Stable: one chat, one thread, for as long as the chat exists. The key used
+  // to include a hash of the system prompt, so editing a sentence in the
+  // prompt silently discarded the owner's history. That was a workaround for
+  // whole-transcript replay, and CONTRACT-017A removed the cause.
   assert.equal(telegramConversationKey("111"), telegramConversationKey("111"));
-  // The fingerprint is in the key so that changing the prompt starts a fresh
-  // thread instead of inheriting a transcript that contradicts it -- the
-  // failure where the assistant answered correctly and recanted nine seconds
-  // later. If this ever stops being true, that bug is back.
-  assert.ok(SYSTEM_PROMPT_FINGERPRINT.length > 0);
-  assert.notEqual(
-    telegramConversationKey("111"),
-    telegramConversationKey(`111:${SYSTEM_PROMPT_FINGERPRINT}`),
-  );
+  assert.ok(!telegramConversationKey("111").includes("telegram"));
+});
+
+test("the prompt states its own precedence over a replayed transcript", () => {
+  // A resumed turn sends only the new message, but a cold start still replays
+  // history, which may hold assistant turns written under an older prompt.
+  // This is the sentence that stops the model believing its own stale
+  // transcript over its current instructions -- the failure where it answered
+  // "17 contracts" and denied being able to read files nine seconds later.
+  assert.match(SYSTEM_PROMPT, /take precedence/);
+  assert.match(SYSTEM_PROMPT, /out of date/);
 });

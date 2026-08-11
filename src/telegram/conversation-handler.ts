@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { deterministicUuid } from "../deterministic-id.js";
-import { SYSTEM_PROMPT_FINGERPRINT } from "../operations/conversation-reply-driver.js";
 import type { OwnerCommandService } from "../operations/owner-commands.js";
 import type { ConversationStore } from "../orchestrator/types.js";
 import type { TelegramRequester } from "./gateway.js";
@@ -11,12 +10,19 @@ import type { TelegramUpdateHandler, UpdateOrigin } from "./poller.js";
 // so startConversation()'s idempotency returns the same conversation and
 // project on every call -- no extra table, and no risk of the id drifting from
 // whatever the notifier is watching for.
-// Includes the system prompt's fingerprint, so changing the prompt starts a
-// new thread rather than inheriting a transcript that contradicts it.
+// The system prompt's fingerprint used to be part of this key, so that
+// changing the prompt started a whole new thread. That was a workaround for
+// whole-transcript replay: the model read its own past turns claiming it had
+// no tools and stayed consistent with them, answering a question correctly and
+// recanting it nine seconds later.
+//
+// CONTRACT-017A removes the cause. A resumed turn sends only the new message,
+// so there is no transcript to contradict anything, and the owner keeps their
+// thread across a prompt change instead of losing it. The precedence sentence
+// in SYSTEM_PROMPT covers the remaining case — a cold start with no session,
+// which still replays history.
 export const telegramConversationKey = (chatId: string) =>
-  deterministicUuid(
-    `telegram:conversation:${SYSTEM_PROMPT_FINGERPRINT}:${chatId}`,
-  );
+  deterministicUuid(`telegram:conversation:${chatId}`);
 
 // The actor recorded against everything that arrives this way. Distinct from a
 // dashboard session on purpose: the audit trail should say where a message came

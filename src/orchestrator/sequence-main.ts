@@ -19,6 +19,10 @@ import { PostgresPolicyRouteResolver } from "../operations/policy-route-resolver
 import { ConversationReplyDriver } from "../operations/conversation-reply-driver.js";
 import { BlueprintTranslationDriver } from "../operations/blueprint-translation-driver.js";
 import { PostgresConversationStore } from "./postgres-store.js";
+import {
+  ForgivingProviderSessionStore,
+  PostgresProviderSessionStore,
+} from "./provider-sessions.js";
 import { PostgresProjectFactory } from "../factory/postgres-repository.js";
 import { PostgresPolicyStore } from "../policy/postgres-policy-store.js";
 import { PROGRAMMING_POLICY_KEY } from "../policy/types.js";
@@ -195,6 +199,10 @@ const ttlMs = 30_000,
     // that serves them: the Control API holds the SSE connection
     // (CONTRACT-016 M2/M3).
     new PostgresReplyChunkStore(pool),
+    // Wrapped so a database problem here costs tokens, never a reply: an
+    // unavailable session store means the turn replays the transcript, which
+    // is what every turn did before CONTRACT-017A.
+    new ForgivingProviderSessionStore(new PostgresProviderSessionStore(pool)),
   ),
   blueprintTranslationDriver = new BlueprintTranslationDriver(
     aiGateway,

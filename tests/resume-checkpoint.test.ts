@@ -7,6 +7,7 @@ import {
   attachEvidence,
   normaliseForCheck,
   latestContractId,
+  markedContractId,
   nextMilestone,
   parseMilestones,
   renderBlock,
@@ -188,6 +189,23 @@ test("normaliseForCheck still sees a real change in state", () => {
   const a = "| M6 | commands | **next** |";
   const b = "| M6 | commands | done — `M6-x.md` |";
   assert.notEqual(normaliseForCheck(a), normaliseForCheck(b));
+});
+
+test("the active contract comes from an explicit marker, not from sorting", () => {
+  // CONTRACT-017A was opened after CONTRACT-017B closed. "Highest-numbered
+  // directory" reported the finished one as active, because A sorts before B.
+  // A contract can be inserted anywhere in the sequence, so inference was
+  // never sound.
+  assert.equal(
+    markedContractId("prose\n<!-- resume:contract: CONTRACT-017A -->\nmore"),
+    "CONTRACT-017A",
+  );
+  assert.equal(markedContractId("no marker here"), undefined);
+  // Tolerant of spacing, since a formatter may reflow the comment.
+  assert.equal(
+    markedContractId("<!--resume:contract:CONTRACT-022-->"),
+    "CONTRACT-022",
+  );
 });
 
 test("latestContractId sorts numerically, not lexically", () => {

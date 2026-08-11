@@ -220,8 +220,9 @@ export class ClaudeCliAdapter implements ManagedProviderAdapter {
     messages: GatewayRequest["messages"],
     maxOutputTokens: number,
     signal?: AbortSignal,
+    resumeSessionId?: string,
   ): Promise<ManagedCompletion> {
-    const args = this.argsFor(route, "json");
+    const args = this.argsFor(route, "json", resumeSessionId);
     const { stdout, stderr, exitCode } = await this.runner("claude", args, {
       ...(signal === undefined ? {} : { signal }),
       timeout: 180_000,
@@ -259,8 +260,9 @@ export class ClaudeCliAdapter implements ManagedProviderAdapter {
     maxOutputTokens: number,
     onDelta: (fragment: string) => void,
     signal?: AbortSignal,
+    resumeSessionId?: string,
   ): Promise<ManagedCompletion> {
-    const args = this.argsFor(route, "stream-json");
+    const args = this.argsFor(route, "stream-json", resumeSessionId);
     let envelope: ClaudeEnvelope | undefined;
     // The same ceiling invoke() gives execFile as maxBuffer. Without it the
     // streaming path would forward unbounded text from a provider that
@@ -346,9 +348,17 @@ export class ClaudeCliAdapter implements ManagedProviderAdapter {
   private argsFor(
     route: ModelRoute,
     outputFormat: "json" | "stream-json",
+    resumeSessionId?: string,
   ): string[] {
     return [
       "-p",
+      // Resume the provider's own session instead of re-sending the thread.
+      //
+      // First, so a malformed id fails the invocation immediately rather than
+      // after the CLI has parsed a prompt. The id is provider-supplied and
+      // length-bounded by the schema that stores it, and it travels as its own
+      // argv element -- never concatenated into a string a shell would parse.
+      ...(resumeSessionId === undefined ? [] : ["--resume", resumeSessionId]),
       "--model",
       route.requestedModelId,
       "--effort",

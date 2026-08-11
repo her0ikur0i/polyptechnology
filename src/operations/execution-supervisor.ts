@@ -32,8 +32,26 @@ export function isSelfVerifyingResult(
     typeof (output as { verified: unknown }).verified === "boolean"
   );
 }
+// The attempt this execution is. Optional so every existing driver keeps
+// compiling and behaving identically; only drivers whose *identity* depends on
+// which attempt they are need to read it.
+//
+// conversation_reply is the one that does. Its gateway idempotency key lives
+// in `operation_task_specs.input`, which is immutable by trigger, so the key
+// was necessarily the same on attempt 3 as on attempt 1 — while the request
+// hash covered a transcript that had grown. The ledger correctly refused the
+// contradiction, and every retry died with `idempotency intent mismatch`
+// before reaching a provider.
+export interface OperationContext {
+  attemptOrdinal: number;
+}
+
 export interface OperationDriver {
-  execute(input: unknown, signal: AbortSignal): Promise<unknown>;
+  execute(
+    input: unknown,
+    signal: AbortSignal,
+    context?: OperationContext,
+  ): Promise<unknown>;
 }
 export class DeterministicSha256Driver implements OperationDriver {
   async execute(input: unknown, signal: AbortSignal) {
@@ -208,7 +226,9 @@ export class ExecutableTaskSupervisor {
       await this.evidence(current, 1, "driver_started", {
         driver: spec.driver,
       });
-      const output = await driver.execute(spec.input, controller.signal);
+      const output = await driver.execute(spec.input, controller.signal, {
+        attemptOrdinal: current.attemptOrdinal,
+      });
       if (heartbeatFailure !== undefined) throw heartbeatFailure;
       const outputSha256 = digest(output);
       await this.evidence(current, 2, "driver_output", { outputSha256 });

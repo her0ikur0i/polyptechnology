@@ -55,6 +55,9 @@ surface, not a notifier:
 - **Conversation** with an assistant that has tools inside this repository, at
   the owner's explicit instruction (CONTRACT-017 Amendment 1). It still cannot
   reach the generation pipeline except through a proposal the owner approves.
+  Turns **resume a provider session** rather than replaying the thread, so a
+  long conversation costs about what a short one costs — 2 input tokens per
+  resumed turn against ~2,500 for a cold start.
 - **A closed command set** — `/status`, `/runs`, `/approvals`, `/budget`,
   `/help` — all read-only. Anything else is refused, never interpreted.
 
@@ -75,3 +78,7 @@ Details: `docs/operations/telegram-approvals.md`, and the contract evidence in
 - **A security review runs before the push**, not after.
 - **`runOne()` is global**: it leases the first eligible task in the whole
   database. A test that needs its own task must use `tests/run-own-task.ts`.
+- **`provider_request_id` is a session id, not a call id.** One value covers
+  every turn of a resumed conversation. Per-call identity is
+  `ai_gateway_attempts.id`. Two unique constraints assumed otherwise and were
+  dropped in migration `0017`.

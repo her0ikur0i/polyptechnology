@@ -38,6 +38,13 @@ export interface GatewayRequest {
   policyVersion: string;
   routeOverride?: ModelRoute;
   signal?: AbortSignal;
+  // Resume a provider-side session instead of replaying the transcript.
+  //
+  // Optional at every layer on purpose: an adapter that does not support
+  // sessions ignores it, and a caller with no stored session simply omits it
+  // and sends the full history — which is what every call did before
+  // CONTRACT-017A. The degraded path is the old path.
+  resumeSessionId?: string;
   // Called with each incremental fragment of the answer as the provider emits
   // it, when the selected adapter supports streaming. Purely a
   // perceived-latency optimization: `content` on the returned completion stays
@@ -103,6 +110,7 @@ export interface ManagedProviderAdapter {
     messages: GatewayRequest["messages"],
     maxOutputTokens: number,
     signal?: AbortSignal,
+    resumeSessionId?: string,
   ): Promise<ManagedCompletion>;
   // Optional. Same contract as invoke() -- same validation, same
   // ManagedCompletion, same failure semantics -- except that fragments of the
@@ -116,6 +124,7 @@ export interface ManagedProviderAdapter {
     maxOutputTokens: number,
     onDelta: (fragment: string) => void,
     signal?: AbortSignal,
+    resumeSessionId?: string,
   ): Promise<ManagedCompletion>;
 }
 export class ManagedInvocationError extends Error {

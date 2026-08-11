@@ -160,6 +160,24 @@ export function replaceBlock(resumeMarkdown: string, block: string): string {
   );
 }
 
+// Which contract the checkpoint is tracking, taken from an explicit marker in
+// docs/RESUME.md rather than guessed.
+//
+// The first version inferred it as "the highest-numbered contract directory",
+// which broke the moment CONTRACT-017A was opened *after* CONTRACT-017B had
+// closed: 017A sorts first, so the tool cheerfully reported a finished
+// contract as the active one. Inference was never sound — a contract can be
+// inserted anywhere in the sequence, which this project does routinely.
+//
+// The marker is a comment beside the generated block, so it is visible to a
+// human reading the file and cannot drift out of sight.
+export const CONTRACT_MARKER =
+  /<!--\s*resume:contract:\s*(CONTRACT-[0-9A-Za-z]+)\s*-->/;
+
+export function markedContractId(resumeMarkdown: string): string | undefined {
+  return CONTRACT_MARKER.exec(resumeMarkdown)?.[1];
+}
+
 export function latestContractId(entries: readonly string[]): string {
   const contracts = entries
     .filter((entry) => /^CONTRACT-\d+/.test(entry))
@@ -264,10 +282,12 @@ export function resumeCheckpoint(
   contractId?: string,
   options: { readonly check?: boolean } = {},
 ): void {
-  const id =
-    contractId ?? latestContractId(readdirSync(resolve("docs/contracts")));
   const resumePath = resolve("docs/RESUME.md");
   const current = readFileSync(resumePath, "utf8");
+  const id =
+    contractId ??
+    markedContractId(current) ??
+    latestContractId(readdirSync(resolve("docs/contracts")));
   const updated = replaceBlock(current, renderBlock(collectFacts(id)));
 
   if (options.check) {

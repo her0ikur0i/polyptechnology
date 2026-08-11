@@ -138,7 +138,24 @@ real evidence SHA.
 
 Fully specified in `docs/contracts/CONTRACT-017B/contract.md`.
 
-## CONTRACT-017A — Session-based conversation continuity
+## CONTRACT-017A — Session-based conversation continuity (closed)
+
+Delivered. Turns resume a provider session instead of replaying the thread:
+**2 input tokens per resumed turn against ~2,500 for a cold start**, measured
+from the ledger. The `SYSTEM_PROMPT_FINGERPRINT` workaround is retired, so
+editing the prompt no longer discards the owner's history, and a
+`conversation_reply` retry can now reach a provider instead of dying on
+`idempotency intent mismatch`.
+
+The finding worth carrying forward: **`provider_request_id` is a session id,
+not a call id.** One value covers every turn of a resumed conversation, and two
+unique constraints assumed otherwise — so the first genuinely resumed turn was
+rejected by the ledger, the driver treated it as an expired session, and the
+system silently degraded to its old behaviour while still answering correctly.
+Migration `0017` drops both. Every unit test passed throughout; only a live
+drill and the supervisor's error log found it.
+
+### Original scope
 
 **Objective.** Replace whole-transcript replay with real provider sessions.
 Today every conversation turn re-sends the entire thread as one text blob: cost

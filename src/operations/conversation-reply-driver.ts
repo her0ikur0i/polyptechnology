@@ -7,6 +7,8 @@ import {
 } from "../orchestrator/reply-chunks.js";
 
 import type { ConversationStore } from "../orchestrator/types.js";
+import type { OperationContext } from "./execution-supervisor.js";
+import type { ProviderSessionStore } from "../orchestrator/provider-sessions.js";
 import type { GatewayAttribution, ModelRoute } from "../gateway/types.js";
 import { deterministicUuid } from "../deterministic-id.js";
 
@@ -127,25 +129,19 @@ export const SYSTEM_PROMPT =
   "stack decision, a document, a change. For work the factory itself should " +
   "build, that means a proposal the owner approves -- not something you do by " +
   "hand.\n\n" +
-  "Answers are usually read on a phone. Be concise and lead with the answer.";
-
-// A short fingerprint of the prompt above.
-//
-// The prompt is not the only thing the model reads: the whole conversation
-// history is replayed into every request, including the assistant's own past
-// turns. When this prompt changed from "you are an interviewer with no
-// execution authority" to a capable assistant, the old thread still contained
-// replies saying "I cannot read files" -- and the model stayed consistent with
-// its own transcript, answering a question correctly and then recanting it two
-// turns later.
-//
-// Deriving the fingerprint from the prompt text means any future change to it
-// starts a fresh conversation automatically, instead of depending on someone
-// remembering that stale turns now contradict the new instructions.
-export const SYSTEM_PROMPT_FINGERPRINT = createHash("sha256")
-  .update(SYSTEM_PROMPT)
-  .digest("hex")
-  .slice(0, 12);
+  "Answers are usually read on a phone. Be concise and lead with the answer.\n\n" +
+  // Precedence, stated explicitly, because a cold start still replays history.
+  //
+  // A resumed turn sends only the new message, so nothing old can argue with
+  // these instructions. But when no session exists the whole thread goes, and
+  // it may contain assistant turns written under a previous prompt -- which is
+  // exactly how this assistant once answered "17 contracts" correctly and then
+  // denied being able to read files. These instructions are current; anything
+  // earlier in the conversation that contradicts them is not.
+  "These instructions are current and take precedence. If anything earlier in " +
+  "this conversation contradicts them -- including your own previous replies " +
+  "about what you can and cannot do -- treat this message as correct and " +
+  "those as out of date.";
 
 // The real "assistant replies" half of CONTRACT-014 M2: routes one
 // interview turn through AiGateway (taskClass "orchestration" -- Claude
@@ -161,18 +157,61 @@ export class ConversationReplyDriver implements OperationDriver {
   // at all -- the reply still completes, the owner simply sees it arrive whole
   // instead of progressively. Streaming must never be load-bearing for
   // correctness.
+  // sessions is optional for the same reason chunks is: without it every turn
+  // replays the transcript, which is precisely how this driver behaved before
+  // CONTRACT-017A. Continuity is an optimisation, never a correctness
+  // requirement.
   constructor(
     private readonly gateway: AiGateway,
     private readonly conversations: ConversationStore,
     private readonly chunks?: ReplyChunkStore,
+    private readonly sessions?: ProviderSessionStore,
   ) {}
 
-  async execute(input: unknown, signal: AbortSignal): Promise<unknown> {
+  async execute(
+    input: unknown,
+    signal: AbortSignal,
+    context?: OperationContext,
+  ): Promise<unknown> {
     const stored = parseConversationReplyTaskInput(input);
+
+    // One ledger entry per attempt.
+    //
+    // The key in the spec is fixed for the life of the task -- the spec row is
+    // immutable by trigger -- while the request hash covers the transcript,
+    // which grows between attempts. The ledger saw the same key with a
+    // different intent and correctly refused it, so every retry of a
+    // conversation whose thread had moved on died with
+    // `idempotency intent mismatch` in about 25 milliseconds, before reserving
+    // budget and before reaching a provider. Retry was futile for exactly the
+    // tasks most likely to need it.
+    //
+    // Attempt 1 keeps the original key so nothing already in the ledger is
+    // orphaned, and so a genuine duplicate delivery of the first attempt still
+    // deduplicates the way idempotency is supposed to.
+    const attemptOrdinal = context?.attemptOrdinal ?? 1;
+    const idempotencyKey =
+      attemptOrdinal <= 1
+        ? stored.idempotencyKey
+        : `${stored.idempotencyKey}#${attemptOrdinal}`;
     const history = await this.conversations.messages(
       stored.projectId,
       stored.conversationId,
     );
+    // Resume the provider's own session when there is one, and send only the
+    // new turn. Otherwise send everything, which is what every turn did before
+    // this existed.
+    //
+    // Whole-transcript replay is why a long thread grew more expensive with
+    // every message, why cache reads ran to six figures of tokens per turn,
+    // and why a long enough thread would eventually be refused outright. It is
+    // also why a *retry* could never succeed: the transcript grows between
+    // attempts, so the request hash changed and the ledger refused it.
+    const resumeSessionId = await this.sessions?.find(
+      stored.conversationId,
+      stored.route.provider,
+    );
+
     const messages = [
       { role: "system" as const, content: SYSTEM_PROMPT },
       // The assistant's own conversation id, plus the one action that turns a
@@ -200,7 +239,10 @@ export class ConversationReplyDriver implements OperationDriver {
       // compileContext rather than reusing it, so it needs its own copy of
       // the same rule to stay correct once anything upstream ever does
       // produce a secret-classified message.
-      ...history
+      // On a resume the provider already holds everything before the last
+      // owner message, so sending it again would defeat the point. On a cold
+      // start the whole thread goes, exactly as before.
+      ...(resumeSessionId === undefined ? history : history.slice(-1))
         .filter((message) => message.classification !== "secret")
         .map((message) => ({
           role:
@@ -250,7 +292,7 @@ export class ConversationReplyDriver implements OperationDriver {
     let result;
     try {
       result = await this.gateway.execute({
-        idempotencyKey: stored.idempotencyKey,
+        idempotencyKey,
         taskClass: "orchestration",
         attribution: stored.attribution,
         messages,
@@ -259,16 +301,51 @@ export class ConversationReplyDriver implements OperationDriver {
         policyVersion: stored.policyVersion,
         routeOverride: stored.route,
         signal,
+        ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
         ...(writer === undefined
           ? {}
           : { onDelta: (fragment: string) => writer.push(fragment) }),
       });
+    } catch (error) {
+      // A resume that failed may mean the provider has forgotten the session:
+      // they expire, and nothing tells us when. Drop the row so the task's own
+      // retry replays the transcript from scratch instead of asking again for
+      // a session that no longer exists.
+      //
+      // Deliberately not retried in-process. The work engine already knows how
+      // to retry with backoff, and a second gateway call inside one attempt
+      // would need its own ledger identity and its own budget reservation --
+      // machinery that exists one layer up and is tested there. The cost of
+      // deferring is one silent retry cycle; the owner sees the answer a
+      // moment later, not a failure.
+      //
+      // Unconditional on the resume path: the alternative is pattern-matching
+      // provider error strings to decide whether a session is dead, which is
+      // exactly the kind of guess that produced "provider returned unusable
+      // output" for failures that never reached a provider.
+      if (resumeSessionId !== undefined)
+        await this.sessions?.forget(
+          stored.conversationId,
+          stored.route.provider,
+        );
+      throw error;
     } finally {
       // Always, including on failure: a stream that died still queued writes,
       // and leaving them pending would strand fragments in memory and keep the
       // serialized write chain alive after the task has moved on.
       await writer?.flush();
     }
+
+    // The provider's session id for this exchange. It has always been
+    // returned and always been stored on the attempt row as
+    // providerRequestId; what was missing was holding it against the
+    // conversation so the next turn can resume it.
+    if (result.attempt.providerRequestId !== undefined)
+      await this.sessions?.remember(
+        stored.conversationId,
+        stored.route.provider,
+        result.attempt.providerRequestId,
+      );
 
     const content = result.content.trim();
     const messageId = deterministicUuid(

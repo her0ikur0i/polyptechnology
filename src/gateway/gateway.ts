@@ -116,12 +116,14 @@ export class AiGateway {
             request.maxOutputTokens,
             request.onDelta!,
             request.signal,
+            request.resumeSessionId,
           )
         : await adapter.invoke(
             route,
             request.messages,
             request.maxOutputTokens,
             request.signal,
+            request.resumeSessionId,
           );
       let rejection: string | undefined;
       if (result.resolvedModelId !== route.requestedModelId)
