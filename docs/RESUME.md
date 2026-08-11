@@ -7,26 +7,27 @@ repository is the truth.
 
 ## Current state
 
-Contracts 001–017 are all closed and pushed. **`CONTRACT-017` (Telegram as a
-working control surface) closed at `2e4290b`** with 332 backend tests passing
-and zero skipped, 38 dashboard tests, and a staging redeploy verified against
-both live services. Telegram is a working two-way control surface: reports,
-approvals, conversation and a closed command set.
+Contracts 001–017 and 017B are all closed and pushed. **`CONTRACT-017B`
+(truthful reporting and a real backoff) closed at `7021e59`** with 353 backend
+tests passing and zero skipped, 38 dashboard tests, a clean security review run
+before the push, and the release live on staging. Telegram is a working
+two-way control surface — reports, approvals, conversation, a closed command
+set — and as of 017B it reports terminal outcomes only, names work in human
+terms, and cannot contradict itself about a budget.
 
-## Active: CONTRACT-017B — truthful reporting and a real backoff
+## Closed: CONTRACT-017B — truthful reporting and a real backoff
 
-Inserted 2026-08-11 after the owner read a full day of their own Telegram
-transcript and found four defects that no test and no query had surfaced,
-because each is only visible as a message a person reads on a phone. Charter
-and evidence in `docs/contracts/CONTRACT-017B/`. The generated block below
-tracks it.
+**CLOSED at `7021e59`.** Inserted 2026-08-11 after the owner read a full day of
+their own Telegram transcript and found four defects that no test and no query
+had surfaced, because each is only visible as a message a person reads on a
+phone. Charter and evidence in `docs/contracts/CONTRACT-017B/`.
 
 **Its M0 also answered CONTRACT-017A's and CONTRACT-018's open questions**, so
 the three run without pausing — see
 `docs/contracts/CONTRACT-017B/evidence/M0-owner-confirmation.md` before
 assuming any of those decisions were invented.
 
-## Then: CONTRACT-017A — session-based conversation continuity
+## Next: CONTRACT-017A — session-based conversation continuity
 
 **NOT STARTED.** Specified in `docs/product/roadmap-2026H2.md`. Replaces
 whole-transcript replay with real provider sessions, and retires the
@@ -74,9 +75,8 @@ node --import tsx scripts/resume-checkpoint.ts --check  # fail if stale
 | M4        | human-readable task labels, terminal outcomes only, surrogate-safe splitting | done — `M4-human-labels-and-safe-splitting.md` |
 | M5        | live drill on the owner's own chat, README, security review, close           | done — `M5-review-and-close.md`                |
 
-- **HEAD:** `d199447 fix(resume-checkpoint): remove the volatile lines whole, not blanked`
-- **Working tree:** 20 changed path(s) — expected while a contract is in flight, since this repository commits once per contract
-- **Last touched:** `docs/contracts/CONTRACT-017B/evidence/M5-review-and-close.md` at 2026-08-11T02:13Z — if a session ended abruptly, work was here
+- **HEAD:** `7021e59 CONTRACT-017B: truthful reporting and a real backoff`
+- **Working tree:** 1 changed path(s) — expected while a contract is in flight, since this repository commits once per contract
 - **Next action:** every milestone is evidenced; CONTRACT-017B is ready to close
 
 <!-- resume:auto:end -->
@@ -183,6 +183,7 @@ durable record; this file deliberately no longer restates it.
 | 015      | `4b55447` | Foundation hardening: audit findings, path safety, throttle   |
 | 016      | `324b39f` | Streaming foundation: adapter streaming, durable reply chunks |
 | 017      | `2e4290b` | Telegram control surface: reports, approvals, chat, commands  |
+| 017B     | `7021e59` | Truthful reporting, exponential retry backoff, human labels   |
 
 ## Owner constraints (current)
 
