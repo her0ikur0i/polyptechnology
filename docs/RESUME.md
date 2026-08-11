@@ -7,16 +7,29 @@ repository is the truth.
 
 ## Current state
 
-Contracts 001–016 are all closed and pushed. `CONTRACT-015` (foundation
-hardening) closed at `4b55447` with 193 backend tests passing and zero skipped,
-38 dashboard tests, and a private-staging redeploy verified against the live
-process. Its charter, the repository-wide audit that motivated it, the owner
-acceptance mapping and all ten milestone evidence files are in
-`docs/contracts/CONTRACT-015/`.
+Contracts 001–017 are all closed and pushed. **`CONTRACT-017` (Telegram as a
+working control surface) closed at `2e4290b`** with 332 backend tests passing
+and zero skipped, 38 dashboard tests, and a staging redeploy verified against
+both live services. Telegram is a working two-way control surface: reports,
+approvals, conversation and a closed command set.
 
-## Next: CONTRACT-017 — Telegram as a working control surface
+## Next: CONTRACT-017A — session-based conversation continuity
 
-**IN PROGRESS and UNCOMMITTED.** Charter at
+**NOT STARTED.** Specified in `docs/product/roadmap-2026H2.md`. Replaces
+whole-transcript replay with real provider sessions, and retires the
+`SYSTEM_PROMPT_FINGERPRINT` workaround. It also owns the
+`idempotency intent mismatch` defect below, because it changes how the
+transcript enters the request in the first place. Inserted before CONTRACT-018
+by owner decision on 2026-08-11, so the dashboard chat window is built on the
+fixed mechanism rather than the workaround.
+
+**Open M0 question for CONTRACT-017A**, to be asked before any work starts:
+whether the provider session id belongs on `conversations` or in a side table,
+given that a session is per provider and a conversation may outlive one.
+
+## Closed: CONTRACT-017 — Telegram as a working control surface
+
+**CLOSED at `2e4290b`.** Charter at
 `docs/contracts/CONTRACT-017/contract.md`, including **Amendment 1** (the
 assistant runs with tools) and **Amendment 2** (this resume protocol, and what
 the standing authority covers). Per-milestone state lives in
@@ -24,7 +37,8 @@ the standing authority covers). Per-milestone state lives in
 authoritative signal that milestone `n` is done.
 
 The block below is **generated** — regenerate it as the last step of every
-milestone, never hand-edit it:
+milestone, never hand-edit it. It tracks the highest-numbered contract
+directory, so it keeps reporting CONTRACT-017 until CONTRACT-017A exists:
 
 ```
 node --import tsx scripts/resume-checkpoint.ts          # rewrite it
@@ -49,9 +63,8 @@ node --import tsx scripts/resume-checkpoint.ts --check  # fail if stale
 | M7        | negative tests and an independent security review of the ingress and the authority boundary          | done — `M7-negative-tests-and-review.md`  |
 | M8        | staging configuration, redeploy, evidence reconciliation, one commit, push                           | done — `M8-staging-redeploy-and-close.md` |
 
-- **HEAD:** `b239fe1 docs: mark CONTRACT-016 closed and point the next session at CONTRACT-017`
-- **Working tree:** 57 changed path(s) — expected while a contract is in flight, since this repository commits once per contract
-- **Last touched:** `docs/contracts/CONTRACT-017/evidence/M8-staging-redeploy-and-close.md` at 2026-08-11T01:00Z — if a session ended abruptly, work was here
+- **HEAD:** `2e4290b CONTRACT-017: Telegram as a working control surface`
+- **Working tree:** 1 changed path(s) — expected while a contract is in flight, since this repository commits once per contract
 - **Next action:** every milestone is evidenced; CONTRACT-017 is ready to close
 
 <!-- resume:auto:end -->
@@ -159,6 +172,7 @@ durable record; this file deliberately no longer restates it.
 | 014      | `f58a649` | Conversation workspace: chat replaces the blueprint form      |
 | 015      | `4b55447` | Foundation hardening: audit findings, path safety, throttle   |
 | 016      | `324b39f` | Streaming foundation: adapter streaming, durable reply chunks |
+| 017      | `2e4290b` | Telegram control surface: reports, approvals, chat, commands  |
 
 ## Owner constraints (current)
 
