@@ -2,7 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import type { OperationDriver } from "./execution-supervisor.js";
 import type { AiGateway } from "../gateway/gateway.js";
 import type { PostgresProjectFactory } from "../factory/postgres-repository.js";
-import { parseBlueprint } from "../factory/blueprint.js";
+import {
+  normalizeRuntime,
+  parseBlueprint,
+  SUPPORTED_RUNTIMES,
+} from "../factory/blueprint.js";
 import type { GatewayAttribution, ModelRoute } from "../gateway/types.js";
 
 export interface BlueprintTranslationTaskInput {
@@ -125,6 +129,27 @@ export class BlueprintTranslationDriver implements OperationDriver {
       };
     const fields = extracted as Record<string, unknown>;
 
+    // The model answers `runtime` in free text, and everything downstream
+    // treats it as a controlled vocabulary. Normalise here, at the boundary
+    // that owns the conversion, and fail honestly when it maps to nothing --
+    // rather than at provisioning time, several minutes and one queued task
+    // later, with an error about an unsupported runtime the owner never chose.
+    //
+    // The first blueprint this factory ever produced said "node-22" and could
+    // not be provisioned because of exactly this gap.
+    const requestedRuntime =
+      typeof fields.runtime === "string" && fields.runtime.length > 0
+        ? fields.runtime
+        : "node";
+    const runtime = normalizeRuntime(requestedRuntime);
+    if (runtime === undefined)
+      return {
+        verified: false,
+        reason:
+          `blueprint runtime ${JSON.stringify(requestedRuntime)} is not supported ` +
+          `(supported: ${SUPPORTED_RUNTIMES.join(", ")})`,
+      };
+
     const blueprintId = randomUUID();
     const slug = `${sanitizeSlugFragment(
       typeof fields.slug === "string" ? fields.slug : "",
@@ -137,7 +162,7 @@ export class BlueprintTranslationDriver implements OperationDriver {
           ? fields.displayName.slice(0, 200)
           : "Generated project",
       stack: {
-        runtime: typeof fields.runtime === "string" ? fields.runtime : "node",
+        runtime,
         framework:
           typeof fields.framework === "string" ? fields.framework : "none",
         database:

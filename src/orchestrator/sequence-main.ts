@@ -24,6 +24,7 @@ import {
   PostgresProviderSessionStore,
 } from "./provider-sessions.js";
 import { PostgresProjectFactory } from "../factory/postgres-repository.js";
+import { FactoryLifecycleAdvancer } from "../factory/generation-lifecycle.js";
 import { PostgresPolicyStore } from "../policy/postgres-policy-store.js";
 import { PROGRAMMING_POLICY_KEY } from "../policy/types.js";
 import { AiGateway } from "../gateway/gateway.js";
@@ -191,6 +192,14 @@ const ttlMs = 30_000,
       aiGateway,
       PROGRAMMING_POLICY_KEY,
     ),
+    // An accepted patch advances the generated project to `development`.
+    // Without this the lifecycle stopped at `blueprint` no matter how well
+    // generation went, and the pipeline had no way to say it had finished.
+    (input) =>
+      new FactoryLifecycleAdvancer(new PostgresProjectFactory(pool)).developed(
+        input.projectId,
+        input.taskId,
+      ),
   ),
   conversationReplyDriver = new ConversationReplyDriver(
     aiGateway,

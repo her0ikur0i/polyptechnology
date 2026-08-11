@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Pool } from "pg";
@@ -23,12 +23,82 @@ export interface GenerationTaskResult {
 // test: factory_contracts.id is a generic UUID work-tracking key, reusable
 // per generated project, not exclusive to this control plane's own
 // contracts).
+// What the executor is told about how to answer.
+//
+// The rules about paths and hunk headers are not style advice. The first six
+// real attempts against DeepSeek all failed at `git apply`: one guessed the
+// contents of package.json and tsconfig.json, one invented a `test/` directory
+// when the repository has `tests/`, and four produced diffs git called
+// "corrupt". None of that is the model being incapable -- it was being asked to
+// patch files it had never seen.
+const GENERATION_SYSTEM_PROMPT = [
+  "You implement the initial code for a new project.",
+  "",
+  "Answer with a single unified diff and nothing else. No prose before or",
+  "after it, no markdown fences.",
+  "",
+  "The diff must apply with `git apply` against the exact file contents given",
+  "to you. That means:",
+  "- Use paths exactly as listed. Do not invent directories.",
+  "- Prefer creating new files over editing existing ones. A new file is a",
+  "  hunk from /dev/null and cannot conflict.",
+  "- When you must edit an existing file, reproduce its surrounding lines",
+  "  exactly as given, and make the hunk header line counts correct.",
+  "- Every path must stay inside this repository.",
+  "",
+  "The project is verified by `npm run typecheck && npm run format:check &&",
+  "npm test` in a sandbox with no network. So: the code must typecheck under",
+  "strict TypeScript, be formatted the way Prettier's defaults format it, and",
+  "be covered by tests that genuinely exercise the requirements. Do not add",
+  "dependencies -- nothing can be installed.",
+].join("\n");
+
+// Files whose contents the executor is shown. Small, textual, and the only
+// ones a scaffold patch has any business touching -- node_modules, .git and
+// lockfiles are excluded by construction rather than by size.
+const CONTEXT_FILES = [
+  "package.json",
+  "tsconfig.json",
+  "README.md",
+  ".gitignore",
+  "src/index.ts",
+  "tests/scaffold.test.ts",
+] as const;
+
+const CONTEXT_BYTE_LIMIT = 8_000;
+
+// Reads the scaffold so the diff can be written against what is actually
+// there. Missing files are listed as missing rather than skipped silently: a
+// model that is told a file does not exist will create it, whereas one told
+// nothing will guess.
+async function describeRepository(repoPath: string): Promise<string> {
+  const sections: string[] = [];
+  let budget = CONTEXT_BYTE_LIMIT;
+  for (const relative of CONTEXT_FILES) {
+    let body: string;
+    try {
+      body = await readFile(join(repoPath, relative), "utf8");
+    } catch {
+      sections.push(`--- ${relative} (does not exist yet) ---`);
+      continue;
+    }
+    if (body.length > budget) {
+      sections.push(`--- ${relative} (too large to include) ---`);
+      continue;
+    }
+    budget -= body.length;
+    sections.push(`--- ${relative} ---\n${body}`);
+  }
+  return sections.join("\n");
+}
+
 export async function createGenerationTask(
   pool: Pool,
   project: GeneratedProject,
   blueprint: BlueprintDocument,
   repoPath: string,
 ): Promise<GenerationTaskResult> {
+  const repoListing = await describeRepository(repoPath);
   const work = new PostgresWorkRepository(pool);
   const contractId = randomUUID(),
     milestoneId = randomUUID();
@@ -79,22 +149,21 @@ export async function createGenerationTask(
     messages: [
       {
         role: "system" as const,
-        content:
-          "You are implementing the initial scaffold for a new project. " +
-          "Return a single unified diff (git apply-compatible) against the " +
-          "existing repository. Only touch files inside this repository.",
+        content: GENERATION_SYSTEM_PROMPT,
       },
       {
         role: "user" as const,
         content: [
           `Project: ${blueprint.displayName} (${blueprint.slug})`,
           `Stack: ${blueprint.stack.runtime}/${blueprint.stack.framework}/${blueprint.stack.database}`,
+          "",
           "Requirements:",
           ...blueprint.requirements.map((r) => `- ${r}`),
           "",
-          "The repository already has package.json (typecheck/format:check/test " +
-            "scripts), tsconfig.json, and a placeholder test. Implement the " +
-            "requirements above as real, working, tested TypeScript.",
+          "The repository currently contains exactly these files, in full.",
+          "Your diff must apply to them as they are written here.",
+          "",
+          repoListing,
         ].join("\n"),
       },
     ],

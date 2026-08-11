@@ -172,7 +172,13 @@ test(
         requirements: string[];
       };
       assert.equal(document.displayName, "Vendor Invoice Tracker");
-      assert.equal(document.stack.runtime, "node-22");
+      // Normalised, not passed through. This assertion used to expect
+      // "node-22" -- the model's own words -- which is exactly the shape that
+      // broke the first real generation: NodeWorkspaceProvisioner compares
+      // against the single string "node" and rejected the blueprint. The test
+      // was faithfully documenting a defect. `framework` and `database` stay
+      // free text because nothing downstream matches on them.
+      assert.equal(document.stack.runtime, "node");
       assert.equal(document.stack.framework, "express");
       assert.deepEqual(document.requirements, [
         "Track vendor invoices",

@@ -10,18 +10,29 @@ every milestone and the final regression gate pass.
 
 ## Where to start
 
-| If you want                  | Read                             |
-| ---------------------------- | -------------------------------- |
-| Current delivery state       | `docs/RESUME.md`                 |
-| The operating policy         | `AGENTS.md`                      |
-| Orientation and invariants   | `CLAUDE.md`                      |
-| Where the work is going      | `docs/product/roadmap-2026H2.md` |
-| What a contract actually did | `docs/contracts/CONTRACT-NNN/`   |
+| If you want                         | Read                             |
+| ----------------------------------- | -------------------------------- |
+| Current delivery state              | `docs/RESUME.md`                 |
+| The operating policy                | `AGENTS.md`                      |
+| Orientation and invariants          | `CLAUDE.md`                      |
+| **What it must do, and how proven** | `docs/product/PRD.md`            |
+| **How it is built**                 | `docs/architecture/TAD.md`       |
+| **What it looks like, and why**     | `docs/design/DESIGN.md`          |
+| The master specification            | `docs/SYSTEM-SPECIFICATION.md`   |
+| Where the work is going             | `docs/product/roadmap-2026H2.md` |
+| A single past decision              | `docs/architecture/adr-*.md`     |
+| What a contract actually did        | `docs/contracts/CONTRACT-NNN/`   |
 
 `docs/RESUME.md` carries a generated block — milestone state, HEAD, and the
 last file touched — regenerated at every milestone by
 `scripts/resume-checkpoint.ts`. It exists so a session that ends mid-milestone
 can be resumed without reconstructing anything.
+
+**The PRD marks each requirement Proven, Unproven, Partial or Absent, and the
+distinction is load-bearing.** "Unproven" means the code exists, is unit-tested
+and reviewed, and has never run end to end — which is the state the entire
+generation pipeline turned out to be in. A green suite proves the units agree
+with their tests, not that the system works.
 
 ## Local verification
 
@@ -37,6 +48,7 @@ them, so a test count means nothing unless the invocation is named alongside it:
 ```bash
 TEST_DATABASE_URL=postgresql://postgres:contract011test@127.0.0.1:55433/polyp_test \
 TEST_WORKER_IMAGE=postgres@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193 \
+TEST_SCAFFOLD_GATES=enabled \
 npm test
 ```
 

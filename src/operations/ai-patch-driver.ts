@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { executeWorker } from "../worker/executor.js";
-import { validatePatchScope } from "./patch-scope.js";
+import { extractUnifiedDiff, validatePatchScope } from "./patch-scope.js";
 import { classifyAttempt } from "../policy/failure-classification.js";
 import type { EscalationDecision } from "../policy/failure-classification.js";
 import type { AiGateway } from "../gateway/gateway.js";
@@ -21,14 +21,16 @@ export interface WorkspaceCopier {
 }
 
 export interface PatchApplier {
-  // Applies a unified diff to an isolated workspace copy and returns the
-  // number of changed lines. Implementations must never touch the real
-  // repository directly -- workspaceRoot is expected to already be an
-  // isolated worktree/copy the caller owns.
+  // Applies a unified diff to a workspace the caller owns and returns the
+  // number of changed lines.
   apply(
     workspaceRoot: string,
     patch: string,
   ): Promise<{ changedLines: number }>;
+  // Returns the workspace to its last committed state, discarding whatever
+  // apply() wrote. Called when a patch is rejected, so a failed attempt does
+  // not become the baseline the next attempt patches on top of.
+  revert(workspaceRoot: string): Promise<void>;
 }
 
 export interface AiPatchTaskInput {
@@ -72,9 +74,14 @@ export class AiPatchExecutorDriver {
       routeOverride: input.route,
     });
 
+    // Providers present a diff differently -- bare, fenced, or after a
+    // sentence of explanation. Normalise before validating, so a tier is
+    // judged on the patch it produced rather than on how it wrapped it.
+    const patch = extractUnifiedDiff(result.content);
+
     let touchedPaths: ReadonlyArray<string>;
     try {
-      touchedPaths = validatePatchScope(result.content, input.ownedPaths);
+      touchedPaths = validatePatchScope(patch, input.ownedPaths);
     } catch (error) {
       await this.recordRejection(
         input,
@@ -90,10 +97,36 @@ export class AiPatchExecutorDriver {
       return { status: "rejected", decision, touchedPaths: [] };
     }
 
-    const applied = await this.applier.apply(
-      input.workspaceRoot,
-      result.content,
-    );
+    // A patch that will not apply is a rejected patch, not a crashed task.
+    //
+    // `git apply` throwing used to propagate straight out of this driver, so
+    // the attempt failed with **no `provider_artifacts` row written at all**.
+    // That is the evidence `deriveFailureEvidence()` reads to unlock the next
+    // fallback tier, so the most common failure a code executor has -- a diff
+    // that does not apply -- was precisely the one that left no trace and could
+    // never justify an escalation. Six real attempts against DeepSeek produced
+    // six apply failures and zero artifacts before this was fixed.
+    let applied: { changedLines: number };
+    try {
+      applied = await this.applier.apply(input.workspaceRoot, patch);
+    } catch (error) {
+      // Nothing was applied, so there is nothing to revert -- `git apply` is
+      // all-or-nothing, and `--check` runs first.
+      await this.recordRejection(
+        input,
+        result.attempt.id,
+        result.attempt.resolvedModelId ?? input.route.requestedModelId,
+        result.attempt.outputSha256 ?? sha256(result.content),
+        error instanceof Error
+          ? `patch_apply_failed: ${error.message}`
+          : "patch_apply_failed",
+      );
+      const decision = classifyAttempt({
+        outcome: "succeeded",
+        artifactStatus: "rejected",
+      });
+      return { status: "rejected", decision, touchedPaths: [] };
+    }
     await this.workspaceCopier.copy(
       input.workspaceRoot,
       input.verifyJob.workspaceRoot,
@@ -101,6 +134,21 @@ export class AiPatchExecutorDriver {
     const verified = await executeWorker(input.verifyJob, this.runner);
     const status: "accepted" | "rejected" =
       verified.status === "succeeded" ? "accepted" : "rejected";
+
+    // A rejected patch must not survive in the workspace.
+    //
+    // The patch is applied to the project's real repository, then copied
+    // elsewhere to be verified. Without this, a rejected patch stayed applied,
+    // and the next attempt -- a different provider, escalated to precisely
+    // because the first one failed -- would build its diff against a tree
+    // already carrying the failure it was called in to replace. `git apply`
+    // would then fail on context, turning a recoverable rejection into a stuck
+    // task, and the escalation chain would look broken when the real cause was
+    // a dirty baseline.
+    //
+    // Reverting is not conditional on why verification failed: any outcome
+    // other than acceptance leaves nothing worth keeping.
+    if (status === "rejected") await this.applier.revert(input.workspaceRoot);
 
     await this.artifacts.record({
       attemptId: result.attempt.id,
@@ -111,7 +159,7 @@ export class AiPatchExecutorDriver {
         result.attempt.resolvedModelId ?? input.route.requestedModelId,
       status,
       outputSha256: result.attempt.outputSha256 ?? sha256(result.content),
-      patchSha256: status === "accepted" ? sha256(result.content) : null,
+      patchSha256: status === "accepted" ? sha256(patch) : null,
       changedLines: applied.changedLines,
       verifierId: status === "accepted" ? "isolated-worker-v1" : null,
       reason: status === "rejected" ? `verification_${verified.status}` : null,

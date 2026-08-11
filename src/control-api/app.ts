@@ -15,6 +15,7 @@ import { buildDashboardSnapshot } from "./snapshot.js";
 import { identifyOwner, requireCsrf, requireOwner } from "./auth.js";
 import { NodeWorkspaceProvisioner } from "../factory/workspace-provisioner.js";
 import { createGenerationTask } from "../factory/generation-task.js";
+import { FactoryLifecycleAdvancer } from "../factory/generation-lifecycle.js";
 import { parseBlueprint } from "../factory/blueprint.js";
 import { queueConversationReply } from "../orchestrator/reply-task.js";
 import { queueBlueprintTranslation } from "../factory/blueprint-translation-task.js";
@@ -260,6 +261,14 @@ export function createControlApi(deps: ControlApiDeps): Express {
           config.projectWorkspacesRoot,
         );
         const { repoPath } = await provisioner.provision(project.id, blueprint);
+        // The workspace now exists on disk as a real git repository, so the
+        // project's recorded state should say so. Nothing wrote `provisioned`
+        // before CONTRACT-017C — the lifecycle defined the state and no code
+        // ever reached it.
+        await new FactoryLifecycleAdvancer(factory).provisioned(
+          project.id,
+          project.workspaceRef,
+        );
         const task = await createGenerationTask(
           pool,
           project,

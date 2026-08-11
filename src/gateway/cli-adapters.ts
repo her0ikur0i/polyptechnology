@@ -1,3 +1,6 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { execFile, spawn } from "node:child_process";
 import type {
   GatewayRequest,
@@ -604,11 +607,47 @@ export class CodexCliAdapter implements ManagedProviderAdapter {
     const prompt = messages
       .map((message) => `${message.role.toUpperCase()}:\n${message.content}`)
       .join("\n\n");
+    // An empty directory that exists only for this call. Created per
+    // invocation and left for the OS to reap: it is the agent's working root,
+    // so it must contain nothing worth reading and nothing worth writing to.
+    const sandboxDir = await mkdtemp(join(tmpdir(), "polyp-codex-"));
     const { stdout, stderr, exitCode } = await this.runner(
       "codex",
       [
         "exec",
         "--json",
+        // Codex refuses to start outside a git repository it trusts:
+        //   "Not inside a trusted directory and --skip-git-repo-check was not
+        //    specified."
+        //
+        // The supervisor runs with WorkingDirectory=/opt/polyp-ai-factory/current,
+        // which is not one, so **every Codex attempt this system has ever made
+        // failed on startup** -- the technical-fallback tier was configured,
+        // routed to, and had never once produced a completion.
+        //
+        // Skipping that check on its own would be a real escalation, and the
+        // security review caught it: `codex exec` is Codex's *agentic*
+        // entrypoint, not a completion endpoint. The trust check is what had
+        // been standing between a model and the deployed application tree --
+        // source, config and node_modules -- as its working root. Removing the
+        // guard without replacing it would have handed an untrusted model
+        // default write and command permissions there.
+        //
+        // So the guard is replaced rather than removed. The three flags below
+        // state the boundary explicitly instead of inheriting whatever the CLI
+        // defaults to in a directory nobody vetted:
+        "--skip-git-repo-check",
+        // Working root: a directory created for this call and nothing else.
+        // Never the release tree, never a project workspace.
+        "--cd",
+        sandboxDir,
+        // No writes and no command execution, whatever the prompt asks for.
+        "--sandbox",
+        "read-only",
+        // There is deliberately no --ask-for-approval here: `codex exec` does
+        // not accept one, because it is the non-interactive entrypoint and has
+        // no terminal to ask at. The sandbox above is the control, not a
+        // prompt nobody could answer.
         "--model",
         route.requestedModelId,
         "--config",
@@ -623,10 +662,26 @@ export class CodexCliAdapter implements ManagedProviderAdapter {
         input: prompt,
       },
     );
+    // Empty stdout means the CLI produced no telemetry at all -- it refused to
+    // start, failed to parse its own arguments, or died before reporting.
+    //
+    // This used to be flagged `outcomeUnknown: true`, which tells the ledger to
+    // **hold the attempt's budget reservation permanently**, because an unknown
+    // outcome might have been charged. For a local process that never emitted a
+    // single line, that is the wrong reading: nothing was charged, and the money
+    // was held anyway. On staging it had accumulated **$6.70 held against $1.84
+    // actually spent**, and three such failures were enough to exhaust a $2.00
+    // generation scope -- which capped the escalation chain at roughly three
+    // tiers no matter what `maxAttempts` said. The tier that could not be
+    // reached was the fallback tier that exists for when the earlier ones fail.
+    //
+    // The discriminator is structural, not a string match: no stdout means no
+    // provider response was ever parsed, so there is nothing to reconcile.
+    // Partial output still counts as unknown, below.
     if (stdout.trim().length === 0)
       throw new ManagedInvocationError(
         `codex_cli_exit_${exitCode}:${stderr.trim().split("\n").at(-1)?.slice(0, 160) ?? "empty output"}`,
-        true,
+        false,
       );
     const body = this.parser(stdout, route.requestedModelId);
     if (!body.requestId || !body.resolvedModelId || !body.content)

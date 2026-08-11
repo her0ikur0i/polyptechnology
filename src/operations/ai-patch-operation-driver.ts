@@ -1,4 +1,7 @@
-import type { OperationDriver } from "./execution-supervisor.js";
+import type {
+  OperationContext,
+  OperationDriver,
+} from "./execution-supervisor.js";
 import { AiPatchExecutorDriver } from "./ai-patch-driver.js";
 import type { AiPatchTaskInput } from "./ai-patch-driver.js";
 import type {
@@ -138,23 +141,58 @@ const staticFallbackResolver: RouteResolver = {
   },
 };
 
+// Called once a patch has been accepted, so a generated project's lifecycle
+// can record that it now contains generated software. Optional: a patch task
+// that is not a project generation simply does not supply one.
+export type PatchAcceptedHook = (input: {
+  projectId: string;
+  taskId: string;
+}) => Promise<void>;
+
 export class AiPatchOperationDriver implements OperationDriver {
   constructor(
     private readonly inner: AiPatchExecutorDriver,
     private readonly routeResolver: RouteResolver = staticFallbackResolver,
+    private readonly onAccepted?: PatchAcceptedHook,
   ) {}
 
-  async execute(input: unknown, signal: AbortSignal): Promise<unknown> {
+  async execute(
+    input: unknown,
+    signal: AbortSignal,
+    context?: OperationContext,
+  ): Promise<unknown> {
     const stored = parseStoredAiPatchTaskInput(input);
     const route = await this.routeResolver.resolve(
       stored.taskClass,
       stored.taskId,
       stored.route,
     );
+    // One ledger entry per attempt, exactly as ConversationReplyDriver does.
+    //
+    // The stored key lives in `operation_task_specs.input`, which is immutable
+    // by trigger, so every one of a task's attempts presented the same key.
+    // The gateway hashes the route into the request, so the two possible
+    // outcomes were both fatal: an unchanged route matched the stored hash and
+    // raised "attempt already exists", and an escalated route did not and
+    // raised "idempotency intent mismatch". Either way the retry died before
+    // reserving budget or reaching a provider.
+    //
+    // The consequence was that attempt 1 was the only attempt a generation
+    // task could ever make, and `maxAttempts: 6` -- written to "walk deepseek
+    // -> codex -> claude" -- could never walk anywhere. The escalation chain
+    // this system is built around had never once run on a generation task.
+    //
+    // Attempt 1 keeps the original key so nothing already in the ledger is
+    // orphaned, and a genuine duplicate delivery still deduplicates.
+    const attemptOrdinal = context?.attemptOrdinal ?? 1;
+    const idempotencyKey =
+      attemptOrdinal <= 1
+        ? stored.idempotencyKey
+        : `${stored.idempotencyKey}#${attemptOrdinal}`;
     const result = await this.inner.run({
       taskId: stored.taskId,
       gatewayRequest: {
-        idempotencyKey: stored.idempotencyKey,
+        idempotencyKey,
         taskClass: stored.taskClass,
         attribution: stored.attribution,
         messages: stored.messages,
@@ -169,6 +207,29 @@ export class AiPatchOperationDriver implements OperationDriver {
       verifyJob: toWorkerJob(stored.verifyJob),
       fallbackReason: stored.fallbackReason,
     } satisfies AiPatchTaskInput);
+
+    // An accepted patch is the moment a generated project stops being a
+    // scaffold and starts being software, so it is the moment its lifecycle
+    // should say so. Nothing did: `ProjectLifecycle` defines
+    // idea -> blueprint -> provisioned -> development, and no code anywhere
+    // ever wrote the last two. A flawless generation left the project sitting
+    // at `blueprint` forever, which meant the pipeline had no representation
+    // of "finished" at all.
+    //
+    // Injected rather than imported, because this driver is the generic patch
+    // executor -- a patch task that is not a generation supplies no hook and
+    // behaves exactly as before.
+    //
+    // Failure here fails the task, deliberately. An accepted patch whose
+    // project state cannot be recorded is not a completed generation, and this
+    // system's rule is to fail closed rather than report a success it cannot
+    // substantiate.
+    if (result.status === "accepted")
+      await this.onAccepted?.({
+        projectId: stored.attribution.projectId,
+        taskId: stored.taskId,
+      });
+
     return {
       verified: result.status === "accepted",
       status: result.status,

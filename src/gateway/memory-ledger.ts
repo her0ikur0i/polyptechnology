@@ -5,10 +5,23 @@ import type {
 } from "./types.js";
 const clone = (attempt: GatewayAttempt): GatewayAttempt =>
   structuredClone(attempt);
+// The in-memory ledger the tests drive. It must agree with
+// PostgresAttemptLedger about what is and is not unique, or a test can pass
+// against a rule the real database does not enforce -- or fail against one it
+// no longer has.
+//
+// It used to reject a repeated `providerRequestId`. Migration 0017 dropped
+// exactly that constraint from both `ai_usage_events` and
+// `ai_gateway_attempts`, because CONTRACT-017A established that
+// `provider_request_id` is a *session* id: one value legitimately covers every
+// turn of a resumed conversation, and every attempt of a retried task that
+// stays on the same session. Per-call identity is the attempt id.
+//
+// Keeping the check here would have made this ledger stricter than production
+// and would fail perfectly valid retries.
 export class MemoryAttemptLedger implements AttemptLedger {
   private readonly byId = new Map<string, GatewayAttempt>();
   private readonly byKey = new Map<string, string>();
-  private readonly requestIds = new Set<string>();
   async reserve(attempt: GatewayAttempt) {
     const id = this.byKey.get(attempt.idempotencyKey);
     if (id !== undefined) {
@@ -35,9 +48,6 @@ export class MemoryAttemptLedger implements AttemptLedger {
     const attempt = this.required(attemptId);
     if (attempt.outcome !== "dispatched")
       throw new Error("attempt cannot succeed");
-    if (this.requestIds.has(result.providerRequestId))
-      throw new Error("duplicate provider request id");
-    this.requestIds.add(result.providerRequestId);
     Object.assign(attempt, {
       outcome: "succeeded" as const,
       providerRequestId: result.providerRequestId,
@@ -53,9 +63,6 @@ export class MemoryAttemptLedger implements AttemptLedger {
     const attempt = this.required(attemptId);
     if (attempt.outcome !== "dispatched")
       throw new Error("attempt cannot reject result");
-    if (this.requestIds.has(result.providerRequestId))
-      throw new Error("duplicate provider request id");
-    this.requestIds.add(result.providerRequestId);
     Object.assign(attempt, {
       outcome: "failed" as const,
       providerRequestId: result.providerRequestId,

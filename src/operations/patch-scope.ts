@@ -20,6 +20,51 @@ const owned = ownedByManifest;
 // +++/--- lines (which can read "/dev/null" for adds/deletes and are easy to
 // spoof) and hunk bodies. A patch with no diff --git headers is rejected as
 // unparseable rather than silently treated as touching nothing.
+// Pulls the unified diff out of whatever a provider actually answered with.
+//
+// The three registered providers do not speak identically. `deepseek-v4-flash`
+// returns a bare diff. `deepseek-v4-pro` is a thinking model: it reasons at
+// length and then presents the diff conversationally, usually inside a
+// ```diff fence and often after a sentence or two. Codex sits in between.
+// Every one of those is a correct answer to "give me a diff"; only the first
+// was accepted, so `deepseek-v4-pro` was rejected on **every** attempt with
+// "patch has no diff --git headers" -- a whole tier of the escalation chain
+// unusable because of presentation rather than substance.
+//
+// This is the same defect shape as the blueprint runtime that arrived as
+// "node-22": a boundary that demands one exact form, fed by a model that had
+// no way to know which form was meant. The fix belongs here, at the boundary,
+// not in a prompt that hopes.
+//
+// Deliberately narrow. It finds where the diff starts and drops what precedes
+// it; it never edits diff content, and a response with no `diff --git` header
+// anywhere still fails exactly as before. Everything downstream --
+// validatePatchScope, git apply, the sandboxed verification -- is unchanged.
+export function extractUnifiedDiff(content: string): string {
+  // A fenced block wins if one contains a diff: models put explanation
+  // outside the fence and the answer inside it.
+  const fencePattern = /```(?:diff|patch|)?\r?\n([\s\S]*?)```/g;
+  let fence: RegExpExecArray | null;
+  while ((fence = fencePattern.exec(content)) !== null) {
+    const body = fence[1] ?? "";
+    if (body.includes("diff --git ")) return trimToDiff(body);
+  }
+  return trimToDiff(content);
+}
+
+function trimToDiff(text: string): string {
+  const start = text.indexOf("diff --git ");
+  // No header at all: hand it back untouched so the caller reports the real
+  // problem rather than an empty string.
+  if (start === -1) return text;
+  const trimmed = text.slice(start);
+  // A trailing fence is the only thing that can follow the diff in a fenced
+  // answer; anything else is left alone, since git tolerates trailing noise
+  // far better than it tolerates a truncated hunk.
+  const closing = trimmed.indexOf("\n```");
+  return closing === -1 ? trimmed : trimmed.slice(0, closing + 1);
+}
+
 export function patchTouchedPaths(patch: string): ReadonlyArray<string> {
   const paths = new Set<string>();
   const headerPattern = /^diff --git a\/(.+?) b\/(.+?)$/gm;

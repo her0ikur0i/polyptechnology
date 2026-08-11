@@ -49,7 +49,15 @@ export class NodeWorkspaceProvisioner {
           scripts: {
             typecheck: "tsc --noEmit",
             "format:check": "prettier --check .",
-            test: "node --test 'tests/*.test.js'",
+            // The old value globbed `tests/*.test.js` in a TypeScript project,
+            // so it matched nothing -- and `node --test` exits 0 when it
+            // matches nothing, meaning verification would have reported a pass
+            // having run zero tests. Node 22 executes .ts directly via type
+            // stripping, so tests are written in the same language as the code
+            // they cover. Quoted, so Node expands the glob rather than the
+            // shell: an unquoted glob that matches nothing is passed through
+            // literally and fails confusingly.
+            test: "node --test 'tests/*.test.ts'",
           },
           devDependencies: {
             typescript: "^5.9.0",
@@ -71,7 +79,19 @@ export class NodeWorkspaceProvisioner {
             module: "NodeNext",
             moduleResolution: "NodeNext",
             noEmit: true,
+            // Node executes .ts by stripping types, and its ESM resolver wants
+            // the real file extension in an import specifier. Without this,
+            // `import { slugify } from "../src/index.ts"` -- the only form
+            // that actually runs -- is a type error, so `typecheck` and `test`
+            // would demand different code from each other.
+            allowImportingTsExtensions: true,
           },
+          // Explicit, because with neither key TypeScript reported the include
+          // set as ["**/*"] and refused the scaffold outright: TS18003, "no
+          // inputs were found". Naming the two source directories also keeps
+          // node_modules out of the program.
+          include: ["src", "tests"],
+          exclude: ["node_modules"],
         },
         null,
         2,
@@ -81,10 +101,28 @@ export class NodeWorkspaceProvisioner {
       join(repoPath, "README.md"),
       `# ${blueprint.displayName}\n\n${blueprint.requirements.map((r) => `- ${r}`).join("\n")}\n`,
     );
+    // A scaffold that cannot pass its own gates makes every generated patch
+    // look wrong. This one is deliberately minimal and deliberately green:
+    // one real TypeScript module and one real test over it, so a later
+    // verification failure is the patch's fault and nothing else's.
+    await mkdir(join(repoPath, "src"), { recursive: true });
+    await writeFile(
+      join(repoPath, "src", "index.ts"),
+      `export const projectName = ${JSON.stringify(blueprint.displayName)};\n`,
+    );
     await mkdir(join(repoPath, "tests"), { recursive: true });
     await writeFile(
-      join(repoPath, "tests", "scaffold.test.js"),
-      'import test from "node:test";\ntest("scaffold placeholder", () => {});\n',
+      join(repoPath, "tests", "scaffold.test.ts"),
+      [
+        'import test from "node:test";',
+        'import assert from "node:assert/strict";',
+        'import { projectName } from "../src/index.ts";',
+        "",
+        'test("the scaffold builds, typechecks and runs", () => {',
+        '  assert.equal(typeof projectName, "string");',
+        "});",
+        "",
+      ].join("\n"),
     );
     await writeFile(join(repoPath, ".gitignore"), "node_modules/\n");
 
@@ -100,9 +138,43 @@ export class NodeWorkspaceProvisioner {
     // node_modules must already exist before any task reaches it. This is
     // the host-side half of the contract
     // src/operations/verification-image-policy.ts documents.
+    //
+    // HOME and the npm cache are pinned inside the workspaces root rather than
+    // inherited. The Control API runs as `polyp-factory`, whose home is a
+    // root-owned directory it cannot write, so an inherited HOME makes npm
+    // fail on its own cache -- a failure that reads as a network or registry
+    // problem and is neither. Owning the cache location makes provisioning
+    // independent of how the service user's home happens to be configured.
+    const npmCache = join(this.workspacesRoot, ".npm-cache");
+    await mkdir(npmCache, { recursive: true });
     await run("npm", ["install", "--no-audit", "--no-fund"], {
       cwd: repoPath,
+      env: {
+        ...process.env,
+        HOME: this.workspacesRoot,
+        npm_config_cache: npmCache,
+        npm_config_update_notifier: "false",
+      },
     });
+    // Format the scaffold with the project's own prettier, now that it is
+    // installed, instead of hand-matching its output above.
+    //
+    // `format:check` is a real verification gate, so a scaffold that does not
+    // satisfy it fails every patch before the patch is even considered. Hand-
+    // formatting is the wrong way to guarantee that: `JSON.stringify(…, 2)`
+    // expands every array onto its own line and prettier collapses short ones,
+    // so tsconfig.json was rejected by the very tool the project ships with.
+    // Running the formatter is the only way to be certain the two agree, and
+    // it keeps being certain when this scaffold is edited later.
+    await run("npx", ["prettier", "--write", "--log-level", "warn", "."], {
+      cwd: repoPath,
+      env: {
+        ...process.env,
+        HOME: this.workspacesRoot,
+        npm_config_cache: npmCache,
+      },
+    });
+
     await run("git", ["add", "-A"], { cwd: repoPath });
     await run("git", ["commit", "-q", "-m", "Initial scaffold"], {
       cwd: repoPath,

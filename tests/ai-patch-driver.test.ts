@@ -64,7 +64,24 @@ const noopApplier: PatchApplier = {
   async apply() {
     return { changedLines: 2 };
   },
+  async revert() {},
 };
+
+// Records whether the workspace was returned to its committed state, which is
+// what stops a rejected patch becoming the baseline the next attempt patches
+// on top of.
+function recordingApplier() {
+  const reverted: string[] = [];
+  const applier: PatchApplier = {
+    async apply() {
+      return { changedLines: 2 };
+    },
+    async revert(workspaceRoot) {
+      reverted.push(workspaceRoot);
+    },
+  };
+  return { applier, reverted };
+}
 
 const noopCopier = { async copy() {} };
 
@@ -200,6 +217,62 @@ test("failed verification records a rejected artifact and escalates", async () =
   assert.equal(result.decision.action, "escalate");
   assert.equal(recorded[0]?.status, "rejected");
   assert.equal(recorded[0]?.patchSha256, null);
+});
+
+// A rejected patch used to stay applied to the project's real repository. The
+// next attempt -- escalated to a different provider precisely because the
+// first one failed -- would then build its diff against a tree already
+// carrying that failure, `git apply` would fail on context, and a recoverable
+// rejection would become a stuck task.
+test("a rejected patch is reverted, so the next attempt starts from a clean tree", async () => {
+  const ledger = new MemoryAttemptLedger();
+  const gateway = new AiGateway(ledger, [new FakeDeepSeek(validPatch)]);
+  const { applier, reverted } = recordingApplier();
+  const driver = new AiPatchExecutorDriver(
+    gateway,
+    applier,
+    workerRunner(1),
+    { async record() {} },
+    noopCopier,
+  );
+  const result = await driver.run({
+    taskId: "t1",
+    gatewayRequest,
+    route,
+    ownedPaths: ["src/policy/**"],
+    workspaceRoot: "/tmp/project-repo",
+    verifyJob: realWorkspaceJob(),
+    fallbackReason: null,
+  });
+  assert.equal(result.status, "rejected");
+  assert.deepEqual(reverted, ["/tmp/project-repo"]);
+});
+
+test("an accepted patch is left in place", async () => {
+  const ledger = new MemoryAttemptLedger();
+  const gateway = new AiGateway(ledger, [new FakeDeepSeek(validPatch)]);
+  const { applier, reverted } = recordingApplier();
+  const driver = new AiPatchExecutorDriver(
+    gateway,
+    applier,
+    workerRunner(0),
+    { async record() {} },
+    noopCopier,
+  );
+  const job = realWorkspaceJob();
+  // A successful run must find every artifact it declared.
+  writeFileSync(join(job.workspaceRoot, "verification-report.json"), "{}");
+  const result = await driver.run({
+    taskId: "t1",
+    gatewayRequest,
+    route,
+    ownedPaths: ["src/policy/**"],
+    workspaceRoot: "/tmp/project-repo",
+    verifyJob: job,
+    fallbackReason: null,
+  });
+  assert.equal(result.status, "accepted");
+  assert.deepEqual(reverted, []);
 });
 
 test("a patch outside the owned-paths manifest is rejected before verification runs", async () => {

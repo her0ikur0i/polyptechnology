@@ -30,6 +30,7 @@ npm run verify     # typecheck + backend tests + dashboard tests + dashboard bui
 ```bash
 TEST_DATABASE_URL=postgresql://postgres:contract011test@127.0.0.1:55433/polyp_test \
 TEST_WORKER_IMAGE=postgres@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193 \
+TEST_SCAFFOLD_GATES=enabled \
 npm test
 ```
 

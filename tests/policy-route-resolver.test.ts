@@ -3,6 +3,7 @@ import test from "node:test";
 import { PostgresPolicyRouteResolver } from "../src/operations/policy-route-resolver.js";
 import type { RuntimePolicy } from "../src/policy/types.js";
 import type { ModelRoute } from "../src/gateway/types.js";
+import { modelRoutes } from "../src/gateway/model-policy.js";
 
 const fallback: ModelRoute = {
   provider: "deepseek",
@@ -88,9 +89,42 @@ test("non-programming task classes always use the static fallback route", async 
   assert.deepEqual(route, fallback);
 });
 
-test("no active policy falls back to the static route", async () => {
+// With no owner policy -- the normal state; staging has never had one -- the
+// resolver used to return the caller's fallback on every attempt forever, so
+// the static chain's tiers two through five were unreachable and a generation
+// task ran deepseek-v4-flash six times. It now walks the chain.
+test("no active policy starts at the first tier of the static chain", async () => {
   const route = await resolver({}).resolve("bulk_code", "t1", fallback);
-  assert.deepEqual(route, fallback);
+  assert.deepEqual(route, modelRoutes("bulk_code")[0]);
+});
+
+test("no active policy escalates past a tier this task already tried", async () => {
+  const route = await resolver({
+    artifacts: [
+      {
+        taskId: "t1",
+        providerId: "deepseek",
+        requestedModelId: "deepseek-v4-flash",
+        status: "rejected",
+        reason: "verification_failed",
+      },
+    ],
+  }).resolve("bulk_code", "t1", fallback);
+  assert.deepEqual(route, modelRoutes("bulk_code")[1]);
+});
+
+test("no active policy stays on the last tier once every tier has been tried", async () => {
+  const chain = modelRoutes("bulk_code");
+  const route = await resolver({
+    artifacts: chain.map((tier) => ({
+      taskId: "t1",
+      providerId: tier.provider,
+      requestedModelId: tier.requestedModelId,
+      status: "rejected" as const,
+      reason: "verification_failed",
+    })),
+  }).resolve("bulk_code", "t1", fallback);
+  assert.deepEqual(route, chain[chain.length - 1]);
 });
 
 test("an active policy with an available first-priority route is used over the static fallback", async () => {
@@ -182,6 +216,9 @@ test("a policyStore that throws falls back to the static route rather than faili
     },
     "test-policy",
   );
+  // A policy store that is down must not fail the task; it degrades to the
+  // static chain, which is the behaviour that existed before the owner policy
+  // engine was added.
   const route = await flaky.resolve("bulk_code", "t1", fallback);
-  assert.deepEqual(route, fallback);
+  assert.deepEqual(route, modelRoutes("bulk_code")[0]);
 });

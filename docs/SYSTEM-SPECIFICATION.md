@@ -67,10 +67,11 @@ Cloudflare Access + Tunnel
             |
    +--------+---------+----------------+
    |                  |                |
-PostgreSQL       Redis/BullMQ    Artifact storage
-source of truth  durable jobs    checksummed files
-   |                  |
-   +--------+---------+
+PostgreSQL                       Artifact storage
+source of truth                  checksummed files
+durable jobs
+   |
+   +--------+
             |
    Persistent Orchestrator
             |
@@ -82,23 +83,42 @@ source of truth  durable jobs    checksummed files
 ```
 
 Initial deployment remains one host. Processes are independently supervised:
-control API/frontend, orchestrator worker, scheduler, PostgreSQL, Redis, and
-Cloudflare Tunnel. Separation into services occurs only after measured need.
+control API/frontend, orchestrator worker, PostgreSQL, and Cloudflare Tunnel.
+Separation into services occurs only after measured need.
+
+**Corrected 2026-08-11.** This diagram previously showed `Redis/BullMQ` as the
+durable job substrate, and the paragraph above listed Redis and a separate
+scheduler as supervised processes. **None of the three were ever built.** The
+durable job engine is `src/work/**` on PostgreSQL — leases with fencing tokens,
+heartbeats, attempt ordinals and state transitions in SQL — and scheduling is
+the supervisor's own loop. The correction is recorded rather than made silently
+because a specification that describes absent infrastructure sends the next
+reader looking for it.
 
 ## 6. Technology baseline
 
+**In use today**, verified against `package.json` on 2026-08-11:
+
 - Node.js 22 LTS, TypeScript strict mode, ESM.
-- Express 5 retained for the API unless evidence requires change.
-- React + TypeScript + Vite for the dashboard SPA; no SSR requirement.
-- TanStack Query, React Router, React Hook Form, Zod.
-- Tailwind plus accessible Radix/shadcn primitives; Recharts for simple charts.
-- PostgreSQL as durable state; Drizzle-style explicit migrations/data access.
-- Redis + BullMQ for durable asynchronous jobs, retries, rate limits, scheduling.
-- Pino structured logs, OpenTelemetry traces/metrics, `journald`/rotated container
-  logs. SSE for browser event delivery; WebSocket only if bidirectional realtime
-  requirements later prove necessary.
-- Docker/Compose for process and project isolation; no Kubernetes initially.
+- Express 5 for the API, with `express-rate-limit` and `multer`.
+- React 19 + TypeScript + Vite for the dashboard SPA; React Router; no SSR.
+- PostgreSQL as durable state, through raw `pg` with explicit SQL and
+  forward-only numbered migrations. **No ORM** — what runs is what is written.
+- PostgreSQL also carries durable asynchronous work (`src/work/**`): leases,
+  fencing tokens, heartbeats, attempt ordinals and retry backoff.
+- Docker for process and project isolation; no Kubernetes, initially or later.
 - Canvas 2D pseudo-3D rendering for Factory Live View.
+- SSE for browser event delivery; WebSocket only if bidirectional realtime
+  requirements later prove necessary.
+
+**Named here previously and never adopted** — recorded so nobody goes looking
+for them, and so choosing one later is a decision rather than a rediscovery:
+Redis and BullMQ (PostgreSQL carries the work engine instead), TanStack Query,
+React Hook Form, Zod, Tailwind, Radix/shadcn, Recharts, Drizzle, Pino, and
+OpenTelemetry. Logging is structured JSON to `journald`.
+
+Adopting any of them is a normal decision under goal 3 — do not reinvent the
+wheel — and needs only a contract, not an amendment to this specification.
 
 ## 7. Core bounded modules
 

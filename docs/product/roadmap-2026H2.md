@@ -180,7 +180,68 @@ CONTRACT-018 — the dashboard chat window is the second seat on the same
 conversation path, so it should be built on the fixed mechanism, not the
 workaround.
 
+## Re-sequenced 2026-08-11 — the backend is proven before any screen is built
+
+The owner reviewed a rendered mockup of the whole dashboard and gave a
+direction that changes the order of everything below it:
+
+> "backend first, make sure everything connected and the pipeline works and
+> wild tested it until success generating dummy project, then move to frontend
+> and make sure every function and feature works"
+
+**The staging database agrees with them.** Queried the same day:
+
+| Question                            | Answer                                                |
+| ----------------------------------- | ----------------------------------------------------- |
+| Generated projects on staging       | 7                                                     |
+| …in a state past `idea`             | **0**                                                 |
+| Conversation proposals ever created | **0**                                                 |
+| Generation tasks ever executed      | **0**                                                 |
+| Drivers that have ever run          | `conversation_reply` (24), `deterministic_sha256` (2) |
+
+Every project in that database is a shell created when a conversation started.
+**Nothing has ever crossed from a conversation into a generated product.** The
+pipeline is written, unit-tested and reviewed end to end; it has never been
+_run_ end to end. Goal 1 — the factory that generates anything from a landing
+page to a complex system — is therefore unevidenced, and CONTRACT-013's
+"complete generation pipeline" describes code, not a demonstrated capability.
+
+That is the same defect shape CONTRACT-017A closed at M5: every test passing
+while the feature does nothing. It is worth far more to find it now than after
+six screens have been built to operate it.
+
+So **CONTRACT-017C and CONTRACT-017D are inserted here**, and everything from
+CONTRACT-018 onward keeps its content and moves down the queue.
+
+### CONTRACT-017C — Generate a dummy project, for real
+
+**Objective.** Drive conversation → proposal → approval → blueprint →
+workspace → patch → verify → publish against the real staging database until a
+generated project reaches a terminal successful state. Every defect the drill
+surfaces is fixed inside this contract; the drill then runs again.
+
+The gate is not a passing test. It is **a project on disk that the factory
+built**, with its evidence chain intact and its spend accounted for in the
+ledger.
+
+**Excludes.** Anything in the dashboard. Multi-stack generation stays with
+CONTRACT-021 — the dummy project is Node/TS, because that is what
+`NodeWorkspaceProvisioner` supports today and proving the pipeline must not be
+entangled with widening it.
+
+### CONTRACT-017D — The same drill, reproducible and unattended
+
+**Objective.** A pipeline that has worked once is not a pipeline. The drill
+runs again from a clean database, unattended, and produces the same terminal
+result. Whatever 017C had to do by hand becomes something the system does.
+
 ## CONTRACT-018 — Chat experience on the streaming foundation
+
+**Re-sequenced after 017C/017D.** Content unchanged; it now builds on a
+pipeline that has been demonstrated rather than one that has been reviewed.
+Two owner decisions from its M0 apply when it starts: the left rail begins
+collapsed on every screen size, and per-message cost stays visible under every
+reply rather than hiding behind a hover.
 
 **Objective.** What CONTRACT-016 was originally going to carry, now built on the
 foundation it laid: the Control API SSE route with resume-from-last-chunk, the
@@ -236,10 +297,32 @@ parallel semantic DOM tree — all specified in
   `docs/contracts/CONTRACT-010/acceptance-matrix.md` to state what is actually
   true today; this contract is what earns the `Verified` back.
 
-**Excludes.** Any change to the renderer's visual language — that belongs to
-CONTRACT-018, and keeping them apart means a rendering regression and a
-producer bug can never be confused for one another. Replay of historical
-streams beyond what the current client already supports.
+**Amended 2026-08-11 — the renderer is in scope after all, and the reference is
+named.** On reviewing the mockup the owner asked for Factory Live to look like
+`references/neural-reference-3d.html` in their own `her0ikur0i/polyptech`
+repository, plus Gource. That reference is not a new direction: it is the
+"reviewed Polyptech reference" §21 was written _from_, and today's renderer is
+a flat 2D graph that does not resemble it.
+
+- **The mesh.** A bright core, clusters radiating outward on their own axes,
+  multi-segment trunks, subgroups and leaf nodes, depth-sorted edges, and
+  drag-to-rotate with inertia — all Canvas 2D pseudo-3D, as §21 requires, with
+  no 3D library added.
+- **The particles carry meaning, as §21 already states**: outward means
+  delegation, returning means evidence. The reference recurses a particle into
+  each child on arrival, which is exactly delegation fanning out.
+- **Gource's contribution is growth over time.** The tree gains nodes as files
+  are actually written by a run, rather than being drawn once at its final
+  size. This is the part that makes it a view of work happening rather than a
+  diagram of structure.
+
+Frame budget, caps, DPR limits, pause-when-hidden and the reduced-motion static
+fallback all still apply — the reference is a look, not a licence to drop the
+performance contract on a 2 vCPU host.
+
+**Excludes.** The dashboard shell's visual language, which stays with
+CONTRACT-020. Replay of historical streams beyond what the current client
+already supports.
 
 ## CONTRACT-020 — Design system and shell
 
