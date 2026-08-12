@@ -147,6 +147,22 @@ export class NodeWorkspaceProvisioner {
     // independent of how the service user's home happens to be configured.
     const npmCache = join(this.workspacesRoot, ".npm-cache");
     await mkdir(npmCache, { recursive: true });
+    // npm_config_production/--omit=dev must be forced off, explicitly, not
+    // merely left unset. `polyp-sequence.service` runs with NODE_ENV=production
+    // (deploy/systemd/polyp-sequence.service), and `...process.env` below
+    // inherits it straight into this child process; npm reads that as "skip
+    // devDependencies" with no warning. Every dependency this scaffold has --
+    // typescript, prettier, @types/node -- is a devDependency, since none of
+    // them ship in the generated project's own runtime. Under NODE_ENV=production
+    // `npm install` installs none of them, silently leaves node_modules holding
+    // only an empty `@types` stub, and every subsequent `tsc --noEmit` in the
+    // verify sandbox fails with "tsc: not found" -- indistinguishable, in
+    // `provider_artifacts.reason`, from a real rejection. Found in
+    // CONTRACT-017D M2: a deep-drill run walked every tier to claude-sonnet-5
+    // and every one of the first four was actually this, not a real verdict.
+    // `npm_config_include=dev` overrides npm's production-mode omission
+    // regardless of NODE_ENV; deleting NODE_ENV itself would be fragile if npm
+    // ever adds another production-mode signal.
     await run("npm", ["install", "--no-audit", "--no-fund"], {
       cwd: repoPath,
       env: {
@@ -154,6 +170,7 @@ export class NodeWorkspaceProvisioner {
         HOME: this.workspacesRoot,
         npm_config_cache: npmCache,
         npm_config_update_notifier: "false",
+        npm_config_include: "dev",
       },
     });
     // Format the scaffold with the project's own prettier, now that it is

@@ -16,6 +16,7 @@ import type {
   ManagedProviderAdapter,
   ModelRoute,
 } from "../src/gateway/types.js";
+import { STRANDED_ATTEMPT_CODE } from "../src/gateway/types.js";
 const attribution = {
   projectId: "p",
   contractId: "CONTRACT-005",
@@ -247,4 +248,49 @@ test("idempotency mismatch and unverified model fail closed", async () => {
       error instanceof GatewayInvocationError &&
       error.attempt.outcome === "failed",
   );
+});
+
+// An attempt whose process died between dispatch and verdict is settled by
+// nobody -- which is how twenty Codex attempts came to sit in `dispatched` on
+// staging, each holding a reservation and each denying the escalation chain the
+// evidence it reads. reclaimStranded() is the ledger's counterpart to the work
+// engine's reclaimExpired().
+test("a stranded dispatched attempt is settled as unknown, and a live one is not", async () => {
+  const ledger = new MemoryAttemptLedger();
+  const stranded = {
+    id: "11111111-1111-4111-8111-111111111111",
+    idempotencyKey: "stranded-attempt-1",
+    requestHash: "a".repeat(64),
+    outcome: "reserved" as const,
+    route: modelRoutes("bulk_code")[0]!,
+    attribution,
+    policyVersion: MODEL_POLICY_VERSION,
+    reservedCostUsdMicros: 500_000,
+    createdAt: new Date(),
+  };
+  const live = { ...stranded, id: "22222222-2222-4222-8222-222222222222" };
+  live.idempotencyKey = "live-attempt-1";
+  await ledger.reserve(stranded);
+  await ledger.reserve(live);
+  await ledger.dispatched(stranded.id);
+  await ledger.dispatched(live.id);
+  // Well past the Codex CLI's ten-minute ceiling: no process is still working
+  // on this one. The live attempt was dispatched a moment ago.
+  ledger.setDispatchedAt(stranded.id, new Date(Date.now() - 3_600_000));
+
+  assert.deepEqual(await ledger.reclaimStranded(1_800_000), [stranded.id]);
+  const settled = await ledger.getByIdempotency(stranded.idempotencyKey);
+  // Unknown, not failed: a killed process cannot say whether the provider ran
+  // or billed, so the reservation stays held for reconciliation with evidence.
+  assert.equal(settled?.outcome, "outcome_unknown");
+  assert.equal(settled?.failureCode, STRANDED_ATTEMPT_CODE);
+  assert.equal(
+    (await ledger.getByIdempotency(live.idempotencyKey))?.outcome,
+    "dispatched",
+  );
+  // Reclaiming twice must not re-settle what is already terminal.
+  assert.deepEqual(await ledger.reclaimStranded(1_800_000), []);
+  // A horizon short enough to catch attempts that are merely slow is refused
+  // outright rather than trusted to a caller's arithmetic.
+  await assert.rejects(ledger.reclaimStranded(5_000), /horizon/);
 });

@@ -96,9 +96,36 @@ attempt budget — which is a different problem from the plumbing 017C fixed.
 Revert the commit. Everything here is additive to a pipeline that already
 works on simple briefs.
 
+## Amendment 1 — `deploy/**` (2026-08-11, M1)
+
+M1's root cause was a systemd unit setting: `TasksMax=64` was one task short of
+a single `codex exec`, so the cgroup ran out of task slots mid-attempt and the
+next `fork(2)` killed the supervisor. `deploy/systemd/polyp-sequence.service`
+is the repository's copy of that unit, and fixing the crash without it would
+leave the fix on the host alone, to be undone by the next deployment.
+
+`deploy/**` is therefore part of this contract's File ownership. Taken under
+the authority the owner granted on 2026-08-11 rather than raised as a question,
+since it is scope bookkeeping for work the contract already owns.
+
+## Amendment 2 — provisioning's `NODE_ENV=production` defect (2026-08-12, M2)
+
+M2's own gate ("a run that exhausts its earlier tiers reaches
+`claude-sonnet-5`") could not be honestly claimed without also fixing what M2
+found while proving it: `NodeWorkspaceProvisioner.provision()` silently
+skipped every devDependency under `NODE_ENV=production` — the real production
+supervisor's own environment — leaving every generated scaffold without
+`tsc`. This is squarely inside "Reaching the last tier," not the "Out of
+scope: making models better at hard briefs" exclusion — it is the same class
+of finding as CONTRACT-017C's `/tmp` bug: the gate wasn't judging code, it was
+failing before it saw any. `src/**` and `tests/**` already cover the files
+this touched (`workspace-provisioner.ts`,
+`scaffold-gates.integration.test.ts`); no new File ownership needed.
+
 ## File ownership
 
 - `docs/contracts/CONTRACT-017D/**`
+- `deploy/**`
 - `docs/product/**`
 - `docs/architecture/**`
 - `docs/RESUME.md`

@@ -80,7 +80,30 @@ ReadWritePaths=/var/lib/polyp-ai-factory /var/log/polyp-ai-factory /root/polypte
 # before the child could answer.
 MemoryMax=1500M
 CPUQuota=100%
-TasksMax=64
+# Raised from 64 on 2026-08-11, after measuring rather than guessing.
+#
+# 64 was one task short of a single Codex call. `codex exec` is a Rust binary
+# with a threaded async runtime: one call, measured in its own scope, peaks at
+# **57 tasks**. This supervisor idles at 11. 11 + 57 is past 64, so the cgroup
+# ran out of task slots partway through every Codex attempt, and the next
+# fork(2) in the process returned EAGAIN.
+#
+# What forked next was the watchdog ping, and `spawn()` failing raised an
+# unhandled 'error' event that killed the supervisor outright:
+#
+#   Error: spawn /usr/bin/systemd-notify EAGAIN
+#
+# The process died mid-attempt, so the gateway attempt in flight stayed
+# `dispatched` with no verdict, the lease expired ~40s later, and the work
+# engine burned the next attempt on the same dead end. That is the whole
+# explanation for the 20 stranded Codex attempts on staging holding $10.00 in
+# reservations -- and for why the escalation chain never reached its last tier.
+#
+# 512 is not a capacity plan; MemoryMax is the real resource bound here. It is
+# a fork-bomb ceiling with room for a Codex call, a Docker verify, and the
+# ordinary Node children to coexist without any of them starving a fork the
+# process needs to stay alive.
+TasksMax=512
 StateDirectory=polyp-ai-factory
 LogsDirectory=polyp-ai-factory
 UMask=0077

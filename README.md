@@ -63,11 +63,15 @@ verification pass inside a network-free Docker sandbox, and a commit in the
 generated project's own repository — with nothing human after the brief.
 
 Work routes `deepseek → codex → claude`, cheapest viable tier first, escalating
-only on verified failure evidence. Both directions are observed: runs that
-accept on the first tier, and runs that walk to a fallback before accepting.
+only on verified failure evidence. **Both directions are proven**, not just
+observed: a clean-database drill has walked the whole chain to `claude-sonnet-5`
+after every earlier tier was legitimately rejected, and separately produced an
+accepted, verified, published result on a middle tier without ever needing the
+last one. Run reports name every tier a run actually walked, in order, not
+just the model that happened to cost the most.
 
-Two things that took nine defects to learn, and that anything touching this
-path should know:
+Three things this pipeline had to learn the hard way, and that anything
+touching this path should know:
 
 - **A green test suite proves the units agree with their tests, not that the
   system works.** The verification sandbox in this repository had never seen a
@@ -79,6 +83,15 @@ path should know:
   are subscription CLIs. The Claude CLI reports what its tokens _would_ cost,
   and banking that made 97% of recorded spend imaginary — which then exhausted
   real budget scopes. See `src/gateway/provider-billing.ts`.
+- **An ambient environment variable can fail every generated project the same
+  way and still look like the models' fault.** The supervisor runs with
+  `NODE_ENV=production`, and `npm install` reads that as "skip
+  devDependencies" — silently, for every scaffold, since `typescript` and
+  `prettier` are entirely devDependencies. Every rejection read as a real
+  code judgement in `provider_artifacts.reason`; none of them were. Three
+  independent, faithful reproduction attempts of the provisioning call all
+  succeeded before the one ambient variable that actually mattered was
+  included. See `docs/contracts/CONTRACT-017D/evidence/M2-chain-reachable-and-a-third-defect.md`.
 
 ## Operating it
 

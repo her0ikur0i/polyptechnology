@@ -6,6 +6,7 @@ import type {
   NormalizedUsage,
   AttemptVerification,
 } from "./types.js";
+import { STRANDED_ATTEMPT_CODE } from "./types.js";
 type Row = {
   id: string;
   idempotency_key: string;
@@ -270,6 +271,31 @@ export class PostgresAttemptLedger implements AttemptLedger {
       [key],
     );
     return result.rowCount ? mapped(result.rows[0]!) : undefined;
+  }
+  // See AttemptLedger.reclaimStranded() for why this exists.
+  //
+  // The horizon is a wall-clock one because there is nothing better to key on:
+  // an attempt row records no worker identity, so "is anyone still working on
+  // this?" cannot be asked directly. What bounds it instead is that every
+  // adapter call is itself bounded -- the longest is the Codex CLI's ten
+  // minutes -- so an attempt still `dispatched` well past that has no process
+  // behind it. The caller passes a horizon several times that, and the only
+  // cost of being wrong is that the owning process's own `succeed()`/`reject()`
+  // then throws and its task retries, which is a bounded, visible failure
+  // rather than a corrupted ledger.
+  //
+  // `dispatched_at` is deliberately the clock, not `created_at`: the gap
+  // between reserving and dispatching is a single UPDATE, but an attempt that
+  // failed *before* dispatch is settled by fail() and is not this method's
+  // business.
+  async reclaimStranded(olderThanMs: number): Promise<ReadonlyArray<string>> {
+    if (!Number.isSafeInteger(olderThanMs) || olderThanMs < 60_000)
+      throw new Error("invalid stranded attempt horizon");
+    const result = await this.pool.query<{ id: string }>(
+      "UPDATE ai_gateway_attempts SET outcome='outcome_unknown',failure_code=$2,finalized_at=CURRENT_TIMESTAMP WHERE outcome='dispatched' AND dispatched_at<=CURRENT_TIMESTAMP-($1*interval '1 millisecond') RETURNING id",
+      [olderThanMs, STRANDED_ATTEMPT_CODE],
+    );
+    return result.rows.map((row) => row.id);
   }
   async reconcileUnknownAsFailed(
     id: string,

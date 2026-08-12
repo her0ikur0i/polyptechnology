@@ -7,18 +7,20 @@ repository is the truth.
 
 ## Current state
 
-Contracts 001–017, 017A, 017B and 017C are all closed and pushed.
-**`CONTRACT-017C` (the factory generates software) closed on 2026-08-11** with
-406 backend tests passing and zero skipped, 38 dashboard tests, and three
-security reviews run before their pushes — two of which found real defects in
-this contract's own code.
+Contracts 001–017, 017A, 017B, 017C and 017D are all closed and pushed.
+**`CONTRACT-017D` (the drill, reproducible and unattended) closed on
+2026-08-12** with 414 backend tests passing and zero skipped, 38 dashboard
+tests, and a security review with no findings run before the push.
 
-**The factory now generates software end to end**, unattended after the brief:
-conversation → proposal → approval → blueprint → workspace → generation →
-verification in a network-free Docker sandbox → commit. Work routes
-`deepseek → codex → claude`, cheapest tier first, and both directions have been
-observed. Telegram remains a working two-way control surface, now naming
-projects correctly and reporting only money that was actually charged.
+**The factory now generates software end to end, and the escalation chain is
+proven in both directions on real, paid drills**: a run that exhausts every
+earlier tier reaching `claude-sonnet-5`, and a run that accepts on a middle
+tier without ever needing the last one. Work routes
+`deepseek → codex → claude`, cheapest tier first. Telegram reports now name
+every tier a run actually walked, not just the model that cost the most.
+Two clean-database drills, run independently, produced identical terminal
+results. $15.00 in stranded reservations were reconciled with real,
+re-hashable evidence.
 
 ## Closed: CONTRACT-017B — truthful reporting and a real backoff
 
@@ -81,21 +83,50 @@ must not be re-learned:
   costs were banked as spend (97% of the total) and exhausted real scopes.
   `src/gateway/provider-billing.ts` records who actually bills.
 
-## Next: CONTRACT-017D — the drill, reproducible and unattended
+## Closed: CONTRACT-017D — the drill, reproducible and unattended
 
-**M0 done, M1 next.** Charter at `docs/contracts/CONTRACT-017D/contract.md`.
+**CLOSED.** Charter and evidence in `docs/contracts/CONTRACT-017D/`. Opened
+because CONTRACT-017C's every success came from one brief — `slugify`, a
+single pure function — which proved the pipeline runs but not that it
+generalises. A harder brief (`moneybag`: several functions, real error
+cases, exact-accounting) failed on every tier, twice, in M0.
 
-**Read this before assuming the factory is finished.** Every success
-CONTRACT-017C recorded came from one brief — `slugify`, a single pure function
-in one file. A deliberately harder brief (`moneybag`: minor units, a parser
-that rejects bad input, arithmetic that throws on currency mismatch, an
-allocator that must not lose a cent) **failed on every tier, twice**.
+**M1 overturned M0's own framing.** The failure was never about model
+capability or attempt budget: **the supervisor was killing itself whenever
+Codex ran.** `TasksMax=64` was one task short of a single `codex exec`
+(measured: 57 tasks peak, against a supervisor idling at 11); the cgroup ran
+out of task slots mid-attempt, the next `fork(2)` returned `EAGAIN`, and the
+fork that failed was the watchdog ping — whose `spawn()` had no `'error'`
+listener, so an unhandled error killed the process outright, stranding the
+in-flight attempt forever. All twenty stranded rows were Codex; none was
+DeepSeek. Fixed: the watchdog ping can no longer kill the supervisor,
+`TasksMax` is 512, shutdown drains the in-flight attempt before `pool.end()`,
+and `AttemptLedger.reclaimStranded()` — the ledger's counterpart to the work
+engine's `reclaimExpired()` — settles anything still `dispatched` past 30
+minutes as `outcome_unknown`.
 
-**The gates were right to fail it.** `deepseek-v4-flash` and `deepseek-v4-pro`
-produced code that would not compile (`TS2578`); `codex:gpt-5.6-terra` produced
-code that failed 4 of its own 17 tests. No false negatives — which is the first
-real evidence that the verification chain rejects bad work, since in 017C it
-had never seen a file at all.
+**M2 found a second ceiling right next to the first, then a third defect
+while proving the fix.** The per-task budget scope was capped at $2.00 while
+each attempt reserves up to $0.50 and `maxAttempts: 6` — only 4 attempts
+were ever fundable, so `claude-sonnet-5` was structurally unreachable no
+matter how many attempts remained. Raised to $3.00. The first drill under
+the new cap then walked all five tiers for the first time ever — on
+evidence that wasn't real: `NODE_ENV=production` (the real supervisor's own
+environment) makes `npm install` silently skip every devDependency,
+so every generated scaffold had no `tsc` and four "rejections" were a
+shell "not found," not a verdict. Fixed with `npm_config_include: "dev"`
+and a regression test that sets the ambient variable explicitly. The
+second, honest drill run then produced the first-ever accepted, verified,
+published result for `moneybag` — on `codex:gpt-5.6-sol`, without ever
+needing `claude-sonnet-5`.
+
+**M3** made reports name every tier a run walked, in order, not just
+whichever attempt cost the most. **M4** ran the drill twice from
+genuinely clean, independent databases (fresh containers, fresh
+workspaces, throwaway supervisors) and got identical terminal results.
+**M5** reconciled $15.00 in stranded reservations with real,
+re-hashable evidence, leaving only the one attempt that actually reached
+a provider and needs an external check.
 
 Run the deep brief with:
 
@@ -104,32 +135,9 @@ DATABASE_URL=… PROJECT_WORKSPACES_ROOT=… \
   node --import tsx scripts/generation-drill.ts <label> deep
 ```
 
-What 017D owns, in order:
+## Next: CONTRACT-018 — chat experience
 
-1. **Codex attempts that never settle.** Three ended in `dispatched` — no
-   verdict, a leaked reservation, and no evidence for the escalation chain.
-2. **The chain still does not reach `claude-sonnet-5`.** With the stall fixed
-   it walks `flash → pro → terra → sol → sol` and exhausts `maxAttempts: 6`
-   before asking the strongest tier. Raise the budget or reorder; decide it
-   with data from a run where every attempt settles.
-3. **Escalation is invisible** in Telegram — a failure names one model while
-   the run walked four tiers.
-4. **Reproducibility** from a genuinely clean database, twice.
-5. **$11.70 held in stale reservations** from attempts stranded before 017C's
-   classification fix. Releasing them needs
-   `scripts/reconcile-provider-attempt.ts` and a real evidence SHA, which is
-   deliberately not invented; it blocks nothing, since each generation task
-   gets a fresh scope.
-
-**Already fixed here:** a tier that records no verdict is retried exactly once
-and then the chain moves on (it used to be retried until the task ran out of
-attempts), the Codex CLI timeout is ten minutes rather than five, and an empty
-model answer is reported as `empty_provider_response` instead of being folded
-into `invalid_provider_accounting`.
-
-## Deferred: CONTRACT-018 — chat experience
-
-**PAUSED behind 017C/017D**, content unchanged. Charter at
+Charter at
 `docs/contracts/CONTRACT-018/contract.md`; its M0 evidence records five owner
 decisions that carry forward and are **not re-asked**: the left rail starts
 collapsed on every screen, per-message cost stays visible, the palette is
@@ -158,27 +166,28 @@ node --import tsx scripts/resume-checkpoint.ts          # rewrite it
 node --import tsx scripts/resume-checkpoint.ts --check  # fail if stale
 ```
 
-<!-- resume:contract: CONTRACT-017D -->
+<!-- resume:contract: CONTRACT-018 -->
 <!-- resume:auto:start -->
 
 <!-- Generated by scripts/resume-checkpoint.ts. Do not hand-edit: run it. -->
 
-**Active contract: CONTRACT-017D** — 1 of 7 milestones evidenced, generated 2026-08-11.
+**Active contract: CONTRACT-018** — 1 of 8 milestones evidenced, generated 2026-08-12.
 
-| Milestone | Subject                                                                                              | State                              |
-| --------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| M0        | owner confirmation                                                                                   | done — `M0-deep-drill-findings.md` |
-| M1        | Codex attempts settle a verdict, always. No `dispatched` survivors                                   | **next**                           |
-| M2        | the whole chain is reachable within a task's attempt budget, proven by a run that reaches the final… | not started                        |
-| M3        | reports show the tiers a run actually walked                                                         | not started                        |
-| M4        | the drill runs from a clean database, twice, with the same result                                    | not started                        |
-| M5        | stale reservations reconciled with real evidence                                                     | not started                        |
-| M6        | README, security review, close                                                                       | not started                        |
+| Milestone | Subject                                                                 | State                             |
+| --------- | ----------------------------------------------------------------------- | --------------------------------- |
+| M0        | owner confirmation                                                      | done — `M0-owner-confirmation.md` |
+| M1        | Control API SSE route, resuming from a last-ordinal cursor              | **next**                          |
+| M2        | the client consumes it and renders progressively, including reconnect   | not started                       |
+| M3        | markdown and code rendering, proven non-injecting against hostile input | not started                       |
+| M4        | the composer                                                            | not started                       |
+| M5        | per-message model attribution and cost from the ledger                  | not started                       |
+| M6        | virtualized thread rendering                                            | not started                       |
+| M7        | live drill in the real dashboard, README, security review, close        | not started                       |
 
-- **HEAD:** `147b15d docs: close CONTRACT-017C and record the deep drill`
-- **Working tree:** 13 changed path(s) — expected while a contract is in flight, since this repository commits once per contract
-- **Last touched:** `docs/contracts/CONTRACT-017D/evidence/M0-deep-drill-findings.md` at 2026-08-11T14:46Z — if a session ended abruptly, work was here
-- **Next action:** M1 — Codex attempts settle a verdict, always. No `dispatched` survivors
+- **HEAD:** `b485a47 CONTRACT-017D M0: a harder brief, and what it exposed`
+- **Working tree:** 22 changed path(s) — expected while a contract is in flight, since this repository commits once per contract
+- **Last touched:** `docs/contracts/CONTRACT-017D/evidence/M6-close.md` at 2026-08-12T12:14Z — if a session ended abruptly, work was here
+- **Next action:** M1 — Control API SSE route, resuming from a last-ordinal cursor
 
 <!-- resume:auto:end -->
 

@@ -136,6 +136,11 @@ export class ManagedInvocationError extends Error {
     super(code);
   }
 }
+// The failure code a reclaimed attempt carries. Named once and shared, so the
+// ledger, the supervisor's log line and the tests cannot drift into three
+// spellings of the same event -- which is how four dead string comparisons got
+// into the gateway's catch block and stayed there.
+export const STRANDED_ATTEMPT_CODE = "attempt_stranded_no_verdict";
 export interface AttemptLedger {
   reserve(
     attempt: GatewayAttempt,
@@ -158,4 +163,25 @@ export interface AttemptLedger {
     providerRequestId?: string,
   ): Promise<GatewayAttempt>;
   getByIdempotency(key: string): Promise<GatewayAttempt | undefined>;
+  // Settle attempts that were dispatched and never came back, returning the
+  // ids settled.
+  //
+  // Every other transition here happens in the process that owns the attempt.
+  // That is exactly why this one is needed: if the process dies between
+  // `dispatched()` and its verdict, nothing in the system was ever going to
+  // finish the row. Twenty attempts sat in `dispatched` on staging for that
+  // reason, holding $10.00 in reservations, and each one also denied the
+  // escalation chain the evidence it reads to move to the next tier.
+  //
+  // The work engine already had this shape -- `reclaimExpired()` in
+  // src/work/postgres-repository.ts reclaims leases whose holder vanished. The
+  // ledger had no equivalent, so a crash was durable in the ledger and
+  // recoverable everywhere else.
+  //
+  // `outcome_unknown` is the honest verdict, not a convenient one: a killed
+  // process cannot say whether the provider ran, answered, or billed. That
+  // keeps the reservation held, which is the existing meaning of unknown, and
+  // leaves releasing the money to `reconcileUnknownAsFailed()` with real
+  // evidence.
+  reclaimStranded(olderThanMs: number): Promise<ReadonlyArray<string>>;
 }

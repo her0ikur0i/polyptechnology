@@ -247,6 +247,81 @@ test("an enormous error message cannot silence the report", async () => {
     assert.ok(String(message.body.text).length <= 4_000);
 });
 
+test("a failure report names every tier the run actually walked, in order", async () => {
+  const transport = new RecordingTransport();
+  const facts = {
+    usageFor: async () => ({}),
+    describe: async () => ({ kind: "Generation" as const }),
+    tiersFor: async () => [
+      { provider: "deepseek", model: "deepseek-v4-flash", status: "rejected" },
+      { provider: "codex", model: "gpt-5.6-terra", status: "rejected" },
+      { provider: "claude", model: "claude-sonnet-5", status: "rejected" },
+    ],
+  };
+  await new TelegramRunNotifier(
+    transport,
+    "chat-1",
+    facts as never,
+  ).taskFinished({
+    taskId: "task-1",
+    attemptOrdinal: 5,
+    outcome: "failed",
+    reason: "verification",
+  });
+
+  const text = textOf(transport);
+  // The old report named one model. This run walked three; a reader must be
+  // able to see all three, in the order they were tried, not just the last.
+  assert.ok(
+    text.includes(
+      "deepseek-v4-flash→rejected, gpt-5.6-terra→rejected, claude-sonnet-5→rejected",
+    ),
+  );
+});
+
+test("a single-tier run does not repeat itself with a redundant tier line", async () => {
+  const transport = new RecordingTransport();
+  const facts = {
+    usageFor: async () => ({}),
+    describe: async () => ({ kind: "Generation" as const }),
+    tiersFor: async () => [
+      { provider: "deepseek", model: "deepseek-v4-flash", status: "accepted" },
+    ],
+  };
+  await new TelegramRunNotifier(
+    transport,
+    "chat-1",
+    facts as never,
+  ).taskFinished({ taskId: "task-1", attemptOrdinal: 1, outcome: "succeeded" });
+
+  // One tier is already the whole story; a "tiers:" line here would say
+  // nothing the rest of the report had not already said.
+  assert.ok(!textOf(transport).includes("→"));
+});
+
+test("a facts object without tiersFor (an older stub) costs the tier line, not the report", async () => {
+  const transport = new RecordingTransport();
+  const facts = {
+    usageFor: async () => ({}),
+    describe: async () => ({ kind: "Generation" as const }),
+    // tiersFor deliberately absent -- calling it throws synchronously, the
+    // same hazard a synchronously-throwing describe() already covers above.
+  };
+  await new TelegramRunNotifier(
+    transport,
+    "chat-1",
+    facts as never,
+  ).taskFinished({
+    taskId: "task-1",
+    attemptOrdinal: 3,
+    outcome: "failed",
+    reason: "verification",
+  });
+
+  assert.equal(transport.sent.length, 1);
+  assert.ok(textOf(transport).startsWith("❌"));
+});
+
 test("a Telegram outage never propagates into the execution path", async () => {
   const transport = new RecordingTransport();
   transport.throwOnSend = true;

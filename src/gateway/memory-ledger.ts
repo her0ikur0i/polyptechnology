@@ -3,6 +3,7 @@ import type {
   GatewayAttempt,
   ManagedCompletion,
 } from "./types.js";
+import { STRANDED_ATTEMPT_CODE } from "./types.js";
 const clone = (attempt: GatewayAttempt): GatewayAttempt =>
   structuredClone(attempt);
 // The in-memory ledger the tests drive. It must agree with
@@ -22,6 +23,7 @@ const clone = (attempt: GatewayAttempt): GatewayAttempt =>
 export class MemoryAttemptLedger implements AttemptLedger {
   private readonly byId = new Map<string, GatewayAttempt>();
   private readonly byKey = new Map<string, string>();
+  private readonly dispatchedAt = new Map<string, Date>();
   async reserve(attempt: GatewayAttempt) {
     const id = this.byKey.get(attempt.idempotencyKey);
     if (id !== undefined) {
@@ -39,6 +41,7 @@ export class MemoryAttemptLedger implements AttemptLedger {
     if (attempt.outcome !== "reserved")
       throw new Error("attempt cannot dispatch");
     attempt.outcome = "dispatched";
+    this.dispatchedAt.set(attemptId, new Date());
   }
   async succeed(
     attemptId: string,
@@ -96,6 +99,42 @@ export class MemoryAttemptLedger implements AttemptLedger {
   async getByIdempotency(key: string) {
     const id = this.byKey.get(key);
     return id === undefined ? undefined : clone(this.byId.get(id)!);
+  }
+  // Mirrors PostgresAttemptLedger.reclaimStranded(), including the refusal of
+  // a horizon short enough to reclaim attempts that are merely slow.
+  //
+  // `dispatchedAt` is tracked only for this: the real table has a
+  // `dispatched_at` column and this ledger did not, so without it a test here
+  // would have had to measure staleness from `createdAt` and would have been
+  // asserting a rule the database does not implement.
+  async reclaimStranded(olderThanMs: number): Promise<ReadonlyArray<string>> {
+    if (!Number.isSafeInteger(olderThanMs) || olderThanMs < 60_000)
+      throw new Error("invalid stranded attempt horizon");
+    const cutoff = Date.now() - olderThanMs,
+      reclaimed: string[] = [];
+    for (const attempt of this.byId.values()) {
+      const dispatchedAt = this.dispatchedAt.get(attempt.id);
+      if (
+        attempt.outcome !== "dispatched" ||
+        dispatchedAt === undefined ||
+        dispatchedAt.getTime() > cutoff
+      )
+        continue;
+      Object.assign(attempt, {
+        outcome: "outcome_unknown" as const,
+        failureCode: STRANDED_ATTEMPT_CODE,
+        finalizedAt: new Date(),
+      });
+      reclaimed.push(attempt.id);
+    }
+    return reclaimed;
+  }
+  // Test seam, with no counterpart in the Postgres ledger because the database
+  // has a clock: it lets a test place an attempt's dispatch in the past instead
+  // of sleeping through the horizon.
+  setDispatchedAt(attemptId: string, at: Date) {
+    this.required(attemptId);
+    this.dispatchedAt.set(attemptId, at);
   }
   private required(id: string) {
     const attempt = this.byId.get(id);

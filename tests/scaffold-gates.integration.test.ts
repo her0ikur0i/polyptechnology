@@ -103,3 +103,45 @@ test(
     }
   },
 );
+
+// polyp-sequence.service runs with NODE_ENV=production (sequence.env), and
+// provision()'s npm install spreads `...process.env` into the child -- so
+// this is the actual ambient environment every real, supervisor-driven
+// provisioning runs under, not a synthetic edge case. Found in CONTRACT-017D
+// M2: under it, `npm install` silently omitted every devDependency --
+// typescript, prettier, @types/node, all of them, since the scaffold has no
+// runtime "dependencies" at all -- leaving node_modules holding only an
+// empty `@types` stub. Every subsequent `tsc --noEmit` in the verify sandbox
+// then failed with a shell "not found", recorded as `verification_failed`
+// and indistinguishable from a real rejection: a deep-drill run walked every
+// escalation tier to claude-sonnet-5 on evidence that was never real.
+test(
+  "provisioning under NODE_ENV=production still installs devDependencies",
+  { skip: !enabled },
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), "scaffold-gates-prod-"));
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const provisioner = new NodeWorkspaceProvisioner(root);
+      const { repoPath } = await provisioner.provision(
+        "8f14e45f-ceea-4167-a5d1-8ee1c0e0a0a1",
+        blueprint,
+      );
+      const result = await run("npm", ["run", "typecheck"], {
+        cwd: repoPath,
+        env: childEnv(),
+      }).catch((error: unknown) => error as Error & { stdout?: string });
+      assert.ok(
+        !(result instanceof Error),
+        `scaffold provisioned under NODE_ENV=production failed \`npm run typecheck\` (devDependencies missing?):\n${
+          (result as { stdout?: string; stderr?: string }).stdout ?? ""
+        }${(result as { stderr?: string }).stderr ?? ""}`,
+      );
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);

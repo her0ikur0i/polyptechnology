@@ -30,6 +30,7 @@ import { PostgresPolicyStore } from "../policy/postgres-policy-store.js";
 import { PROGRAMMING_POLICY_KEY } from "../policy/types.js";
 import { AiGateway } from "../gateway/gateway.js";
 import { PostgresAttemptLedger } from "../gateway/postgres-ledger.js";
+import { STRANDED_ATTEMPT_CODE } from "../gateway/types.js";
 import { DeepSeekAdapter } from "../gateway/deepseek-adapter.js";
 import { CodexCliAdapter, ClaudeCliAdapter } from "../gateway/cli-adapters.js";
 import { FileSecretResolver } from "../gateway/file-secret-resolver.js";
@@ -68,6 +69,9 @@ const databaseUrl = process.env.DATABASE_URL,
   telegramChatId = process.env.TELEGRAM_CHAT_ID,
   telegramUserId = process.env.TELEGRAM_USER_ID;
 if (!databaseUrl) throw new Error("DATABASE_URL is required");
+// How long an attempt may sit in `dispatched` before the ledger treats it as
+// abandoned. See AttemptLedger.reclaimStranded().
+const STRANDED_HORIZON_MS = 1_800_000;
 const ttlMs = 30_000,
   pool = new pg.Pool({ connectionString: databaseUrl, max: 6 }),
   // Not loadConfig(): that validates the HTTP server's settings and refuses to
@@ -101,7 +105,10 @@ const ttlMs = 30_000,
       : undefined,
   sequence = new PostgresSequenceStore(pool),
   work = new PostgresWorkRepository(pool),
-  aiGateway = new AiGateway(new PostgresAttemptLedger(pool), [
+  // Named rather than inlined into the gateway, because the loop below reaps
+  // stranded attempts through it.
+  attemptLedger = new PostgresAttemptLedger(pool),
+  aiGateway = new AiGateway(attemptLedger, [
     new DeepSeekAdapter(
       process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
       "secret://polyp/deepseek/api-key",
@@ -244,12 +251,49 @@ let stopping = false,
   lease: Awaited<ReturnType<PostgresSequenceStore["claim"]>> | undefined,
   wake: (() => void) | undefined,
   sequenceHeartbeat: NodeJS.Timeout | undefined,
-  heartbeatFailure: unknown;
+  heartbeatFailure: unknown,
+  // The attempt currently executing, so shutdown() can wait for it. See there.
+  inFlight: Promise<unknown> | undefined;
+// A watchdog ping must never be able to kill the process it is watching.
+//
+// This function spawns a child, and a spawn can fail. `ChildProcess` reports
+// that as an `'error'` event, and an `'error'` event with no listener is an
+// unhandled error in Node -- it terminates the process. So the liveness ping
+// was, by construction, a way to die.
+//
+// It happened. Twice in two minutes, on 2026-08-11:
+//
+//   Error: spawn /usr/bin/systemd-notify EAGAIN
+//     errno: -11, code: 'EAGAIN', spawnargs: [ 'WATCHDOG=1' ]
+//
+// EAGAIN from fork(2) means the cgroup had no task slots left: the unit ran
+// with `TasksMax=64` and `codex exec` -- a Rust binary with a threaded async
+// runtime -- takes the cgroup past it. So the supervisor died precisely while
+// a Codex attempt was in flight, and the gateway attempt it was in the middle
+// of stayed `dispatched` forever. Every one of the 20 stranded attempts on
+// staging is a Codex one; none is a DeepSeek one, because the HTTP adapter
+// forks nothing.
+//
+// Two things changed together: the unit's TasksMax was raised so the fork
+// stops failing (deploy/systemd/polyp-sequence.service), and this listener so
+// that when a spawn does fail -- for this or any other reason -- the ping is
+// lost and nothing else. systemd's own WatchdogSec still bounds a supervisor
+// that has genuinely stopped pinging, which is the failure this mechanism is
+// actually for.
 function notify(argument: string) {
   if (!process.env.NOTIFY_SOCKET) return;
   const child = spawn("/usr/bin/systemd-notify", [argument], {
     stdio: "ignore",
     shell: false,
+  });
+  child.on("error", (error: Error) => {
+    console.error(
+      JSON.stringify({
+        event: "sequence.notify_failed",
+        argument,
+        detail: error.message,
+      }),
+    );
   });
   child.unref();
 }
@@ -259,6 +303,23 @@ async function shutdown() {
   operationSignal.abort(new Error("supervisor stopping"));
   if (sequenceHeartbeat) clearInterval(sequenceHeartbeat);
   wake?.();
+  // Let the aborted attempt finish dying before the pool closes under it.
+  //
+  // Aborting and immediately calling pool.end() is a race this process loses
+  // in a specific, expensive way: the abort reaches the provider CLI, the
+  // adapter rejects, and the gateway's catch tries to settle the attempt --
+  // by which time `pool.connect()` refuses, the settle throws, and the row
+  // stays `dispatched` forever. An ordinary restart could strand an attempt
+  // exactly as a crash does.
+  //
+  // The abort has already been delivered, so this waits for teardown, not for
+  // the provider: what is left is killing a child and writing one row. If even
+  // that hangs, TimeoutStopSec bounds it and reclaimStranded() settles the row
+  // later -- the wait is the tidy path, not the only one.
+  //
+  // The rejection is swallowed on purpose: an aborted attempt rejecting is the
+  // expected outcome here, and the supervisor has already recorded it.
+  if (inFlight) await inFlight.catch(() => undefined);
   try {
     if (lease) await sequence.release(lease);
   } finally {
@@ -326,7 +387,29 @@ async function main() {
   while (!stopping) {
     if (heartbeatFailure !== undefined) throw heartbeatFailure;
     await work.reclaimExpired();
-    const result = await operation.runOne(operationSignal.signal);
+    // The ledger's counterpart to reclaimExpired(), in the same place and for
+    // the same reason: the previous holder of this work is gone and left rows
+    // that only an outsider can close. Thirty minutes is three times the
+    // longest adapter call (the Codex CLI's ten-minute timeout), so nothing
+    // still running can be caught by it.
+    const stranded = await attemptLedger.reclaimStranded(STRANDED_HORIZON_MS);
+    if (stranded.length > 0)
+      console.warn(
+        JSON.stringify({
+          event: "gateway.attempts_reclaimed",
+          code: STRANDED_ATTEMPT_CODE,
+          count: stranded.length,
+          attemptIds: stranded,
+        }),
+      );
+    const pending = operation.runOne(operationSignal.signal);
+    inFlight = pending;
+    let result;
+    try {
+      result = await pending;
+    } finally {
+      inFlight = undefined;
+    }
     if (result && lease) {
       const summaryId = randomUUID(),
         summary = result.summary;

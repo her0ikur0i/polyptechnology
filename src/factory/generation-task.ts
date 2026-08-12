@@ -101,9 +101,21 @@ export async function createGenerationTask(
   const work = new PostgresWorkRepository(pool);
   const contractId = randomUUID(),
     milestoneId = randomUUID();
+  // Each attempt below reserves ATTEMPT_MAX_COST_USD_MICROS (500_000), and
+  // maxAttempts gives the chain up to 6 attempts to walk
+  // deepseek(x2) -> codex(x2) -> claude-sonnet-5(x2, the one-retry case from
+  // nextStaticTier()). The scope's own cap must fund all 6, not just 4: at
+  // the old 2_000_000 ($2.00) cap, the 5th reservation always failed closed
+  // with "gateway budget unavailable or exhausted" -- so a run whose first
+  // four attempts were legitimately rejected (exactly what the moneybag deep
+  // drill produced) could never reach claude-sonnet-5, the tier most likely
+  // to succeed, no matter how much of maxAttempts remained. Found in
+  // CONTRACT-017D M2. 6 * 500_000 = 3_000_000 is the minimum that removes
+  // this ceiling; nothing here claims a run will spend it all.
+  const CONTRACT_MAX_COST_USD_MICROS = 3_000_000;
   await pool.query(
     "INSERT INTO factory_contracts(id,baseline_sha,status,max_cost_usd_micros) VALUES($1,$2,'active',$3)",
-    [contractId, "0".repeat(40), 2_000_000],
+    [contractId, "0".repeat(40), CONTRACT_MAX_COST_USD_MICROS],
   );
   await pool.query(
     "INSERT INTO milestones(id,contract_id,ordinal,status) VALUES($1,$2,1,'active')",
@@ -116,14 +128,14 @@ export async function createGenerationTask(
   // called.
   await pool.query(
     "INSERT INTO ai_budget_accounts(scope_id,max_cost_usd_micros) VALUES($1,$2) ON CONFLICT (scope_id) DO NOTHING",
-    [contractId, 2_000_000],
+    [contractId, CONTRACT_MAX_COST_USD_MICROS],
   );
 
   const task = await work.submit({
     contractId,
     milestoneId,
     idempotencyKey: `generate-${project.id}`,
-    maxCostUsdMicros: 2_000_000,
+    maxCostUsdMicros: CONTRACT_MAX_COST_USD_MICROS,
     maxAttempts: 6, // enough to walk deepseek(x2) -> codex(x2) -> claude
   });
   await work.controlTransition(task.id, "draft", "queued");

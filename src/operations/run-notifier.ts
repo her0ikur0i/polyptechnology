@@ -105,6 +105,40 @@ export class PostgresRunFacts {
         };
   }
 
+  // Every tier a task actually walked, in the order it walked them.
+  //
+  // usageFor() deliberately picks the single costliest attempt -- right for
+  // "what did this cost", wrong for "what happened". A failure report named
+  // one model while the run walked four or five tiers; the data was always in
+  // `provider_artifacts`, only the report was thin. CONTRACT-017D M2's own
+  // drill is the reason this matters: a run can reach `claude-sonnet-5` after
+  // every earlier tier was legitimately rejected, and "Task failed" with one
+  // model name underclaims that badly.
+  async tiersFor(
+    taskId: string,
+  ): Promise<
+    ReadonlyArray<{ provider: string; model: string; status: string }>
+  > {
+    const rows = await this.pool.query(
+      `SELECT provider_id, requested_model_id, status
+         FROM provider_artifacts
+        WHERE task_id = $1
+        ORDER BY created_at ASC`,
+      [taskId],
+    );
+    return (
+      rows.rows as ReadonlyArray<{
+        provider_id: string;
+        requested_model_id: string;
+        status: string;
+      }>
+    ).map((row) => ({
+      provider: row.provider_id,
+      model: row.requested_model_id,
+      status: row.status,
+    }));
+  }
+
   // What to call this task in front of a person.
   //
   // The kind comes from the driver; the subject comes from whatever that kind
@@ -345,6 +379,28 @@ export class TelegramRunNotifier implements RunNotifier {
           icon: "gate",
           text: REASON_TEXT[event.reason] ?? event.reason,
         });
+
+      // Named tiers, not a count. "after 5 attempts" already said how many;
+      // this says which models and what each one did, so a failure that
+      // walked the whole escalation chain reads as that rather than as a
+      // single anonymous rejection.
+      //
+      // try/catch, not `.catch()`: a stub `facts` without `tiersFor` (older
+      // tests, an older deployment) throws synchronously calling a method
+      // that does not exist, before any promise exists to attach `.catch()`
+      // to -- the same hazard `describe()` above is guarded against.
+      if (this.facts !== undefined) {
+        try {
+          const tiers = await this.facts.tiersFor(event.taskId);
+          if (tiers.length > 1)
+            detail.push({
+              icon: "model",
+              text: tiers.map((t) => `${t.model}→${t.status}`).join(", "),
+            });
+        } catch {
+          // Losing the tier list costs the tier list, not the report.
+        }
+      }
 
       // The real error, when the supervisor caught one. This is the line that
       // would have said `idempotency intent mismatch` instead of sending the
