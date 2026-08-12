@@ -96,14 +96,16 @@ export async function runDrill(
   pool: Pool,
   runLabel: string,
   workspacesRoot: string,
-  depth: "simple" | "deep" | "landing" = "simple",
+  depth: "simple" | "deep" | "landing" | "complex" = "simple",
 ): Promise<DrillReport> {
   const brief =
     depth === "deep"
       ? DEEP_BRIEF
       : depth === "landing"
         ? LANDING_BRIEF
-        : SIMPLE_BRIEF;
+        : depth === "complex"
+          ? COMPLEX_BRIEF
+          : SIMPLE_BRIEF;
   const identity = runIdentity(runLabel);
   const stages: StageReport[] = [];
   const conversations = new PostgresConversationStore(pool);
@@ -625,6 +627,58 @@ const DEEP_BRIEF = [
   "Stack: node runtime, no framework, no database. No dependencies.",
 ].join("\n");
 
+// Harder again, and harder along a different axis than DEEP_BRIEF: not one
+// module with several rules, but several modules that must agree with each
+// other. A ledger's whole point is that its parts are correlated -- an
+// account only means something in terms of the entries posted to it, and an
+// entry only means something if the accounts it touches are real -- so a
+// model has to get the *seams* right, not just each file in isolation.
+const COMPLEX_BRIEF = [
+  "Build a small Node/TypeScript double-entry accounting system called",
+  "`ledger`, split across three correlated modules that must agree with each",
+  "other on shared types.",
+  "",
+  "`src/accounts.ts`:",
+  "- A `AccountType` union: 'asset' | 'liability' | 'equity' | 'revenue' |",
+  "  'expense'.",
+  "- Export `createAccount(name: string, type: AccountType): Account`, where",
+  "  `Account` carries at least `id`, `name`, and `type`. Reject an empty",
+  "  name by throwing.",
+  "",
+  "`src/ledger.ts`, importing `Account` from `./accounts.js`:",
+  "- Export `postEntry(ledger: Ledger, entry: JournalEntry): Ledger`, where a",
+  "  `JournalEntry` is a date plus a list of postings, each posting a",
+  "  `{ account: Account; debit: number; credit: number }` in integer minor",
+  "  units. `Ledger` holds every posted entry and a running balance per",
+  "  account id.",
+  "- An entry is only postable if its postings sum to the same total on the",
+  "  debit side as the credit side across the whole entry -- reject an",
+  "  unbalanced entry by throwing, and leave the ledger it was rejected from",
+  "  completely unchanged (no partial posting).",
+  "- A posting with a negative debit or credit, or with both non-zero on the",
+  "  same posting, is invalid and must throw.",
+  "- `postEntry` must not mutate the `Ledger` it was given -- return a new",
+  "  one, the way the rest of this system's generated code already does.",
+  "",
+  "`src/reports.ts`, importing from both of the above:",
+  "- Export `trialBalance(ledger: Ledger, accounts: Account[]): { account: Account; balance: number }[]`,",
+  "  one row per account with its signed running balance (debits positive,",
+  "  credits negative, for asset/expense; the reverse for",
+  "  liability/equity/revenue).",
+  "- Export `isBalanced(ledger: Ledger): boolean`, true exactly when the sum",
+  "  of every posted entry's debits equals the sum of every posted entry's",
+  "  credits across the whole ledger -- this must hold after every valid",
+  "  `postEntry` call, by construction, and the tests must prove it rather",
+  "  than assume it.",
+  "",
+  "Cover every rule and every error case above with tests using node:test,",
+  "across all three modules, including at least one test that posts several",
+  "entries touching the same account and asserts the running balance and the",
+  "trial balance agree with hand-computed totals.",
+  "",
+  "Stack: node runtime, no framework, no database. No dependencies.",
+].join("\n");
+
 function message(error: unknown): string {
   return error instanceof Error ? error.message : "unknown error";
 }
@@ -648,7 +702,9 @@ if (invoked) {
       ? "deep"
       : process.argv[3] === "landing"
         ? "landing"
-        : "simple";
+        : process.argv[3] === "complex"
+          ? "complex"
+          : "simple";
   if (databaseUrl === undefined) {
     console.error("DATABASE_URL is required");
     process.exitCode = 1;
