@@ -36,6 +36,38 @@ first time. Live drill on 2026-08-12 against staging reached `publication`:
 complete, self-contained HTML (inline CSS only) with title, headline, pitch,
 and call-to-action, published to the owner as a Claude Artifact.
 
+Three more follow-up items were completed outside of contract. Commit `103f1e4`
+— "fix: report headline names the accepted model, not the costliest reject" —
+fixed a real bug in `PostgresRunFacts.usageFor()` in `src/operations/run-notifier.ts`:
+the headline for a generation task's report picked the costliest attempt
+unconditionally, which is right for a failure but wrong for a success — a
+rejected DeepSeek attempt is often costlier than an accepted Codex attempt,
+since Codex and Claude are subscription CLIs billing $0 real dollars, so
+successful reports routinely named the rejected provider. Now an attempt
+with an accepted `provider_artifacts` row
+ranks first; cost-ranking applies only to failures (unchanged). Same commit
+upgraded `scripts/generation-drill.ts`'s `landing` brief with senior-designer-level
+direction (token system, information architecture, type scale, hover/focus states,
+responsive layout) and tightened two assertions in
+`tests/postgres-gateway.integration.test.ts` that were asserting exact global table
+state instead of just their own test's rows. Re-ran the landing-page drill with the
+upgraded brief on 2026-08-12 against staging: reached `publication` on
+`codex:gpt-5.6-terra` after two legitimate DeepSeek rejections, producing a
+richer result (382 changed lines vs. 40 before) — design-token system, sticky nav,
+hero, three-feature grid, testimonial block, closing CTA, footer, hover/focus
+states, and a responsive breakpoint, all in one embedded `<style>` block.
+Commit `d6c134d` — "scripts/generation-drill: add a complex, correlated-modules
+brief" — added a `complex` brief: a three-file double-entry accounting system
+(`accounts.ts`, `ledger.ts`, `reports.ts`) where files import from and must
+agree with each other, unlike every earlier brief which was one module with
+several rules. Run on 2026-08-12 against staging reached `publication` after
+walking all four available tiers for the first time in a fully legitimate way —
+`deepseek-v4-flash` (real failing test), `deepseek-v4-pro` (real TypeScript
+syntax error), `codex:gpt-5.6-terra` (real module-resolution failure),
+`codex:gpt-5.6-sol` (accepted). Twelve tests passed independently of the drill's
+own verification. No infra defect involved; every rejection was the verification
+gate correctly catching something real.
+
 ## Closed: CONTRACT-017B — truthful reporting and a real backoff
 
 **CLOSED at `7021e59`.** Inserted 2026-08-11 after the owner read a full day of
