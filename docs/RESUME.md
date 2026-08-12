@@ -22,6 +22,20 @@ Two clean-database drills, run independently, produced identical terminal
 results. $15.00 in stranded reservations were reconciled with real,
 re-hashable evidence.
 
+After CONTRACT-017D closed, two follow-up items were completed outside of a
+contract. Commit `24aa291` — "factory: raise generation task budget cap to
+$5.00" — raised the per-generation-task AI-provider budget cap in
+`src/factory/generation-task.ts` from $3.00 to $5.00 (headroom for larger
+future projects; per-attempt cost remains $0.50). Commit `405fac7` —
+"scripts/generation-drill: add a landing-page brief" — added a `landing` brief
+to `scripts/generation-drill.ts` alongside `simple` and `deep`, testing product
+goal 1 (generates anything from a landing page to a complex system) for the
+first time. Live drill on 2026-08-12 against staging reached `publication`:
+`deepseek-v4-flash` was rejected, `deepseek-v4-pro` was rejected, and
+`codex:gpt-5.6-terra` accepted and verified. The generated landing page was
+complete, self-contained HTML (inline CSS only) with title, headline, pitch,
+and call-to-action, published to the owner as a Claude Artifact.
+
 ## Closed: CONTRACT-017B — truthful reporting and a real backoff
 
 **CLOSED at `7021e59`.** Inserted 2026-08-11 after the owner read a full day of
