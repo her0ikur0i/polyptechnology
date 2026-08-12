@@ -540,24 +540,52 @@ const SIMPLE_BRIEF = [
 // the product the goal names first. Still small enough to verify quickly:
 // one pure function producing a string, the same shape as SIMPLE_BRIEF, so a
 // failure here is about the brief's content, not its size.
+// Raised from a five-line brief to this on 2026-08-12, after the first
+// version's output was judged real but "very basic" -- a fair verdict: five
+// requirement lines cannot specify a type scale, an information
+// architecture, or a spacing rhythm, and a model given no such direction has
+// no way to produce them. This version gives the same kind of concrete
+// direction a senior product designer's brief would, so a plain-looking
+// result becomes evidence about the brief, not an unmovable ceiling on the
+// model.
 const LANDING_BRIEF = [
-  "Build a tiny Node/TypeScript module called `landing-page` that renders a",
-  "single static HTML landing page for a fictional product called Polyp AI",
-  "Factory -- an AI software factory that turns a conversation into a working",
-  "generated product.",
+  "Build a Node/TypeScript module called `landing-page` that renders a",
+  "complete, premium marketing landing page for a fictional product called",
+  "Polyp AI Factory -- an AI software factory that turns a conversation into a",
+  "working, deployed product. Write it as a senior product designer at a",
+  "top-tier software studio would: real information architecture, a",
+  "considered type scale, a deliberate spacing rhythm, and copy that reads",
+  "like a real company wrote it, not placeholder text.",
   "",
   "Requirements:",
-  "- Export a function `renderLandingPage(): string` that returns a complete,",
-  "  valid HTML document as a string (starting with `<!doctype html>`).",
-  "- The page must include, as literal text somewhere in the document: a",
-  "  `<title>`, an `<h1>` headline, a one-sentence pitch, and a call-to-action",
-  '  element (an `<a>` or `<button>`) containing the words "Get started".',
-  "- Every element must use inline CSS only -- no external stylesheets, no",
-  "  external fonts, no external scripts or images. The page must render",
-  "  correctly with no network access.",
-  "- Cover the requirements above with tests using node:test: assert the",
-  "  returned string contains a `<title>`, an `<h1>`, the call-to-action text,",
-  "  and starts with `<!doctype html>`.",
+  "- Export a function `renderLandingPage(): string` returning one complete,",
+  "  valid HTML5 document as a string (starting with `<!doctype html>`).",
+  "- All styling lives in ONE embedded `<style>` block in the `<head>`. Use",
+  "  CSS custom properties for a small, deliberate design-token system (a",
+  "  base background, a surface color, a primary text color, a muted text",
+  "  color, and exactly one accent color), and build every component from",
+  "  those tokens. No external stylesheets, fonts, scripts, or images -- the",
+  "  page must render correctly and look complete with zero network access.",
+  "- Top to bottom, the page has: a sticky top nav bar with a wordmark and",
+  "  2-3 nav links; a hero with an eyebrow label, a headline, a one-sentence",
+  "  subhead, and two calls-to-action (a primary button and a secondary text",
+  "  link); a three-item feature grid, each with a short label and a",
+  "  one-sentence description (no external icons -- a CSS shape, an emoji, or",
+  "  a single letter mark, your choice); a single-quote testimonial block",
+  "  attributed to a named, titled person at a named company; a closing",
+  "  call-to-action banner distinct from the hero; and a footer with a",
+  "  copyright line and 2-3 links.",
+  "- Use a real type scale (at least three distinct font-size steps beyond",
+  "  body text) and consistent spacing on multiples of one base unit.",
+  "- Every interactive element has a visible `:hover` and `:focus-visible`",
+  "  state defined in the stylesheet.",
+  "- The layout is responsive down to a 375px-wide viewport using CSS",
+  "  grid/flexbox and relative units -- no fixed pixel widths on outer",
+  "  containers.",
+  "- Cover this with tests using node:test: assert the returned string",
+  "  contains a `<style>` tag, an `<h1>`, a testimonial-attribution string,",
+  '  the words "Get started" somewhere, a `:hover` rule, and starts with',
+  "  `<!doctype html>`.",
   "",
   "Stack: node runtime, no framework, no database.",
 ].join("\n");

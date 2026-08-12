@@ -237,7 +237,15 @@ test(
         [strandedId],
       );
 
-      assert.deepEqual(await ledger.reclaimStranded(1_800_000), [strandedId]);
+      // Membership, not exact equality: reclaimStranded() scans every
+      // dispatched attempt in the database, the same global scope runOne()
+      // has, so a concurrently-running suite's own stranded row can appear
+      // here too. Asserting the array is exactly [strandedId] asserts that
+      // nothing else is running, which is the flake this project's own
+      // "runOne() is global" convention already warns about.
+      const firstReclaim = await ledger.reclaimStranded(1_800_000);
+      assert.ok(firstReclaim.includes(strandedId));
+      assert.ok(!firstReclaim.includes(liveId));
       const rows = await pool.query<{
         id: string;
         outcome: string;
@@ -262,7 +270,12 @@ test(
         )
       ).rows[0];
       assert.deepEqual(budget, { spent: 0, reserved: 200 });
-      assert.deepEqual(await ledger.reclaimStranded(1_800_000), []);
+      // Neither of this test's own attempts is stranded again: strandedId is
+      // already terminal, liveId was dispatched moments ago. Not asserting
+      // global emptiness, for the same reason as above.
+      const secondReclaim = await ledger.reclaimStranded(1_800_000);
+      assert.ok(!secondReclaim.includes(strandedId));
+      assert.ok(!secondReclaim.includes(liveId));
     } finally {
       await pool.end();
     }

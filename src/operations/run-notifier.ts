@@ -40,6 +40,17 @@ export class PostgresRunFacts {
   async usageFor(
     taskId: string,
   ): Promise<{ usage?: UsageLine; budget?: BudgetLine }> {
+    // Picking "costliest attempt" as the headline was silently correct only
+    // for a failure, where nothing succeeded and cost is the only ranking
+    // that means anything. For a success it is actively misleading:
+    // DeepSeek is metered and Codex/Claude are subscription CLIs billing
+    // $0 real dollars per call (src/gateway/provider-billing.ts), so a
+    // rejected DeepSeek attempt routinely outranks the Codex attempt that
+    // actually got accepted -- "✅ Patch succeeded ... 🤖 deepseek-v4-pro"
+    // on a task DeepSeek never solved. `accepted` breaks the tie first:
+    // an attempt whose own `provider_artifacts` row says `accepted` wins
+    // regardless of what it cost, and only among ties (a failure, where
+    // nothing accepted anything) does cost still decide.
     const attempts = await this.pool.query(
       `SELECT a.provider_id,
               COALESCE(a.resolved_model_id, a.requested_model_id) AS model_id,
@@ -47,12 +58,14 @@ export class PostgresRunFacts {
               COALESCE(SUM(u.input_tokens), 0)     AS input_tokens,
               COALESCE(SUM(u.output_tokens), 0)    AS output_tokens,
               COALESCE(SUM(u.cache_read_tokens), 0) AS cache_read_tokens,
-              COALESCE(SUM(u.cost_usd_micros), 0)  AS cost_usd_micros
+              COALESCE(SUM(u.cost_usd_micros), 0)  AS cost_usd_micros,
+              BOOL_OR(pa.status = 'accepted')      AS accepted
          FROM ai_gateway_attempts a
          LEFT JOIN ai_usage_events u ON u.attempt_id = a.id
+         LEFT JOIN provider_artifacts pa ON pa.attempt_id = a.id
         WHERE a.attribution->>'taskId' = $1
         GROUP BY a.provider_id, model_id, a.budget_scope_id
-        ORDER BY SUM(u.cost_usd_micros) DESC NULLS LAST
+        ORDER BY accepted DESC NULLS LAST, SUM(u.cost_usd_micros) DESC NULLS LAST
         LIMIT 1`,
       [taskId],
     );
