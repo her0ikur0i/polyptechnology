@@ -96,9 +96,14 @@ export async function runDrill(
   pool: Pool,
   runLabel: string,
   workspacesRoot: string,
-  depth: "simple" | "deep" = "simple",
+  depth: "simple" | "deep" | "landing" = "simple",
 ): Promise<DrillReport> {
-  const brief = depth === "deep" ? DEEP_BRIEF : SIMPLE_BRIEF;
+  const brief =
+    depth === "deep"
+      ? DEEP_BRIEF
+      : depth === "landing"
+        ? LANDING_BRIEF
+        : SIMPLE_BRIEF;
   const identity = runIdentity(runLabel);
   const stages: StageReport[] = [];
   const conversations = new PostgresConversationStore(pool);
@@ -530,6 +535,33 @@ const SIMPLE_BRIEF = [
   "Stack: node runtime, no framework, no database.",
 ].join("\n");
 
+// Goal 1 of the factory is "generates anything from a landing page to a
+// complex system" -- every drill before this one asked for a library, never
+// the product the goal names first. Still small enough to verify quickly:
+// one pure function producing a string, the same shape as SIMPLE_BRIEF, so a
+// failure here is about the brief's content, not its size.
+const LANDING_BRIEF = [
+  "Build a tiny Node/TypeScript module called `landing-page` that renders a",
+  "single static HTML landing page for a fictional product called Polyp AI",
+  "Factory -- an AI software factory that turns a conversation into a working",
+  "generated product.",
+  "",
+  "Requirements:",
+  "- Export a function `renderLandingPage(): string` that returns a complete,",
+  "  valid HTML document as a string (starting with `<!doctype html>`).",
+  "- The page must include, as literal text somewhere in the document: a",
+  "  `<title>`, an `<h1>` headline, a one-sentence pitch, and a call-to-action",
+  '  element (an `<a>` or `<button>`) containing the words "Get started".',
+  "- Every element must use inline CSS only -- no external stylesheets, no",
+  "  external fonts, no external scripts or images. The page must render",
+  "  correctly with no network access.",
+  "- Cover the requirements above with tests using node:test: assert the",
+  "  returned string contains a `<title>`, an `<h1>`, the call-to-action text,",
+  "  and starts with `<!doctype html>`.",
+  "",
+  "Stack: node runtime, no framework, no database.",
+].join("\n");
+
 // Deliberately harder, and harder along the axes that actually broke things.
 //
 // Every success so far came from the one brief above: a single pure function
@@ -583,7 +615,12 @@ if (invoked) {
   const runLabel = process.argv[2] ?? "default";
   const workspacesRoot =
     process.env.PROJECT_WORKSPACES_ROOT ?? "/var/lib/polyp/project-workspaces";
-  const depth = process.argv[3] === "deep" ? "deep" : "simple";
+  const depth =
+    process.argv[3] === "deep"
+      ? "deep"
+      : process.argv[3] === "landing"
+        ? "landing"
+        : "simple";
   if (databaseUrl === undefined) {
     console.error("DATABASE_URL is required");
     process.exitCode = 1;
