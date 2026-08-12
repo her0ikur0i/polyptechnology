@@ -110,9 +110,15 @@ export async function createGenerationTask(
   // four attempts were legitimately rejected (exactly what the moneybag deep
   // drill produced) could never reach claude-sonnet-5, the tier most likely
   // to succeed, no matter how much of maxAttempts remained. Found in
-  // CONTRACT-017D M2. 6 * 500_000 = 3_000_000 is the minimum that removes
-  // this ceiling; nothing here claims a run will spend it all.
-  const CONTRACT_MAX_COST_USD_MICROS = 3_000_000;
+  // CONTRACT-017D M2; 3_000_000 was the minimum that removed the ceiling.
+  //
+  // Raised to 5_000_000 on 2026-08-12, owner-directed headroom for a bigger
+  // future project -- a brief wide enough to need more real files per attempt
+  // (still $0.50/attempt, unchanged) or a run that legitimately needs every
+  // one of maxAttempts's 6 slots plus margin for a stray retry. Still just a
+  // ceiling: nothing here claims a run will spend it all, and 017D's actual
+  // drills spent under $0.03 total.
+  const CONTRACT_MAX_COST_USD_MICROS = 5_000_000;
   await pool.query(
     "INSERT INTO factory_contracts(id,baseline_sha,status,max_cost_usd_micros) VALUES($1,$2,'active',$3)",
     [contractId, "0".repeat(40), CONTRACT_MAX_COST_USD_MICROS],
