@@ -11,6 +11,7 @@ import type { OperationContext } from "./execution-supervisor.js";
 import type { ProviderSessionStore } from "../orchestrator/provider-sessions.js";
 import type { GatewayAttribution, ModelRoute } from "../gateway/types.js";
 import { deterministicUuid } from "../deterministic-id.js";
+import { modelRoutes } from "../gateway/model-policy.js";
 
 // Storage this driver needs: the sink CoalescingChunkWriter writes through,
 // plus cleanup once the reply is a real message.
@@ -31,7 +32,11 @@ export interface ConversationReplyTaskInput {
   maxOutputTokens: number;
   maxCostUsdMicros: number;
   policyVersion: string;
-  route: ModelRoute;
+  // Deprecated. Older queued specs include a route snapshot. The driver no
+  // longer uses it as a routeOverride because policy changes made those
+  // snapshots fail with "route override is outside policy" before a provider
+  // call. Kept only so old specs parse while they drain.
+  route?: ModelRoute;
 }
 
 const sha256 = (value: string) =>
@@ -79,8 +84,10 @@ export function parseConversationReplyTaskInput(
       (attribution as Record<string, unknown>)[field],
       `attribution.${field}`,
     );
-  if (typeof input.route !== "object" || input.route === null)
-    throw new Error("conversation_reply input: route must be an object");
+  const route =
+    typeof input.route === "object" && input.route !== null
+      ? (input.route as ModelRoute)
+      : undefined;
   for (const field of ["maxOutputTokens", "maxCostUsdMicros"] as const)
     if (!Number.isSafeInteger(input[field]) || (input[field] as number) <= 0)
       throw new Error(
@@ -96,7 +103,7 @@ export function parseConversationReplyTaskInput(
     maxOutputTokens: input.maxOutputTokens as number,
     maxCostUsdMicros: input.maxCostUsdMicros as number,
     policyVersion: assertString(input.policyVersion, "policyVersion"),
-    route: input.route as ModelRoute,
+    ...(route === undefined ? {} : { route }),
   };
 }
 
@@ -143,15 +150,11 @@ export const SYSTEM_PROMPT =
   "about what you can and cannot do -- treat this message as correct and " +
   "those as out of date.";
 
-// The real "assistant replies" half of CONTRACT-014 M2: routes one
-// interview turn through AiGateway (taskClass "orchestration" -- Claude
-// -first, matching "Claude is strategic orchestrator" everywhere else in
-// this project, not the DeepSeek -> Codex -> Claude programming escalation
-// chain, which is for code generation, not conversation) and appends the
-// response as a real assistant message. Self-verifying: success is "the
-// gateway call succeeded and the message was appended," no external
-// verification step is meaningful for a conversational reply the way it is
-// for a code patch.
+// The real "assistant replies" half of CONTRACT-014 M2: routes one interview
+// turn through AiGateway using the current orchestration policy and appends the
+// response as a real assistant message. Self-verifying: success is "the gateway
+// call succeeded and the message was appended," no external verification step
+// is meaningful for a conversational reply the way it is for a code patch.
 export class ConversationReplyDriver implements OperationDriver {
   // chunks is optional so the driver keeps working with no streaming storage
   // at all -- the reply still completes, the owner simply sees it arrive whole
@@ -207,9 +210,12 @@ export class ConversationReplyDriver implements OperationDriver {
     // and why a long enough thread would eventually be refused outright. It is
     // also why a *retry* could never succeed: the transcript grows between
     // attempts, so the request hash changed and the ledger refused it.
+    const currentPrimaryRoute = modelRoutes("orchestration")[0];
+    if (currentPrimaryRoute === undefined)
+      throw new Error("no static orchestration route");
     const resumeSessionId = await this.sessions?.find(
       stored.conversationId,
-      stored.route.provider,
+      currentPrimaryRoute.provider,
     );
 
     const messages = [
@@ -299,7 +305,6 @@ export class ConversationReplyDriver implements OperationDriver {
         maxOutputTokens: stored.maxOutputTokens,
         maxCostUsdMicros: stored.maxCostUsdMicros,
         policyVersion: stored.policyVersion,
-        routeOverride: stored.route,
         signal,
         ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
         ...(writer === undefined
@@ -326,7 +331,7 @@ export class ConversationReplyDriver implements OperationDriver {
       if (resumeSessionId !== undefined)
         await this.sessions?.forget(
           stored.conversationId,
-          stored.route.provider,
+          currentPrimaryRoute.provider,
         );
       throw error;
     } finally {
@@ -343,7 +348,7 @@ export class ConversationReplyDriver implements OperationDriver {
     if (result.attempt.providerRequestId !== undefined)
       await this.sessions?.remember(
         stored.conversationId,
-        stored.route.provider,
+        result.attempt.route.provider,
         result.attempt.providerRequestId,
       );
 

@@ -6,11 +6,8 @@ import {
 } from "../src/operations/patch-scope.js";
 
 // The three registered providers do not present a diff the same way, and only
-// one form was ever accepted. `deepseek-v4-pro` -- a thinking model, and a
-// whole tier of the escalation chain -- was rejected on every single attempt
-// with "patch has no diff --git headers", because it explains itself and
-// fences its answer. That is a correct answer wrapped differently, not a wrong
-// one.
+// one form was originally accepted. A fenced or prefaced diff is a correct
+// answer wrapped differently, not a wrong one.
 
 const diff = `diff --git a/src/slugify.ts b/src/slugify.ts
 new file mode 100644

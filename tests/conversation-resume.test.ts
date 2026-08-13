@@ -13,6 +13,7 @@ interface Captured {
   messages: ReadonlyArray<{ role: string; content: string }>;
   resumeSessionId?: string;
   idempotencyKey?: string;
+  routeOverride?: unknown;
 }
 
 function harness(options: {
@@ -29,6 +30,7 @@ function harness(options: {
       messages: ReadonlyArray<{ role: string; content: string }>;
       resumeSessionId?: string;
       idempotencyKey?: string;
+      routeOverride?: unknown;
     }) => {
       if (options.gatewayThrows) throw new Error("session not found");
       captured.push({
@@ -39,10 +41,14 @@ function harness(options: {
         ...(request.idempotencyKey === undefined
           ? {}
           : { idempotencyKey: request.idempotencyKey }),
+        ...(request.routeOverride === undefined
+          ? {}
+          : { routeOverride: request.routeOverride }),
       });
       return {
         content: "the answer",
         attempt: {
+          route: { provider: "deepseek" },
           ...(options.providerRequestId === undefined
             ? {}
             : { providerRequestId: options.providerRequestId }),
@@ -140,8 +146,14 @@ test("the session the provider hands back is remembered against the conversation
   // The id has always been returned and always been stored on the attempt row.
   // Holding it against the *conversation* is the only new part.
   assert.deepEqual(remembered, [
-    ["22222222-2222-4222-8222-222222222222", "claude", "sess-new"],
+    ["22222222-2222-4222-8222-222222222222", "deepseek", "sess-new"],
   ]);
+});
+
+test("a stored route snapshot is ignored so policy changes do not break replies", async () => {
+  const { driver, captured } = harness({});
+  await driver.execute(INPUT, AbortSignal.timeout(5_000));
+  assert.equal(captured[0]!.routeOverride, undefined);
 });
 
 test("a provider that reports no session leaves nothing behind", async () => {
@@ -188,7 +200,7 @@ test("a failed resume drops the session so the retry replays", async () => {
   // the work engine's own retry send the full transcript instead of asking
   // again for a session that no longer exists.
   assert.deepEqual(forgotten, [
-    ["22222222-2222-4222-8222-222222222222", "claude"],
+    ["22222222-2222-4222-8222-222222222222", "deepseek"],
   ]);
 });
 

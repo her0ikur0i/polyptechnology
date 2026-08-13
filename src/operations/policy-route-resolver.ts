@@ -23,6 +23,31 @@ export interface GatewayAvailabilityLike {
   availableModelKeys(): Promise<ReadonlySet<string>>;
 }
 
+function artifactKey(artifact: {
+  providerId: string;
+  requestedModelId: string;
+}): string {
+  return `${artifact.providerId}:${artifact.requestedModelId}`;
+}
+
+function routeKey(route: ModelRoute): string {
+  return `${route.provider}:${route.requestedModelId}`;
+}
+
+function isDeepSeekRepairRetryEligible(
+  artifact: {
+    providerId: string;
+    reason: string | null;
+    status: "accepted" | "rejected";
+  },
+  verdictCount: number,
+): boolean {
+  if (verdictCount !== 1) return false;
+  if (artifact.providerId !== "deepseek" || artifact.status !== "rejected")
+    return false;
+  return (artifact.reason ?? "").trim().length > 0;
+}
+
 function isProgrammingTaskClass(
   taskClass: TaskClass,
 ): taskClass is ProgrammingTaskClass {
@@ -49,6 +74,14 @@ export class PostgresPolicyRouteResolver {
     private readonly gateway: GatewayAvailabilityLike,
     private readonly policyKey: string,
   ) {}
+
+  async failureEvidence(taskId: string): Promise<ReadonlyArray<string>> {
+    const artifacts = await this.artifacts.forTask(taskId).catch(() => []);
+    return artifacts
+      .filter((artifact) => artifact.status === "rejected" && artifact.reason)
+      .slice(-2)
+      .map((artifact) => artifact.reason!.slice(0, 2_000));
+  }
 
   async resolve(
     taskClass: TaskClass,
@@ -84,9 +117,18 @@ export class PostgresPolicyRouteResolver {
     // already-attempted provider:model pairs, a still-live deepseek model
     // (always permitted, per execution-permission.ts) would be re-selected
     // forever instead of ever escalating past its own verified failure.
-    const alreadyAttempted = new Set(
-      attempts.map((a) => `${a.providerId}:${a.requestedModelId}`),
-    );
+    const verdictCounts = new Map<string, number>();
+    for (const attempt of attempts)
+      verdictCounts.set(
+        artifactKey(attempt),
+        (verdictCounts.get(artifactKey(attempt)) ?? 0) + 1,
+      );
+    const alreadyAttempted = new Set<string>();
+    for (const attempt of attempts) {
+      const key = artifactKey(attempt);
+      if (!isDeepSeekRepairRetryEligible(attempt, verdictCounts.get(key) ?? 0))
+        alreadyAttempted.add(key);
+    }
     const availability = new Set(
       [...(await this.gateway.availableModelKeys())].filter(
         (key) => !alreadyAttempted.has(key),
@@ -100,7 +142,8 @@ export class PostgresPolicyRouteResolver {
       new Date(),
       failures,
     );
-    if (simulated.selected === null) return fallback;
+    if (simulated.selected === null)
+      return this.nextStaticTier(taskClass, taskId, fallback, attemptOrdinal);
     return {
       provider: simulated.selected.provider,
       requestedModelId: simulated.selected.requestedModelId,
@@ -126,15 +169,33 @@ export class PostgresPolicyRouteResolver {
     if (chain.length === 0) return fallback;
 
     const attempts = await this.artifacts.forTask(taskId).catch(() => []);
-    const settled = new Set(
-      attempts.map((a) => `${a.providerId}:${a.requestedModelId}`),
-    );
+    const available = await this.gateway
+      .availableModelKeys()
+      .catch(() => new Set<string>());
+    const hasAvailability = available.size > 0;
+    const verdictCounts = new Map<string, number>();
+    for (const attempt of attempts)
+      verdictCounts.set(
+        artifactKey(attempt),
+        (verdictCounts.get(artifactKey(attempt)) ?? 0) + 1,
+      );
+    const settled = new Set<string>();
+    for (const attempt of attempts) {
+      const key = artifactKey(attempt);
+      if (!isDeepSeekRepairRetryEligible(attempt, verdictCounts.get(key) ?? 0))
+        settled.add(key);
+    }
+    const isAvailable = (route: ModelRoute) =>
+      !hasAvailability || available.has(routeKey(route));
     const remaining = chain.filter(
-      (route) => !settled.has(`${route.provider}:${route.requestedModelId}`),
+      (route) => !settled.has(routeKey(route)) && isAvailable(route),
     );
+    const availableChain = chain.filter(isAvailable);
+    if (remaining.length === 0 && availableChain.length === 0) return fallback;
     // Every tier has reached a verdict: stay on the last one. The work
     // engine's maxAttempts is what stops the task, not this.
-    if (remaining.length === 0) return chain[chain.length - 1]!;
+    if (remaining.length === 0)
+      return availableChain[availableChain.length - 1]!;
 
     // A tier that failed without reaching a verdict gets one retry, then the
     // chain moves on.
@@ -144,12 +205,11 @@ export class PostgresPolicyRouteResolver {
     // timed out or returned unparseable telemetry, leaves no row, so it stayed
     // "untried" and was selected again on every remaining attempt.
     //
-    // Observed on the first genuinely hard brief: deepseek-flash, deepseek-pro
-    // and codex-terra each recorded a rejection, then `gpt-5.6-sol` failed
-    // three times running with `invalid Codex JSONL telemetry` and consumed
-    // every remaining attempt. **claude-sonnet-5, the final tier and the one
-    // most likely to succeed on hard work, was never reached** -- the task
-    // exhausted maxAttempts without ever asking it.
+    // Observed on the first genuinely hard brief: the early tiers recorded
+    // rejections, then the Codex fallback failed three times running with
+    // invalid telemetry and consumed every remaining attempt. The final Claude
+    // tier, the one most likely to succeed on hard work, was never reached --
+    // the task exhausted maxAttempts without ever asking it.
     //
     // Retrying the same tier once keeps the intent of the standing rule -- a
     // transport failure retries its own tier, because a timeout says nothing

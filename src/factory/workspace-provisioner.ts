@@ -106,11 +106,13 @@ export class NodeWorkspaceProvisioner {
     // one real TypeScript module and one real test over it, so a later
     // verification failure is the patch's fault and nothing else's.
     await mkdir(join(repoPath, "src"), { recursive: true });
+    await mkdir(join(repoPath, "src", "generated"), { recursive: true });
     await writeFile(
       join(repoPath, "src", "index.ts"),
       `export const projectName = ${JSON.stringify(blueprint.displayName)};\n`,
     );
     await mkdir(join(repoPath, "tests"), { recursive: true });
+    await mkdir(join(repoPath, "tests", "generated"), { recursive: true });
     await writeFile(
       join(repoPath, "tests", "scaffold.test.ts"),
       [
@@ -158,7 +160,7 @@ export class NodeWorkspaceProvisioner {
     // only an empty `@types` stub, and every subsequent `tsc --noEmit` in the
     // verify sandbox fails with "tsc: not found" -- indistinguishable, in
     // `provider_artifacts.reason`, from a real rejection. Found in
-    // CONTRACT-017D M2: a deep-drill run walked every tier to claude-sonnet-5
+    // CONTRACT-017D M2: a deep-drill run walked every tier to claude-sonnet-4-6
     // and every one of the first four was actually this, not a real verdict.
     // `npm_config_include=dev` overrides npm's production-mode omission
     // regardless of NODE_ENV; deleting NODE_ENV itself would be fragile if npm

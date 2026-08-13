@@ -9,6 +9,7 @@ const fallback: ModelRoute = {
   provider: "deepseek",
   requestedModelId: "deepseek-v4-flash",
   role: "primary-executor",
+  mode: "non-thinking",
 };
 
 const runtimePolicy: RuntimePolicy = {
@@ -19,8 +20,12 @@ const runtimePolicy: RuntimePolicy = {
         requestedModelId: "deepseek-v4-pro",
         priority: 0,
       },
-      { provider: "codex", requestedModelId: "gpt-5.6-sol", priority: 1 },
-      { provider: "claude", requestedModelId: "claude-sonnet-5", priority: 2 },
+      { provider: "codex", requestedModelId: "gpt-5.5", priority: 1 },
+      {
+        provider: "claude",
+        requestedModelId: "claude-sonnet-4-6",
+        priority: 2,
+      },
     ],
     complex_backend: [
       {
@@ -99,30 +104,25 @@ test("no active policy starts at the first tier of the static chain", async () =
 });
 
 test("no active policy escalates past a tier this task already tried", async () => {
+  const firstTier = modelRoutes("bulk_code")[0]!;
   const route = await resolver({
     artifacts: [
       {
         taskId: "t1",
-        providerId: "deepseek",
-        requestedModelId: "deepseek-v4-flash",
+        providerId: firstTier.provider,
+        requestedModelId: firstTier.requestedModelId,
         status: "rejected",
         reason: "verification_failed",
       },
     ],
   }).resolve("bulk_code", "t1", fallback);
-  assert.deepEqual(route, modelRoutes("bulk_code")[1]);
+  assert.deepEqual(route, modelRoutes("bulk_code")[0]);
 });
 
 test("no active policy stays on the last tier once every tier has been tried", async () => {
   const chain = modelRoutes("bulk_code");
   const route = await resolver({
-    artifacts: chain.map((tier) => ({
-      taskId: "t1",
-      providerId: tier.provider,
-      requestedModelId: tier.requestedModelId,
-      status: "rejected" as const,
-      reason: "verification_failed",
-    })),
+    artifacts: settled(chain.length),
   }).resolve("bulk_code", "t1", fallback);
   assert.deepEqual(route, chain[chain.length - 1]);
 });
@@ -142,7 +142,7 @@ test("an active policy with an available first-priority route is used over the s
 test("an already-attempted model is excluded so it never gets re-selected", async () => {
   const route = await resolver({
     active: { policy: runtimePolicy },
-    availability: new Set(["deepseek:deepseek-v4-pro", "codex:gpt-5.6-sol"]),
+    availability: new Set(["deepseek:deepseek-v4-pro", "codex:gpt-5.5"]),
     artifacts: [
       {
         taskId: "t1",
@@ -151,13 +151,20 @@ test("an already-attempted model is excluded so it never gets re-selected", asyn
         status: "rejected",
         reason: "tests failed",
       },
+      {
+        taskId: "t1",
+        providerId: "deepseek",
+        requestedModelId: "deepseek-v4-pro",
+        status: "rejected",
+        reason: "repair retry still failed",
+      },
     ],
   }).resolve("bulk_code", "t1", fallback);
   // Without exclusion, deepseek would be re-selected forever (it's always
   // permitted, per execution-permission.ts) instead of ever escalating.
   assert.deepEqual(route, {
     provider: "codex",
-    requestedModelId: "gpt-5.6-sol",
+    requestedModelId: "gpt-5.5",
     role: "policy-selected",
   });
 });
@@ -167,8 +174,8 @@ test("claude unlocks only once both deepseek and codex have verified-failed", as
     active: { policy: runtimePolicy },
     availability: new Set([
       "deepseek:deepseek-v4-pro",
-      "codex:gpt-5.6-sol",
-      "claude:claude-sonnet-5",
+      "codex:gpt-5.5",
+      "claude:claude-sonnet-4-6",
     ]),
     artifacts: [
       {
@@ -178,13 +185,20 @@ test("claude unlocks only once both deepseek and codex have verified-failed", as
         status: "rejected",
         reason: "tests failed",
       },
+      {
+        taskId: "t1",
+        providerId: "deepseek",
+        requestedModelId: "deepseek-v4-pro",
+        status: "rejected",
+        reason: "repair retry still failed",
+      },
     ],
   }).resolve("bulk_code", "t1", fallback);
   // Only deepseek verified-failed so far -- codex must be tried next, not
   // claude (execution-permission.ts requires both before claude unlocks).
   assert.deepEqual(route, {
     provider: "codex",
-    requestedModelId: "gpt-5.6-sol",
+    requestedModelId: "gpt-5.5",
     role: "policy-selected",
   });
 });
@@ -194,7 +208,111 @@ test("policy engine finding nothing eligible falls back to the static route", as
     active: { policy: runtimePolicy },
     availability: new Set(), // nothing available at all
   }).resolve("bulk_code", "t1", fallback);
-  assert.deepEqual(route, fallback);
+  assert.deepEqual(route, modelRoutes("bulk_code")[0]);
+});
+
+test("static fallback skips unavailable tiers instead of burning attempts on them", async () => {
+  const chain = modelRoutes("bulk_code");
+  const route = await resolver({
+    availability: new Set([
+      "deepseek:deepseek-v4-pro",
+      "deepseek:deepseek-v4-flash",
+      "codex:gpt-5.5",
+    ]),
+    artifacts: settled(3),
+  }).resolve("bulk_code", "t1", fallback, 6);
+  assert.deepEqual(route, chain[2]);
+});
+
+test("a DeepSeek verifier rejection gets one same-model repair retry before the next model", async () => {
+  const chain = modelRoutes("bulk_code");
+  const firstRepair = await resolver({
+    artifacts: [
+      {
+        taskId: "t1",
+        providerId: chain[0]!.provider,
+        requestedModelId: chain[0]!.requestedModelId,
+        status: "rejected" as const,
+        reason: "patch_apply_failed: trailing whitespace; patch does not apply",
+      },
+    ],
+  }).resolve("bulk_code", "t1", fallback, 2);
+  assert.deepEqual(firstRepair, chain[0]);
+
+  const escalated = await resolver({
+    artifacts: [
+      {
+        taskId: "t1",
+        providerId: chain[0]!.provider,
+        requestedModelId: chain[0]!.requestedModelId,
+        status: "rejected" as const,
+        reason: "patch_apply_failed: trailing whitespace; patch does not apply",
+      },
+      {
+        taskId: "t1",
+        providerId: chain[0]!.provider,
+        requestedModelId: chain[0]!.requestedModelId,
+        status: "rejected" as const,
+        reason: "patch_apply_failed: patch does not apply",
+      },
+    ],
+  }).resolve("bulk_code", "t1", fallback, 3);
+  assert.deepEqual(escalated, chain[1]);
+});
+
+test("a DeepSeek no-diff rejection is repairable before the next model", async () => {
+  const chain = modelRoutes("bulk_code");
+  const route = await resolver({
+    artifacts: [
+      {
+        taskId: "t1",
+        providerId: chain[0]!.provider,
+        requestedModelId: chain[0]!.requestedModelId,
+        status: "rejected" as const,
+        reason: "patch has no diff --git headers",
+      },
+    ],
+  }).resolve("bulk_code", "t1", fallback, 2);
+  assert.deepEqual(route, chain[0]);
+});
+
+test("a DeepSeek test failure is repairable before the next model", async () => {
+  const chain = modelRoutes("bulk_code");
+  const route = await resolver({
+    artifacts: [
+      {
+        taskId: "t1",
+        providerId: chain[0]!.provider,
+        requestedModelId: chain[0]!.requestedModelId,
+        status: "rejected" as const,
+        reason: "verification_failed: Subtest: format has two decimal places",
+      },
+    ],
+  }).resolve("bulk_code", "t1", fallback, 2);
+  assert.deepEqual(route, chain[0]);
+});
+
+test("DeepSeek escalates after the repair retry also fails", async () => {
+  const chain = modelRoutes("bulk_code");
+  const route = await resolver({
+    artifacts: [
+      {
+        taskId: "t1",
+        providerId: chain[0]!.provider,
+        requestedModelId: chain[0]!.requestedModelId,
+        status: "rejected" as const,
+        reason: "verification_failed: Subtest: format has two decimal places",
+      },
+      {
+        taskId: "t1",
+        providerId: chain[0]!.provider,
+        requestedModelId: chain[0]!.requestedModelId,
+        status: "rejected" as const,
+        reason: "verification_failed: retry still failed",
+      },
+    ],
+  }).resolve("bulk_code", "t1", fallback, 3);
+  assert.deepEqual(route, chain[1]);
 });
 
 test("a policyStore that throws falls back to the static route rather than failing the task", async () => {
@@ -229,52 +347,60 @@ test("a policyStore that throws falls back to the static route rather than faili
 // whose CLI timed out or returned unparseable telemetry leaves no row, so it
 // stayed "untried" and was selected again on every remaining attempt.
 //
-// Observed on the first genuinely hard brief: deepseek-flash, deepseek-pro and
-// codex-terra each recorded a rejection, then gpt-5.6-sol failed three times
-// running with `invalid Codex JSONL telemetry` and consumed every remaining
-// attempt. claude-sonnet-5 -- the final tier, and the one most likely to
-// succeed on hard work -- was never reached at all.
+// Observed on the first genuinely hard brief: early tiers recorded rejections,
+// then the Codex fallback failed three times running with invalid telemetry and
+// consumed every remaining attempt. The final Claude tier, the one most likely
+// to succeed on hard work, was never reached at all.
 const settled = (count: number) =>
   modelRoutes("bulk_code")
     .slice(0, count)
-    .map((tier) => ({
-      taskId: "t1",
-      providerId: tier.provider,
-      requestedModelId: tier.requestedModelId,
-      status: "rejected" as const,
-      reason: "verification_failed",
-    }));
+    .flatMap((tier) => {
+      const verdict = {
+        taskId: "t1",
+        providerId: tier.provider,
+        requestedModelId: tier.requestedModelId,
+        status: "rejected" as const,
+        reason: "verification_failed",
+      };
+      return tier.provider === "deepseek"
+        ? [verdict, { ...verdict, reason: "repair retry still failed" }]
+        : [verdict];
+    });
 
 test("a tier that recorded no verdict is retried exactly once", async () => {
   const chain = modelRoutes("bulk_code");
-  // Three tiers judged and rejected; attempt 4 is the first at tier four.
-  const first = await resolver({ artifacts: settled(3) }).resolve(
+  const penultimate = chain.length - 2;
+  const final = chain.length - 1;
+  const artifacts = settled(penultimate);
+  // All tiers before the penultimate tier judged and rejected; the next attempt
+  // is the first at the penultimate tier.
+  const first = await resolver({ artifacts }).resolve(
     "bulk_code",
     "t1",
     fallback,
-    4,
+    artifacts.length + 1,
   );
-  assert.deepEqual(first, chain[3]);
+  assert.deepEqual(first, chain[penultimate]);
 
-  // Attempt 5: tier four produced no artifact, so it gets its one retry --
-  // a timeout says nothing about whether that model could do the work.
-  const retry = await resolver({ artifacts: settled(3) }).resolve(
+  // Next attempt: the penultimate tier produced no artifact, so it gets its one
+  // retry -- a timeout says nothing about whether that model could do the work.
+  const retry = await resolver({ artifacts }).resolve(
     "bulk_code",
     "t1",
     fallback,
-    5,
+    artifacts.length + 2,
   );
-  assert.deepEqual(retry, chain[3]);
+  assert.deepEqual(retry, chain[penultimate]);
 
-  // Attempt 6: still no verdict after two tries, so the chain moves on and
-  // the final tier finally gets asked.
-  const escalated = await resolver({ artifacts: settled(3) }).resolve(
+  // Still no verdict after two tries, so the chain moves on and the final tier
+  // finally gets asked.
+  const escalated = await resolver({ artifacts }).resolve(
     "bulk_code",
     "t1",
     fallback,
-    6,
+    artifacts.length + 3,
   );
-  assert.deepEqual(escalated, chain[4]);
+  assert.deepEqual(escalated, chain[final]);
 });
 
 test("verdicts still drive escalation ahead of the retry allowance", async () => {

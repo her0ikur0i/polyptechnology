@@ -26,7 +26,11 @@ const defaultRoutesTemplate = JSON.stringify(
         requestedModelId: "deepseek-v4-flash",
         priority: 0,
       },
-      { provider: "claude", requestedModelId: "claude-sonnet-5", priority: 1 },
+      {
+        provider: "claude",
+        requestedModelId: "claude-sonnet-4-6",
+        priority: 1,
+      },
     ],
     complex_backend: [
       {
@@ -42,7 +46,11 @@ const defaultRoutesTemplate = JSON.stringify(
         requestedModelId: "deepseek-v4-flash",
         priority: 0,
       },
-      { provider: "claude", requestedModelId: "claude-sonnet-5", priority: 1 },
+      {
+        provider: "claude",
+        requestedModelId: "claude-sonnet-4-6",
+        priority: 1,
+      },
     ],
   },
   null,

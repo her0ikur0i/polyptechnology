@@ -12,6 +12,7 @@ import {
 import type {
   ManagedCompletion,
   ManagedProviderAdapter,
+  ModelRoute,
 } from "../src/gateway/types.js";
 import { AiPatchExecutorDriver } from "../src/operations/ai-patch-driver.js";
 import { AiPatchOperationDriver } from "../src/operations/ai-patch-operation-driver.js";
@@ -44,12 +45,12 @@ index 1111111..2222222 100644
 class FakeDeepSeek implements ManagedProviderAdapter {
   readonly provider = "deepseek" as const;
   async listModels() {
-    return ["deepseek-v4-flash"];
+    return ["deepseek-v4-pro", "deepseek-v4-flash"];
   }
-  async invoke(): Promise<ManagedCompletion> {
+  async invoke(route: ModelRoute): Promise<ManagedCompletion> {
     return {
       providerRequestId: "req-1",
-      resolvedModelId: "deepseek-v4-flash",
+      resolvedModelId: route.requestedModelId,
       resolutionSource: "provider_response",
       content: validPatch,
       usage: {
@@ -62,7 +63,7 @@ class FakeDeepSeek implements ManagedProviderAdapter {
       },
       modelUsage: [
         {
-          resolvedModelId: "deepseek-v4-flash",
+          resolvedModelId: route.requestedModelId,
           inputTokens: 5,
           outputTokens: 5,
           reasoningTokens: 0,

@@ -16,21 +16,22 @@ import { PostgresAttemptLedger } from "../src/gateway/postgres-ledger.js";
 import type {
   ManagedCompletion,
   ManagedProviderAdapter,
+  ModelRoute,
 } from "../src/gateway/types.js";
 import { runOwnTask } from "./run-own-task.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
-class FakeExtractionClaude implements ManagedProviderAdapter {
-  readonly provider = "claude" as const;
+class FakeExtractionProvider implements ManagedProviderAdapter {
+  readonly provider = "deepseek" as const;
   constructor(private readonly content: string) {}
   async listModels() {
-    return ["claude-sonnet-5"];
+    return ["deepseek-v4-flash"];
   }
-  async invoke(): Promise<ManagedCompletion> {
+  async invoke(route: ModelRoute): Promise<ManagedCompletion> {
     return {
       providerRequestId: randomUUID(),
-      resolvedModelId: "claude-sonnet-5",
+      resolvedModelId: route.requestedModelId,
       resolutionSource: "provider_response",
       content: this.content,
       usage: {
@@ -43,7 +44,7 @@ class FakeExtractionClaude implements ManagedProviderAdapter {
       },
       modelUsage: [
         {
-          resolvedModelId: "claude-sonnet-5",
+          resolvedModelId: route.requestedModelId,
           inputTokens: 30,
           outputTokens: 40,
           reasoningTokens: 0,
@@ -140,7 +141,7 @@ test(
         requirements: ["Track vendor invoices", "Support a small team"],
       });
       const gateway = new AiGateway(new PostgresAttemptLedger(pool), [
-        new FakeExtractionClaude(fakeContent),
+        new FakeExtractionProvider(fakeContent),
       ]);
       const factory = new PostgresProjectFactory(pool);
       const driver = new BlueprintTranslationDriver(gateway, factory);
@@ -210,7 +211,7 @@ test(
       });
 
       const gateway = new AiGateway(new PostgresAttemptLedger(pool), [
-        new FakeExtractionClaude("Sorry, I cannot help with that request."),
+        new FakeExtractionProvider("Sorry, I cannot help with that request."),
       ]);
       const factory = new PostgresProjectFactory(pool);
       const driver = new BlueprintTranslationDriver(gateway, factory);

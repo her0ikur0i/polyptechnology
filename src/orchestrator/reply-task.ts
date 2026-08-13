@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import { PostgresWorkRepository } from "../work/postgres-repository.js";
-import { modelRoutes, MODEL_POLICY_VERSION } from "../gateway/model-policy.js";
+import { MODEL_POLICY_VERSION } from "../gateway/model-policy.js";
 import type { ConversationReplyTaskInput } from "../operations/conversation-reply-driver.js";
 import { deterministicUuid } from "../deterministic-id.js";
 
@@ -55,10 +55,6 @@ export async function queueConversationReply(
   });
   await work.controlTransition(task.id, "draft", "queued");
 
-  const staticRoute = modelRoutes("orchestration")[0];
-  if (staticRoute === undefined)
-    throw new Error("no static orchestration route");
-
   const specInput: ConversationReplyTaskInput = {
     conversationId: input.conversationId,
     projectId: input.projectId,
@@ -79,7 +75,6 @@ export async function queueConversationReply(
     maxOutputTokens: 4_000,
     maxCostUsdMicros: 200_000,
     policyVersion: MODEL_POLICY_VERSION,
-    route: staticRoute,
   };
 
   await pool.query(

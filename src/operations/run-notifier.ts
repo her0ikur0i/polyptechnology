@@ -124,7 +124,7 @@ export class PostgresRunFacts {
   // "what did this cost", wrong for "what happened". A failure report named
   // one model while the run walked four or five tiers; the data was always in
   // `provider_artifacts`, only the report was thin. CONTRACT-017D M2's own
-  // drill is the reason this matters: a run can reach `claude-sonnet-5` after
+  // drill is the reason this matters: a run can reach `claude-sonnet-4-6` after
   // every earlier tier was legitimately rejected, and "Task failed" with one
   // model name underclaims that badly.
   async tiersFor(
@@ -160,7 +160,7 @@ export class PostgresRunFacts {
   // carry — they wrote it minutes earlier.
   async describe(taskId: string): Promise<TaskDescription> {
     const spec = await this.pool.query(
-      `SELECT s.driver, s.input->>'conversationId' AS conversation_id,
+      `SELECT s.driver, s.role, s.input, s.input->>'conversationId' AS conversation_id,
               s.input->>'projectId' AS project_id
          FROM operation_task_specs s WHERE s.task_id = $1`,
       [taskId],
@@ -168,6 +168,8 @@ export class PostgresRunFacts {
     const row = spec.rows[0] as
       | {
           driver: string;
+          role: string | null;
+          input: unknown;
           conversation_id: string | null;
           project_id: string | null;
         }
@@ -175,6 +177,11 @@ export class PostgresRunFacts {
     if (row === undefined) return { kind: kindOf(undefined) };
 
     const kind = kindOf(row.driver);
+    const input =
+      typeof row.input === "object" && row.input !== null
+        ? (row.input as Record<string, unknown>)
+        : {};
+    const phase = generationPhase(input);
 
     if (row.conversation_id !== null) {
       const asked = await this.pool.query(
@@ -195,10 +202,50 @@ export class PostgresRunFacts {
       );
       const name = (project.rows[0] as { display_name: string } | undefined)
         ?.display_name;
-      if (name !== undefined) return { kind, subject: name };
+      if (name !== undefined) {
+        if (row.driver === "ai_patch_executor" && row.role === "factory-generation")
+          return {
+            kind: "Generation phase",
+            subject: phase === undefined ? name : `${name} · ${phase}`,
+          };
+        return { kind, subject: name };
+      }
     }
 
     return { kind };
+  }
+
+  async shouldNotify(event: TaskFinished): Promise<boolean> {
+    const spec = await this.pool.query(
+      `SELECT driver, role, input
+         FROM operation_task_specs
+        WHERE task_id = $1`,
+      [event.taskId],
+    );
+    const row = spec.rows[0] as
+      | { driver: string; role: string | null; input: unknown }
+      | undefined;
+    if (row === undefined) return true;
+    const input =
+      typeof row.input === "object" && row.input !== null
+        ? (row.input as Record<string, unknown>)
+        : {};
+
+    // Test/probe rows deliberately carry incomplete driver input. If a live
+    // worker ever sees one, it may fail, but it should not page the owner as a
+    // real chat reply.
+    if (typeof input.probe === "string") return false;
+
+    // Generation drills and generated projects can create many phase tasks.
+    // A first-attempt success is good news only in aggregate; reporting every
+    // one turns a successful run into a notification storm. Repairs, failures
+    // and anything unfamiliar still report.
+    return !(
+      row.driver === "ai_patch_executor" &&
+      row.role === "factory-generation" &&
+      event.outcome === "succeeded" &&
+      event.attemptOrdinal <= 1
+    );
   }
 
   // The assistant's answer for a finished conversation_reply task, but only
@@ -230,6 +277,24 @@ export class PostgresRunFacts {
     );
     return (message.rows[0] as { content: string } | undefined)?.content;
   }
+}
+
+function generationPhase(input: Record<string, unknown>): string | undefined {
+  const messages = input.messages;
+  if (!Array.isArray(messages)) return undefined;
+  for (const message of messages) {
+    if (
+      typeof message !== "object" ||
+      message === null ||
+      typeof (message as { content?: unknown }).content !== "string"
+    )
+      continue;
+    const match = (message as { content: string }).content.match(
+      /^Generation phase:\s*(.+)$/m,
+    );
+    if (match?.[1] !== undefined) return match[1].trim();
+  }
+  return undefined;
 }
 
 const CATEGORY_FOR: Record<string, ReportCategory> = {
@@ -330,6 +395,14 @@ export class TelegramRunNotifier implements RunNotifier {
       // Progress is silent; anything that ended, or that this build does not
       // recognise, is reported.
       if (SILENT_OUTCOMES.has(event.outcome)) return;
+      const notificationPolicy = this.facts as
+        | { shouldNotify?: (event: TaskFinished) => Promise<boolean> }
+        | undefined;
+      if (
+        notificationPolicy?.shouldNotify !== undefined &&
+        !(await notificationPolicy.shouldNotify(event).catch(() => true))
+      )
+        return;
 
       const category = CATEGORY_FOR[event.outcome] ?? "warning";
       const facts =

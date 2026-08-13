@@ -5,7 +5,10 @@ import { join } from "node:path";
 import test from "node:test";
 import { AiGateway } from "../src/gateway/gateway.js";
 import { MemoryAttemptLedger } from "../src/gateway/memory-ledger.js";
-import { MODEL_POLICY_VERSION } from "../src/gateway/model-policy.js";
+import {
+  MODEL_POLICY_VERSION,
+  modelRoutes,
+} from "../src/gateway/model-policy.js";
 import type {
   ManagedCompletion,
   ManagedProviderAdapter,
@@ -27,14 +30,19 @@ index 1111111..2222222 100644
 
 class FakeDeepSeek implements ManagedProviderAdapter {
   readonly provider = "deepseek" as const;
+  readonly receivedMessages: ReadonlyArray<GatewayRequestMessage>[] = [];
   constructor(private readonly content: string) {}
   async listModels() {
-    return ["deepseek-v4-flash"];
+    return ["deepseek-v4-pro", "deepseek-v4-flash"];
   }
-  async invoke(): Promise<ManagedCompletion> {
+  async invoke(
+    route: ModelRoute,
+    messages: ReadonlyArray<GatewayRequestMessage>,
+  ): Promise<ManagedCompletion> {
+    this.receivedMessages.push(messages);
     return {
       providerRequestId: "req-1",
-      resolvedModelId: "deepseek-v4-flash",
+      resolvedModelId: route.requestedModelId,
       resolutionSource: "provider_response",
       content: this.content,
       usage: {
@@ -47,7 +55,7 @@ class FakeDeepSeek implements ManagedProviderAdapter {
       },
       modelUsage: [
         {
-          resolvedModelId: "deepseek-v4-flash",
+          resolvedModelId: route.requestedModelId,
           inputTokens: 5,
           outputTokens: 5,
           reasoningTokens: 0,
@@ -59,6 +67,11 @@ class FakeDeepSeek implements ManagedProviderAdapter {
     };
   }
 }
+
+type GatewayRequestMessage = {
+  role: "system" | "user" | "assistant";
+  content: string;
+};
 
 const noopApplier: PatchApplier = {
   async apply() {
@@ -106,14 +119,9 @@ function workerRunner(exitCode: number): WorkerRunner {
   };
 }
 
-// Must match model-policy.ts's bulk_code[0] entry exactly -- AiGateway
-// compares routeOverride against modelRoutes(taskClass) by deep equality.
-const route: ModelRoute = {
-  provider: "deepseek",
-  requestedModelId: "deepseek-v4-flash",
-  role: "primary-executor",
-  mode: "non-thinking",
-};
+// Must match model-policy.ts's bulk_code[0] entry exactly. AiGateway compares
+// routeOverride against modelRoutes(taskClass) by deep equality.
+const route = modelRoutes("bulk_code")[0]!;
 
 const gatewayRequest = {
   idempotencyKey: "contract011-task-1",
@@ -325,4 +333,37 @@ test("a patch outside the owned-paths manifest is rejected before verification r
     "verification must not run for an out-of-scope patch",
   );
   assert.match(recorded[0]?.reason ?? "", /out-of-scope/);
+});
+
+test("DeepSeek patch attempts receive a strict diff-only output contract", async () => {
+  const fake = new FakeDeepSeek(validPatch);
+  const ledger = new MemoryAttemptLedger();
+  const gateway = new AiGateway(ledger, [fake]);
+  const driver = new AiPatchExecutorDriver(
+    gateway,
+    noopApplier,
+    workerRunner(1),
+    { async record() {} },
+    noopCopier,
+  );
+  await driver.run({
+    taskId: "t1",
+    gatewayRequest,
+    route,
+    ownedPaths: ["src/policy/**"],
+    workspaceRoot: "/tmp/project-repo",
+    verifyJob: realWorkspaceJob(),
+    fallbackReason: "patch has no diff --git headers",
+  });
+  const finalMessage = fake.receivedMessages[0]?.at(-1);
+  assert.equal(finalMessage?.role, "user");
+  assert.match(finalMessage?.content ?? "", /DEEPSEEK PATCH OUTPUT CONTRACT/);
+  assert.match(
+    finalMessage?.content ?? "",
+    /first non-whitespace bytes.*`diff --git `/s,
+  );
+  assert.match(
+    finalMessage?.content ?? "",
+    /patch has no diff --git headers/,
+  );
 });

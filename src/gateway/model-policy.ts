@@ -19,23 +19,17 @@ const routes: Record<TaskClass, ReadonlyArray<ModelRoute>> = {
       provider: "deepseek",
       requestedModelId: "deepseek-v4-pro",
       role: "primary-executor-retry",
-      mode: "thinking",
+      mode: "non-thinking",
     },
     {
       provider: "codex",
-      requestedModelId: "gpt-5.6-terra",
+      requestedModelId: "gpt-5.5",
       role: "technical-fallback",
-      effort: "medium",
-    },
-    {
-      provider: "codex",
-      requestedModelId: "gpt-5.6-sol",
-      role: "technical-fallback-retry",
       effort: "high",
     },
     {
       provider: "claude",
-      requestedModelId: "claude-sonnet-5",
+      requestedModelId: "claude-sonnet-4-6",
       role: "technical-fallback-final",
       effort: "high",
     },
@@ -43,31 +37,25 @@ const routes: Record<TaskClass, ReadonlyArray<ModelRoute>> = {
   complex_backend: [
     {
       provider: "deepseek",
-      requestedModelId: "deepseek-v4-pro",
+      requestedModelId: "deepseek-v4-flash",
       role: "primary-executor",
-      mode: "thinking",
+      mode: "non-thinking",
     },
     {
       provider: "deepseek",
-      requestedModelId: "deepseek-v4-flash",
+      requestedModelId: "deepseek-v4-pro",
       role: "primary-executor-retry",
       mode: "non-thinking",
     },
     {
       provider: "codex",
-      requestedModelId: "gpt-5.6-terra",
+      requestedModelId: "gpt-5.5",
       role: "technical-fallback",
-      effort: "medium",
-    },
-    {
-      provider: "codex",
-      requestedModelId: "gpt-5.6-sol",
-      role: "technical-fallback-retry",
       effort: "high",
     },
     {
       provider: "claude",
-      requestedModelId: "claude-sonnet-5",
+      requestedModelId: "claude-sonnet-4-6",
       role: "technical-fallback-final",
       effort: "high",
     },
@@ -83,42 +71,56 @@ const routes: Record<TaskClass, ReadonlyArray<ModelRoute>> = {
       provider: "deepseek",
       requestedModelId: "deepseek-v4-pro",
       role: "primary-executor-retry",
-      mode: "thinking",
+      mode: "non-thinking",
     },
     {
       provider: "codex",
-      requestedModelId: "gpt-5.6-terra",
+      requestedModelId: "gpt-5.5",
       role: "technical-fallback",
-      effort: "medium",
-    },
-    {
-      provider: "codex",
-      requestedModelId: "gpt-5.6-sol",
-      role: "technical-fallback-retry",
       effort: "high",
     },
     {
       provider: "claude",
-      requestedModelId: "claude-sonnet-5",
+      requestedModelId: "claude-sonnet-4-6",
       role: "technical-fallback-final",
       effort: "high",
     },
   ],
   orchestration: [
     {
+      provider: "deepseek",
+      requestedModelId: "deepseek-v4-flash",
+      role: "orchestrator",
+      mode: "non-thinking",
+    },
+    {
+      provider: "deepseek",
+      requestedModelId: "deepseek-v4-pro",
+      role: "orchestrator-retry",
+      mode: "thinking",
+    },
+    {
+      provider: "codex",
+      requestedModelId: "gpt-5.5",
+      role: "orchestrator-fallback",
+      effort: "high",
+    },
+    {
+      provider: "codex",
+      requestedModelId: "gpt-5.6",
+      role: "orchestrator-fallback-retry",
+      effort: "high",
+    },
+    {
       provider: "claude",
       requestedModelId: "claude-sonnet-5",
-      role: "orchestrator",
-      // Lowered from "high" on 2026-08-10: conversation is read on a phone and
-      // ten seconds for a simple question is too slow. High effort buys careful
-      // reasoning that a chat turn rarely needs, and the escalation tier is
-      // still there for when it does.
-      effort: "medium",
+      role: "orchestrator-claude-fallback",
+      effort: "high",
     },
     {
       provider: "claude",
       requestedModelId: "claude-opus-5",
-      role: "orchestrator-escalation",
+      role: "orchestrator-final-fallback",
       effort: "xhigh",
     },
   ],
@@ -131,7 +133,7 @@ const routes: Record<TaskClass, ReadonlyArray<ModelRoute>> = {
     },
     {
       provider: "claude",
-      requestedModelId: "claude-sonnet-5",
+      requestedModelId: "claude-sonnet-4-6",
       role: "reviewer-fallback",
       effort: "high",
     },
@@ -139,7 +141,7 @@ const routes: Record<TaskClass, ReadonlyArray<ModelRoute>> = {
   specialist_review: [
     {
       provider: "claude",
-      requestedModelId: "claude-sonnet-5",
+      requestedModelId: "claude-sonnet-4-6",
       role: "specialist-reviewer",
       effort: "high",
     },
@@ -169,7 +171,7 @@ const routes: Record<TaskClass, ReadonlyArray<ModelRoute>> = {
       // enforce that this route is never selected for a task Codex itself
       // executed as a technical-fallback tier (anti self-review).
       provider: "codex",
-      requestedModelId: "gpt-5.6-sol",
+      requestedModelId: "gpt-5.5",
       role: "hard-fallback-reviewer",
       effort: "high",
     },
@@ -177,7 +179,7 @@ const routes: Record<TaskClass, ReadonlyArray<ModelRoute>> = {
   independent_review: [
     {
       provider: "claude",
-      requestedModelId: "claude-sonnet-5",
+      requestedModelId: "claude-sonnet-4-6",
       role: "independent-reviewer",
       effort: "high",
     },

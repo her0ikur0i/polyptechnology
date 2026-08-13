@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { OperationDriver } from "./execution-supervisor.js";
+import type {
+  OperationContext,
+  OperationDriver,
+} from "./execution-supervisor.js";
 import type { AiGateway } from "../gateway/gateway.js";
+import { modelRoutes } from "../gateway/model-policy.js";
 import type { PostgresProjectFactory } from "../factory/postgres-repository.js";
 import {
   normalizeRuntime,
@@ -99,10 +103,28 @@ export class BlueprintTranslationDriver implements OperationDriver {
     private readonly factory: PostgresProjectFactory,
   ) {}
 
-  async execute(input: unknown, signal: AbortSignal): Promise<unknown> {
+  async execute(
+    input: unknown,
+    signal: AbortSignal,
+    context?: OperationContext,
+  ): Promise<unknown> {
     const stored = parseBlueprintTranslationTaskInput(input);
+    // The task spec is immutable, so its base key is necessarily shared by
+    // every attempt. Reusing it made attempt two die in the gateway ledger as
+    // `attempt already exists` before it could reach a provider. Keep attempt
+    // one's historical identity; derive a stable key for each real retry.
+    const attemptOrdinal = context?.attemptOrdinal ?? 1;
+    const idempotencyKey =
+      attemptOrdinal <= 1
+        ? stored.idempotencyKey
+        : `${stored.idempotencyKey}#${attemptOrdinal}`;
+    const orchestrationRoutes = modelRoutes("orchestration");
+    const route =
+      orchestrationRoutes[
+        Math.min(attemptOrdinal - 1, orchestrationRoutes.length - 1)
+      ] ?? stored.route;
     const result = await this.gateway.execute({
-      idempotencyKey: stored.idempotencyKey,
+      idempotencyKey,
       taskClass: "orchestration",
       attribution: stored.attribution,
       messages: [
@@ -112,7 +134,7 @@ export class BlueprintTranslationDriver implements OperationDriver {
       maxOutputTokens: stored.maxOutputTokens,
       maxCostUsdMicros: stored.maxCostUsdMicros,
       policyVersion: stored.policyVersion,
-      routeOverride: stored.route,
+      routeOverride: route,
       signal,
     });
 

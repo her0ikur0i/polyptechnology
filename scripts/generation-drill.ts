@@ -14,6 +14,7 @@ import { parseBlueprint } from "../src/factory/blueprint.js";
 import { createGenerationTask } from "../src/factory/generation-task.js";
 import { deterministicUuid } from "../src/deterministic-id.js";
 import type { OwnerContext } from "../src/operations/owner-commands.js";
+import type { ProposalState } from "../src/orchestrator/types.js";
 
 // Drives the generation pipeline end to end against a real database, and says
 // exactly how far it got.
@@ -68,6 +69,14 @@ function runIdentity(runLabel: string) {
   };
 }
 
+function deterministicProjectId(idempotencyKey: string): string {
+  return deterministicUuid(`${OWNER_ACTOR}:${idempotencyKey}:project`);
+}
+
+function deterministicConversationId(idempotencyKey: string): string {
+  return deterministicUuid(`${OWNER_ACTOR}:${idempotencyKey}:conversation`);
+}
+
 export function renderReport(report: DrillReport): string {
   const symbol: Record<StageState, string> = {
     passed: "ok  ",
@@ -96,7 +105,13 @@ export async function runDrill(
   pool: Pool,
   runLabel: string,
   workspacesRoot: string,
-  depth: "simple" | "deep" | "landing" | "complex" = "simple",
+  depth:
+    | "simple"
+    | "deep"
+    | "landing"
+    | "complex"
+    | "extreme"
+    | "ui-extreme" = "simple",
 ): Promise<DrillReport> {
   const brief =
     depth === "deep"
@@ -105,7 +120,11 @@ export async function runDrill(
         ? LANDING_BRIEF
         : depth === "complex"
           ? COMPLEX_BRIEF
-          : SIMPLE_BRIEF;
+          : depth === "extreme"
+            ? EXTREME_BRIEF
+            : depth === "ui-extreme"
+              ? UI_EXTREME_BRIEF
+            : SIMPLE_BRIEF;
   const identity = runIdentity(runLabel);
   const stages: StageReport[] = [];
   const conversations = new PostgresConversationStore(pool);
@@ -157,9 +176,21 @@ export async function runDrill(
       facts: { projectId, conversationId },
     });
   } catch (error) {
-    record({ name: "conversation", state: "failed", detail: message(error) });
-    remaining(1, "conversation did not start");
-    return { runLabel, reached, stages, ok: false };
+    projectId = deterministicProjectId(identity.conversationKey);
+    conversationId = deterministicConversationId(identity.conversationKey);
+    const existing = await conversations.conversation(projectId, conversationId);
+    if (existing === undefined) {
+      record({ name: "conversation", state: "failed", detail: message(error) });
+      remaining(1, "conversation did not start");
+      return { runLabel, reached, stages, ok: false };
+    }
+    conversationVersion = existing.version;
+    record({
+      name: "conversation",
+      state: "passed",
+      detail: `resumed after ${message(error)}`,
+      facts: { projectId, conversationId },
+    });
   }
 
   // --- 2. brief ------------------------------------------------------------
@@ -169,20 +200,31 @@ export async function runDrill(
   // model-authored brief would make the blueprint's contents vary run to run
   // for no gain.
   try {
-    const sent = await owner.sendMessage(context, {
+    const existingMessages = await conversations.messages(
       projectId,
       conversationId,
-      expectedVersion: conversationVersion,
-      idempotencyKey: deterministicUuid(`drill:${runLabel}:brief`),
-      occurredAt: new Date().toISOString(),
-      content: brief,
-    });
-    // appendMessage() returns the message, not the conversation, so the
-    // fence is tracked here rather than read back.
-    conversationVersion += 1;
+    );
+    const existingBrief = existingMessages.find(
+      (message) => message.role === "owner" && message.content === brief,
+    );
+    const sent =
+      existingBrief ??
+      (await owner.sendMessage(context, {
+        projectId,
+        conversationId,
+        expectedVersion: conversationVersion,
+        idempotencyKey: deterministicUuid(`drill:${runLabel}:brief`),
+        occurredAt: new Date().toISOString(),
+        content: brief,
+      }));
+    // appendMessage() returns the message, not the conversation, so the fence
+    // is tracked here. On resume, read the actual conversation version instead
+    // of assuming this process appended the brief.
+    conversationVersion = Math.max(conversationVersion, sent.ordinal);
     record({
       name: "brief",
       state: "passed",
+      ...(existingBrief === undefined ? {} : { detail: "resumed existing brief" }),
       facts: { ordinal: String(sent.ordinal) },
     });
   } catch (error) {
@@ -194,12 +236,37 @@ export async function runDrill(
   // --- 3. proposal ---------------------------------------------------------
   let proposalId: string, proposalVersion: number;
   try {
-    const drafted = await owner.draftProposal(context, {
-      projectId,
-      conversationId,
-      idempotencyKey: identity.proposalKey,
-      occurredAt: new Date().toISOString(),
-    });
+    let drafted: Awaited<ReturnType<OwnerCommandService["draftProposal"]>>;
+    try {
+      drafted = await owner.draftProposal(context, {
+        projectId,
+        conversationId,
+        idempotencyKey: identity.proposalKey,
+        occurredAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      const existing = await pool.query<{
+        id: string;
+        state: string;
+        version: string;
+        contract_candidate: string;
+      }>(
+        `SELECT id, state, version, contract_candidate
+           FROM conversation_proposals
+          WHERE project_id=$1 AND conversation_id=$2
+          ORDER BY version DESC LIMIT 1`,
+        [projectId, conversationId],
+      );
+      const row = existing.rows[0];
+      if (row === undefined) throw error;
+      drafted = {
+        proposalId: row.id,
+        conversationId,
+        state: row.state as ProposalState,
+        version: Number(row.version),
+        contractCandidate: row.contract_candidate,
+      };
+    }
     proposalId = drafted.proposalId;
     proposalVersion = drafted.version;
     record({
@@ -221,16 +288,24 @@ export async function runDrill(
   // rather than writing `handed_off` directly.
   let contractCandidate: string;
   try {
-    const handed = await owner.approveProposal(context, {
-      projectId,
-      proposalId,
-      expectedVersion: proposalVersion,
-    });
-    contractCandidate = handed.contractCandidate;
-    // handoff() returns the frozen candidate, not the row, so the state is
-    // read back rather than assumed. Asserting on what the database holds is
-    // the whole point of a drill.
-    const stored = await conversations.proposal(projectId, proposalId);
+    let approvalId: string | undefined;
+    let stored = await conversations.proposal(projectId, proposalId);
+    if (stored?.state === "handed_off") {
+      contractCandidate = stored.contractCandidate;
+      approvalId = stored.approvalId;
+    } else {
+      const handed = await owner.approveProposal(context, {
+        projectId,
+        proposalId,
+        expectedVersion: proposalVersion,
+      });
+      contractCandidate = handed.contractCandidate;
+      approvalId = handed.approvalId;
+      // handoff() returns the frozen candidate, not the row, so the state is
+      // read back rather than assumed. Asserting on what the database holds is
+      // the whole point of a drill.
+      stored = await conversations.proposal(projectId, proposalId);
+    }
     if (stored === undefined)
       throw new Error("proposal vanished after handoff");
     if (stored.state !== "handed_off")
@@ -240,7 +315,7 @@ export async function runDrill(
       state: "passed",
       facts: {
         state: stored.state,
-        approvalId: handed.approvalId,
+        approvalId: approvalId ?? "already-handed-off",
         version: String(stored.version),
       },
     });
@@ -257,16 +332,37 @@ export async function runDrill(
   try {
     const project = await factory.getProject(projectId);
     if (project === undefined) throw new Error("project vanished");
-    const queued = await queueBlueprintTranslation(pool, {
-      projectId,
-      proposalId,
-      contractCandidate,
-      expectedProjectVersion: project.version,
-    });
+    const existing = await pool.query<{ task_id: string }>(
+      `SELECT task_id FROM operation_task_specs s
+         JOIN tasks t ON t.id=s.task_id
+        WHERE s.driver='blueprint_translation'
+          AND s.input->>'projectId'=$1
+          AND s.input->>'proposalId'=$2
+          AND t.state <> 'failed'
+        ORDER BY s.created_at DESC LIMIT 1`,
+      [projectId, proposalId],
+    );
+    const alreadyTranslated = project.state !== "idea";
+    const queued =
+      alreadyTranslated && existing.rows[0] === undefined
+        ? { taskId: "already-translated" }
+        : existing.rows[0] === undefined
+          ? await queueBlueprintTranslation(pool, {
+              projectId,
+              proposalId,
+              contractCandidate,
+              expectedProjectVersion: project.version,
+            })
+          : { taskId: existing.rows[0].task_id };
     record({
       name: "translation",
       state: "passed",
-      detail: "queued; execution is the supervisor's",
+      detail:
+        alreadyTranslated && existing.rows[0] === undefined
+          ? "resumed after translation"
+          : existing.rows[0] === undefined
+          ? "queued; execution is the supervisor's"
+          : "resumed existing translation task",
       facts: { taskId: queued.taskId, projectState: project.state },
     });
   } catch (error) {
@@ -281,12 +377,17 @@ export async function runDrill(
   // `provisioned` -- a state nothing in this system had ever written before
   // CONTRACT-017C.
   try {
-    const translated = await waitForProjectState(
-      factory,
-      projectId,
-      "blueprint",
-      TRANSLATION_TIMEOUT_MS,
-    );
+    const current = await factory.getProject(projectId);
+    if (current === undefined) throw new Error("project vanished");
+    const translated =
+      current.state === "idea"
+        ? await waitForProjectState(
+            factory,
+            projectId,
+            "blueprint",
+            TRANSLATION_TIMEOUT_MS,
+          )
+        : current;
     const versionRow = await pool.query<{ document: unknown }>(
       "SELECT document FROM project_blueprint_versions WHERE id=$1",
       [translated.blueprintVersionId],
@@ -296,11 +397,14 @@ export async function runDrill(
     const blueprint = parseBlueprint(versionRow.rows[0]!.document);
 
     const provisioner = new NodeWorkspaceProvisioner(workspacesRoot);
-    const { repoPath } = await provisioner.provision(projectId, blueprint);
-    await new FactoryLifecycleAdvancer(factory).provisioned(
-      projectId,
-      translated.workspaceRef,
-    );
+    const repoPath = join(workspacesRoot, projectId, "repo");
+    if (translated.state === "blueprint") {
+      await provisioner.provision(projectId, blueprint);
+      await new FactoryLifecycleAdvancer(factory).provisioned(
+        projectId,
+        translated.workspaceRef,
+      );
+    }
     const provisioned = await factory.getProject(projectId);
     record({
       name: "provisioning",
@@ -333,35 +437,63 @@ export async function runDrill(
     const blueprint = parseBlueprint(versionRow.rows[0]!.document);
     const repoPath = join(workspacesRoot, projectId, "repo");
 
-    const task = await createGenerationTask(pool, project, blueprint, repoPath);
-    const outcome = await waitForTask(pool, task.taskId, GENERATION_TIMEOUT_MS);
-    const attempts = await pool.query<{
-      provider_id: string;
-      requested_model_id: string;
-      status: string;
-    }>(
-      `SELECT provider_id, requested_model_id, status FROM provider_artifacts
-        WHERE task_id = $1 ORDER BY created_at ASC`,
-      [task.taskId],
+    const phases = generationPhases(blueprint.requirements);
+    const taskIds: string[] = [];
+    const walkedByPhase: string[] = [];
+    const existingTasks = await pool.query<{ task_id: string }>(
+      `SELECT task_id FROM operation_task_specs
+        WHERE role='factory-generation'
+          AND input->'attribution'->>'projectId'=$1
+        ORDER BY created_at ASC`,
+      [projectId],
     );
-    const walked = attempts.rows
-      .map(
-        (row) => `${row.provider_id}:${row.requested_model_id}=${row.status}`,
-      )
-      .join(" -> ");
-
-    if (outcome !== "succeeded")
-      throw new Error(
-        `generation task ended ${outcome}${walked === "" ? "" : `; tiers: ${walked}`}`,
+    for (const [index, requirements] of phases.entries()) {
+      const phaseLabel = `phase-${index + 1}-of-${phases.length}`;
+      const existingTask = existingTasks.rows[index];
+      const task =
+        existingTask === undefined
+          ? await createGenerationTask(pool, project, blueprint, repoPath, {
+              phaseLabel,
+              requirements,
+            })
+          : { taskId: existingTask.task_id };
+      taskIds.push(task.taskId);
+      const outcome = await waitForTask(
+        pool,
+        task.taskId,
+        generationTimeoutMs(depth, phases.length),
       );
+      const attempts = await pool.query<{
+        provider_id: string;
+        requested_model_id: string;
+        status: string;
+      }>(
+        `SELECT provider_id, requested_model_id, status FROM provider_artifacts
+          WHERE task_id = $1 ORDER BY created_at ASC`,
+        [task.taskId],
+      );
+      const walked = attempts.rows
+        .map(
+          (row) => `${row.provider_id}:${row.requested_model_id}=${row.status}`,
+        )
+        .join(" -> ");
+      walkedByPhase.push(
+        `${phaseLabel}: ${walked === "" ? "none recorded" : walked}`,
+      );
+
+      if (outcome !== "succeeded")
+        throw new Error(
+          `${phaseLabel} ended ${outcome}${walked === "" ? "" : `; tiers: ${walked}`}`,
+        );
+    }
 
     const generated = await factory.getProject(projectId);
     record({
       name: "generation",
       state: "passed",
       facts: {
-        taskId: task.taskId,
-        tiers: walked === "" ? "none recorded" : walked,
+        taskId: taskIds.join(", "),
+        tiers: walkedByPhase.join(" | "),
         projectState: generated?.state ?? "unknown",
       },
     });
@@ -452,7 +584,27 @@ async function gitOutput(
   return stdout.trim();
 }
 
-const GENERATION_TIMEOUT_MS = 900_000;
+function generationPhases(
+  requirements: ReadonlyArray<string>,
+): ReadonlyArray<ReadonlyArray<string>> {
+  if (requirements.length === 0)
+    return [["Keep the generated scaffold green."]];
+  if (requirements.some((requirement) => requirement === "single-phase-ui-review"))
+    return [requirements.filter((requirement) => requirement !== "single-phase-ui-review")];
+  return requirements.map((requirement) => [requirement]);
+}
+
+const STANDARD_GENERATION_TIMEOUT_MS = 900_000;
+const EXTREME_GENERATION_TIMEOUT_MS = 3_600_000;
+
+function generationTimeoutMs(
+  depth: "simple" | "deep" | "landing" | "complex" | "extreme" | "ui-extreme",
+  phaseCount: number,
+): number {
+  if (depth === "extreme" || depth === "ui-extreme")
+    return Math.max(EXTREME_GENERATION_TIMEOUT_MS, phaseCount * 600_000);
+  return STANDARD_GENERATION_TIMEOUT_MS;
+}
 
 const TERMINAL_TASK_STATES = new Set([
   "succeeded",
@@ -679,6 +831,102 @@ const COMPLEX_BRIEF = [
   "Stack: node runtime, no framework, no database. No dependencies.",
 ].join("\n");
 
+const EXTREME_BRIEF = [
+  "Build a Node/TypeScript in-memory billing and inventory engine called",
+  "`stockflow`, split across correlated modules with shared exported types.",
+  "",
+  "`src/catalog.ts`:",
+  "- Export `Product`, `Sku`, and `Money` types.",
+  "- Export `createProduct(input)` that validates a nonempty SKU, nonempty",
+  "  name, positive integer price minor units, and uppercase 3-letter",
+  "  currency.",
+  "- Export `changePrice(product, nextPrice)` without mutating the original",
+  "  product.",
+  "",
+  "`src/inventory.ts`:",
+  "- Export `InventoryState`, `receiveStock(state, sku, quantity)`,",
+  "  `reserveStock(state, sku, quantity)`, and `releaseReservation(state, sku, quantity)`.",
+  "- Quantities must be positive integers.",
+  "- Available stock can never go below zero; reservation attempts that would",
+  "  over-reserve must throw and leave the original state unchanged.",
+  "- Every function must return a new state object.",
+  "",
+  "`src/orders.ts`:",
+  "- Export `OrderLine`, `Order`, `createOrder(id, lines)`, and",
+  "  `calculateOrderTotal(order, catalog)`.",
+  "- Reject an empty order id, duplicate SKUs in one order, empty lines,",
+  "  unknown SKUs, and non-positive integer quantities.",
+  "- The total must be a `Money` object and all order lines must share one",
+  "  currency; mixed currencies must throw.",
+  "",
+  "`src/invoices.ts`:",
+  "- Export `Invoice`, `createInvoice(order, catalog, issuedAt)`,",
+  "  `markPaid(invoice, paidAt)`, and `isOverdue(invoice, today, termsDays)`.",
+  "- `createInvoice` must snapshot the order total and start unpaid.",
+  "- `markPaid` returns a new invoice and is idempotent if already paid.",
+  "- `isOverdue` is false for paid invoices and true only after the due date.",
+  "",
+  "`src/reports.ts`:",
+  "- Export `inventoryReport(state)` sorted by SKU.",
+  "- Export `revenueReport(invoices)` returning paid, unpaid, and overdue",
+  "  totals in integer minor units.",
+  "- Export `topProductsByQuantity(orders, limit)` sorted by quantity desc",
+  "  then SKU asc.",
+  "",
+  "Cover every module and every error case with node:test. Include tests that",
+  "prove failed operations do not mutate their input, totals are computed from",
+  "catalog prices rather than line-provided prices, mixed currencies fail, and",
+  "reports sort deterministically.",
+  "",
+  "Stack: node runtime, no framework, no database. No dependencies.",
+].join("\n");
+
+const UI_EXTREME_BRIEF = [
+  "Build a Node/TypeScript module called `polyp-factory-console-ui` that",
+  "renders a reviewable operator console for Polyp AI Factory. The product",
+  "reference is the existing factory workflow: an approved conversation",
+  "becomes a blueprint, then phased code generation, verification, publication,",
+  "deployment, and Telegram reporting.",
+  "",
+  "single-phase-ui-review",
+  "",
+  "Requirements:",
+  "- Export exactly `renderPolypFactoryConsole(): string` from the generated",
+  "  TypeScript source. It returns one complete, valid HTML5 document as a",
+  "  string and starts with `<!doctype html>`.",
+  "- Use one embedded `<style>` block in the `<head>`. Do not use external",
+  "  scripts, fonts, stylesheets, images, SVG files, or runtime dependencies.",
+  "- The first viewport is the actual operator console, not a marketing hero.",
+  "  It must show a left rail, a compact top status bar, an active project",
+  "  header, model routing, budget state, current run state, and deployment",
+  "  state without hiding the main workflow below the fold.",
+  "- Include a generation phase timeline with at least 9 phases. Each phase",
+  "  row or tile shows phase id, status, selected model, attempt count, changed",
+  "  lines, and a short repair/failure note. Include the real diagnostic case",
+  "  `phase-4-of-9`: DeepSeek V4 Flash rejected twice, then DeepSeek V4 Pro",
+  "  accepted.",
+  "- Include separate approvals, evidence, artifact preview, telemetry, and",
+  "  Telegram signal panels. These panels must use realistic labels from the",
+  "  drill system: blueprint translation, generation phase, verifier,",
+  "  publication, commit, changed lines, route policy, fallback chain, and",
+  "  notification suppression.",
+  "- Design for dense operational scanning: restrained colors, clear hierarchy,",
+  "  no nested cards, no decorative gradient blobs, no oversized hero section,",
+  "  no explanatory feature text about how to use the UI.",
+  "- Make it responsive down to 375px using CSS grid/flexbox and relative",
+  "  units. The layout must not rely on fixed outer widths, and text must not",
+  "  overlap controls or panels.",
+  "- Accessibility must be explicit: semantic landmarks, labelled regions,",
+  "  good contrast, visible `:focus-visible` states, and keyboard-reachable",
+  "  controls represented as links or buttons in the HTML.",
+  "- Cover this with node:test tests. Assert the returned string starts with",
+  "  `<!doctype html>`, contains exactly one `<style` block, contains",
+  "  `DeepSeek`, `phase-4-of-9`, `focus-visible`, `approval`, `verifier`,",
+  "  and semantic landmarks such as `<main` and `<nav`.",
+  "",
+  "Stack: node runtime, no framework, no database. No dependencies.",
+].join("\n");
+
 function message(error: unknown): string {
   return error instanceof Error ? error.message : "unknown error";
 }
@@ -704,7 +952,11 @@ if (invoked) {
         ? "landing"
         : process.argv[3] === "complex"
           ? "complex"
-          : "simple";
+          : process.argv[3] === "extreme"
+            ? "extreme"
+            : process.argv[3] === "ui-extreme"
+              ? "ui-extreme"
+            : "simple";
   if (databaseUrl === undefined) {
     console.error("DATABASE_URL is required");
     process.exitCode = 1;

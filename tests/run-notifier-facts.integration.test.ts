@@ -120,7 +120,7 @@ test(
 
       // The free attempt: $0 real dollars (subscription CLI), and accepted.
       const accepted = await new AiGateway(ledger, [
-        adapter("codex", "gpt-5.6-terra", 0),
+        adapter("codex", "gpt-5.5", 0),
       ]).execute({
         idempotencyKey: `accepted-${taskId}`,
         taskClass: "bulk_code",
@@ -134,8 +134,8 @@ test(
         attemptId: accepted.attempt.id,
         taskId,
         providerId: "codex",
-        requestedModelId: "gpt-5.6-terra",
-        resolvedModelId: "gpt-5.6-terra",
+        requestedModelId: "gpt-5.5",
+        resolvedModelId: "gpt-5.5",
         status: "accepted",
         outputSha256: accepted.attempt.outputSha256!,
         patchSha256: "b".repeat(64),
@@ -148,7 +148,7 @@ test(
       const facts = new PostgresRunFacts(pool);
       const { usage } = await facts.usageFor(taskId);
       assert.equal(usage?.provider, "codex");
-      assert.equal(usage?.model, "gpt-5.6-terra");
+      assert.equal(usage?.model, "gpt-5.5");
       assert.equal(usage?.costUsdMicros, 0);
     } finally {
       await pool.end();

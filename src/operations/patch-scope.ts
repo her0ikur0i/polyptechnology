@@ -22,13 +22,10 @@ const owned = ownedByManifest;
 // unparseable rather than silently treated as touching nothing.
 // Pulls the unified diff out of whatever a provider actually answered with.
 //
-// The three registered providers do not speak identically. `deepseek-v4-flash`
-// returns a bare diff. `deepseek-v4-pro` is a thinking model: it reasons at
-// length and then presents the diff conversationally, usually inside a
-// ```diff fence and often after a sentence or two. Codex sits in between.
-// Every one of those is a correct answer to "give me a diff"; only the first
-// was accepted, so `deepseek-v4-pro` was rejected on **every** attempt with
-// "patch has no diff --git headers" -- a whole tier of the escalation chain
+// The three registered providers do not speak identically. Some return a bare
+// diff, some wrap it in a fence, and some put a short sentence first. Every
+// one of those can be a correct answer to "give me a diff"; rejecting them
+// before looking for the actual `diff --git` header made a whole fallback tier
 // unusable because of presentation rather than substance.
 //
 // This is the same defect shape as the blueprint runtime that arrived as

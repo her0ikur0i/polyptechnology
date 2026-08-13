@@ -70,6 +70,57 @@ test("a retry is silent — only the ending is news", async () => {
   assert.equal(transport.sent.length, 0);
 });
 
+test("facts may suppress diagnostic or low-signal task notifications", async () => {
+  const transport = new RecordingTransport();
+  const facts = {
+    shouldNotify: async () => false,
+    usageFor: async () => ({}),
+  };
+  await new TelegramRunNotifier(
+    transport,
+    "chat-1",
+    facts as never,
+  ).taskFinished({
+    taskId: "probe-task",
+    attemptOrdinal: 1,
+    outcome: "failed",
+    reason: "invalid_output",
+  });
+
+  assert.equal(transport.sent.length, 0);
+});
+
+test("a repaired generation phase report names the phase", async () => {
+  const transport = new RecordingTransport();
+  const facts = {
+    shouldNotify: async () => true,
+    usageFor: async () => ({}),
+    describe: async () => ({
+      kind: "Generation phase" as const,
+      subject: "Stockflow · phase-4-of-9",
+    }),
+    tiersFor: async () => [
+      { provider: "deepseek", model: "deepseek-v4-flash", status: "rejected" },
+      { provider: "deepseek", model: "deepseek-v4-pro", status: "accepted" },
+    ],
+  };
+  await new TelegramRunNotifier(
+    transport,
+    "chat-1",
+    facts as never,
+  ).taskFinished({
+    taskId: "phase-task",
+    attemptOrdinal: 3,
+    outcome: "succeeded",
+  });
+
+  const text = textOf(transport);
+  assert.ok(text.startsWith("✅ <b>Generation phase succeeded</b>"));
+  assert.ok(text.includes("Stockflow · phase-4-of-9"));
+  assert.ok(text.includes("deepseek-v4-flash→rejected"));
+  assert.ok(text.includes("deepseek-v4-pro→accepted"));
+});
+
 test("a failure with no provider attempt says so instead of blaming the provider", async () => {
   const transport = new RecordingTransport();
   const facts = {

@@ -16,22 +16,23 @@ import { PostgresAttemptLedger } from "../src/gateway/postgres-ledger.js";
 import type {
   ManagedCompletion,
   ManagedProviderAdapter,
+  ModelRoute,
 } from "../src/gateway/types.js";
 import { runOwnTask } from "./run-own-task.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
-class FakeClaude implements ManagedProviderAdapter {
-  readonly provider = "claude" as const;
+class FakeReplyProvider implements ManagedProviderAdapter {
+  readonly provider = "deepseek" as const;
   async listModels() {
-    return ["claude-sonnet-5", "claude-opus-5"];
+    return ["deepseek-v4-flash"];
   }
-  async invoke(): Promise<ManagedCompletion> {
+  async invoke(route: ModelRoute): Promise<ManagedCompletion> {
     const content =
       "Got it -- to scope this well, what's the expected volume of invoices per month?";
     return {
       providerRequestId: randomUUID(),
-      resolvedModelId: "claude-sonnet-5",
+      resolvedModelId: route.requestedModelId,
       resolutionSource: "provider_response",
       content,
       usage: {
@@ -44,7 +45,7 @@ class FakeClaude implements ManagedProviderAdapter {
       },
       modelUsage: [
         {
-          resolvedModelId: "claude-sonnet-5",
+          resolvedModelId: route.requestedModelId,
           inputTokens: 40,
           outputTokens: 20,
           reasoningTokens: 0,
@@ -57,20 +58,20 @@ class FakeClaude implements ManagedProviderAdapter {
   }
 }
 
-class CapturingFakeClaude implements ManagedProviderAdapter {
-  readonly provider = "claude" as const;
+class CapturingFakeReplyProvider implements ManagedProviderAdapter {
+  readonly provider = "deepseek" as const;
   receivedMessages: ReadonlyArray<{ role: string; content: string }> = [];
   async listModels() {
-    return ["claude-sonnet-5"];
+    return ["deepseek-v4-flash"];
   }
   async invoke(
-    _route: unknown,
+    route: ModelRoute,
     messages: ReadonlyArray<{ role: string; content: string }>,
   ): Promise<ManagedCompletion> {
     this.receivedMessages = messages;
     return {
       providerRequestId: randomUUID(),
-      resolvedModelId: "claude-sonnet-5",
+      resolvedModelId: route.requestedModelId,
       resolutionSource: "provider_response",
       content: "noted",
       usage: {
@@ -83,7 +84,7 @@ class CapturingFakeClaude implements ManagedProviderAdapter {
       },
       modelUsage: [
         {
-          resolvedModelId: "claude-sonnet-5",
+          resolvedModelId: route.requestedModelId,
           inputTokens: 5,
           outputTokens: 1,
           reasoningTokens: 0,
@@ -155,7 +156,7 @@ test(
         expectedVersion: sent.ordinal,
       });
 
-      const fake = new CapturingFakeClaude();
+      const fake = new CapturingFakeReplyProvider();
       const gateway = new AiGateway(new PostgresAttemptLedger(pool), [fake]);
       const driver = new ConversationReplyDriver(gateway, conversations);
       const work = new PostgresWorkRepository(pool);
@@ -226,7 +227,7 @@ test(
       });
 
       const gateway = new AiGateway(new PostgresAttemptLedger(pool), [
-        new FakeClaude(),
+        new FakeReplyProvider(),
       ]);
       const driver = new ConversationReplyDriver(gateway, conversations);
       const work = new PostgresWorkRepository(pool);

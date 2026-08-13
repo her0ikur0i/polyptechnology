@@ -82,8 +82,8 @@ test("policy contains concrete models for all providers and task roles", () => {
     ] as const
   ).flatMap(modelRoutes);
   assert.ok(all.some((r) => r.requestedModelId === "deepseek-v4-flash"));
-  assert.ok(all.some((r) => r.requestedModelId === "gpt-5.6-sol"));
-  assert.ok(all.some((r) => r.requestedModelId === "claude-sonnet-5"));
+  assert.ok(all.some((r) => r.requestedModelId === "gpt-5.5"));
+  assert.ok(all.some((r) => r.requestedModelId === "claude-sonnet-4-6"));
   assert.ok(
     all.every(
       (r) =>
@@ -95,9 +95,9 @@ test("policy contains concrete models for all providers and task roles", () => {
 });
 test("programming routes are DeepSeek-first, escalating deepseek -> codex -> claude", () => {
   const expectations = {
-    bulk_code: ["deepseek", "deepseek", "codex", "codex", "claude"],
-    complex_backend: ["deepseek", "deepseek", "codex", "codex", "claude"],
-    bounded_repair: ["deepseek", "deepseek", "codex", "codex", "claude"],
+    bulk_code: ["deepseek", "deepseek", "codex", "claude"],
+    complex_backend: ["deepseek", "deepseek", "codex", "claude"],
+    bounded_repair: ["deepseek", "deepseek", "codex", "claude"],
   } as const;
   const tierRank: Record<string, number> = { deepseek: 0, codex: 1, claude: 2 };
   for (const [taskClass, providers] of Object.entries(expectations)) {
@@ -118,13 +118,33 @@ test("programming routes are DeepSeek-first, escalating deepseek -> codex -> cla
     }
   }
 });
-test("orchestration is Claude-led with a tiered escalation, not Codex", () => {
+test("programming DeepSeek routes are non-thinking patch emitters", () => {
+  for (const taskClass of [
+    "bulk_code",
+    "complex_backend",
+    "bounded_repair",
+  ] as const) {
+    const deepseekRoutes = modelRoutes(taskClass).filter(
+      (route) => route.provider === "deepseek",
+    );
+    assert.ok(deepseekRoutes.length > 0);
+    assert.deepEqual(
+      deepseekRoutes.map((route) => route.mode),
+      deepseekRoutes.map(() => "non-thinking"),
+    );
+  }
+});
+test("orchestration is DeepSeek-first with the requested fallback chain", () => {
   assert.deepEqual(
     modelRoutes("orchestration").map((route) => [
       route.provider,
       route.requestedModelId,
     ]),
     [
+      ["deepseek", "deepseek-v4-flash"],
+      ["deepseek", "deepseek-v4-pro"],
+      ["codex", "gpt-5.5"],
+      ["codex", "gpt-5.6"],
       ["claude", "claude-sonnet-5"],
       ["claude", "claude-opus-5"],
     ],
@@ -179,7 +199,11 @@ test("CLI adapters retain concrete primary and auxiliary model usage", async () 
       session_id: "session",
       result: "ok",
       modelUsage: {
-        "claude-sonnet-5": { inputTokens: 2, outputTokens: 1, costUSD: 0.001 },
+        "claude-sonnet-4-6": {
+          inputTokens: 2,
+          outputTokens: 1,
+          costUSD: 0.001,
+        },
         "claude-haiku-4-5-20251001": {
           inputTokens: 1,
           outputTokens: 1,
@@ -193,14 +217,14 @@ test("CLI adapters retain concrete primary and auxiliary model usage", async () 
   const claude = await new ClaudeCliAdapter(runner).invoke(
     {
       provider: "claude",
-      requestedModelId: "claude-sonnet-5",
+      requestedModelId: "claude-sonnet-4-6",
       role: "review",
       effort: "high",
     },
     [{ role: "user", content: "review" }],
     100,
   );
-  assert.equal(claude.resolvedModelId, "claude-sonnet-5");
+  assert.equal(claude.resolvedModelId, "claude-sonnet-4-6");
   assert.equal(claude.modelUsage.length, 2);
   const jsonl = [
     { type: "thread.started", thread_id: "thread" },
@@ -212,7 +236,7 @@ test("CLI adapters retain concrete primary and auxiliary model usage", async () 
   ]
     .map((value) => JSON.stringify(value))
     .join("\n");
-  const parsed = parseCodexJsonl(jsonl, "gpt-5.6-sol");
+  const parsed = parseCodexJsonl(jsonl, "gpt-5.5");
   assert.equal(parsed.resolutionSource, "pinned_request");
   const codex = await new CodexCliAdapter(async () => ({
     stdout: jsonl,
@@ -221,7 +245,7 @@ test("CLI adapters retain concrete primary and auxiliary model usage", async () 
   })).invoke(
     {
       provider: "codex",
-      requestedModelId: "gpt-5.6-sol",
+      requestedModelId: "gpt-5.5",
       role: "integration",
       effort: "high",
     },
@@ -229,6 +253,31 @@ test("CLI adapters retain concrete primary and auxiliary model usage", async () 
     100,
   );
   assert.equal(codex.resolutionSource, "pinned_request");
+});
+test("Codex policy alias uses the concrete CLI model id", async () => {
+  const jsonl = [
+    { type: "thread.started", thread_id: "thread" },
+    { type: "item.completed", item: { type: "agent_message", text: "ok" } },
+    { type: "turn.completed", usage: { input_tokens: 3, output_tokens: 1 } },
+  ]
+    .map((value) => JSON.stringify(value))
+    .join("\n");
+  let args: readonly string[] = [];
+  const codex = await new CodexCliAdapter(async (_file, nextArgs) => {
+    args = nextArgs;
+    return { stdout: jsonl, stderr: "", exitCode: 0 };
+  }).invoke(
+    {
+      provider: "codex",
+      requestedModelId: "gpt-5.6",
+      role: "orchestrator-fallback-retry",
+      effort: "high",
+    },
+    [{ role: "user", content: "work" }],
+    100,
+  );
+  assert.equal(codex.resolvedModelId, "gpt-5.6");
+  assert.equal(args[args.indexOf("--model") + 1], "gpt-5.6-sol");
 });
 test("idempotency mismatch and unverified model fail closed", async () => {
   const ledger = new MemoryAttemptLedger(),

@@ -46,15 +46,28 @@ class FakeDeepSeek implements ManagedProviderAdapter {
     return ["deepseek-v4-flash", "deepseek-v4-pro"];
   }
   async invoke(): Promise<ManagedCompletion> {
-    const content = `diff --git a/src/greeting.ts b/src/greeting.ts
+    const content = `diff --git a/src/generated/complete.ts b/src/generated/complete.ts
 new file mode 100644
 index 0000000..e69de29
 --- /dev/null
-+++ b/src/greeting.ts
++++ b/src/generated/complete.ts
 @@ -0,0 +1,3 @@
 +export function greeting(): string {
 +  return "hello from the generated project";
 +}
+diff --git a/tests/generated/complete.test.ts b/tests/generated/complete.test.ts
+new file mode 100644
+index 0000000..e69de29
+--- /dev/null
++++ b/tests/generated/complete.test.ts
+@@ -0,0 +1,7 @@
++import assert from "node:assert/strict";
++import test from "node:test";
++import { greeting } from "../../src/generated/complete.ts";
++
++test("the generated greeting is available", () => {
++  assert.equal(greeting(), "hello from the generated project");
++});
 `;
     return {
       providerRequestId: randomUUID(),
@@ -220,7 +233,7 @@ test(
       // git apply modifies the working tree directly (no --index, no
       // commit) -- read the file itself, not a committed ref.
       const greeting = readFileSync(
-        join(repoPath, "src", "greeting.ts"),
+        join(repoPath, "src", "generated", "complete.ts"),
         "utf8",
       );
       assert.match(greeting, /hello from the generated project/);

@@ -13,11 +13,11 @@ import type {
   ModelRoute,
 } from "../src/gateway/types.js";
 
-// Taken from the policy rather than hard-coded: a literal here drifts the
-// moment the policy's effort or model changes, and the gateway then rejects the
-// override as "outside policy" -- which is a confusing way to learn that a test
-// fixture went stale.
-const route: ModelRoute = modelRoutes("orchestration")[0]!;
+const route: ModelRoute = modelRoutes("orchestration").find(
+  (candidate) =>
+    candidate.provider === "claude" &&
+    candidate.requestedModelId === "claude-sonnet-5",
+)!;
 
 const resultEvent = (text: string) =>
   JSON.stringify({
@@ -247,7 +247,7 @@ class NonStreamingAdapter implements ManagedProviderAdapter {
   readonly provider = "deepseek" as const;
   invoked = 0;
   async listModels() {
-    return ["deepseek-v4-flash"];
+    return ["deepseek-v4-pro", "deepseek-v4-flash"];
   }
   async invoke() {
     this.invoked += 1;

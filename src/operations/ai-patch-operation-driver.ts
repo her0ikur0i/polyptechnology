@@ -137,6 +137,7 @@ export interface RouteResolver {
     // resolver needs to know how many have already been spent.
     attemptOrdinal?: number,
   ): Promise<StoredAiPatchTaskInput["route"]>;
+  failureEvidence?(taskId: string): Promise<ReadonlyArray<string>>;
 }
 
 const staticFallbackResolver: RouteResolver = {
@@ -195,13 +196,31 @@ export class AiPatchOperationDriver implements OperationDriver {
       attemptOrdinal <= 1
         ? stored.idempotencyKey
         : `${stored.idempotencyKey}#${attemptOrdinal}`;
+    const failureEvidence =
+      attemptOrdinal > 1 && this.routeResolver.failureEvidence !== undefined
+        ? await this.routeResolver.failureEvidence(stored.taskId)
+        : [];
+    const messages =
+      failureEvidence.length === 0
+        ? stored.messages
+        : [
+            ...stored.messages,
+            {
+              role: "user" as const,
+              content: [
+                "Previous generated patches failed verification. Repair these",
+                "exact failures in your new complete diff:",
+                ...failureEvidence.map((reason) => `- ${reason}`),
+              ].join("\n"),
+            },
+          ];
     const result = await this.inner.run({
       taskId: stored.taskId,
       gatewayRequest: {
         idempotencyKey,
         taskClass: stored.taskClass,
         attribution: stored.attribution,
-        messages: stored.messages,
+        messages,
         maxOutputTokens: stored.maxOutputTokens,
         maxCostUsdMicros: stored.maxCostUsdMicros,
         policyVersion: stored.policyVersion,

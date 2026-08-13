@@ -13,6 +13,11 @@ export interface GenerationTaskResult {
   milestoneId: string;
 }
 
+export interface GenerationTaskOptions {
+  phaseLabel?: string;
+  requirements?: ReadonlyArray<string>;
+}
+
 // The producer M2's AiPatchExecutorDriver always needed and never had:
 // creates a real tasks/operation_task_specs row (driver='ai_patch_executor')
 // from a real blueprint, so ExecutableTaskSupervisor can actually lease and
@@ -50,6 +55,32 @@ const GENERATION_SYSTEM_PROMPT = [
   "strict TypeScript, be formatted the way Prettier's defaults format it, and",
   "be covered by tests that genuinely exercise the requirements. Do not add",
   "dependencies -- nothing can be installed.",
+  "",
+  "For a multi-file TypeScript project, treat the requested public API as one",
+  "contract across implementation and tests:",
+  "- Use the exact requested module paths, exported names, and object shapes.",
+  "  Do not create a parallel singular/plural module or an alternate API.",
+  "- Import shared domain types from their owning module instead of redefining",
+  "  lookalike interfaces in another file.",
+  "- Under strict TypeScript, annotate composite test fixtures with the",
+  "  exported type or use `satisfies`; do not let `true`, `false`, or string",
+  "  discriminants widen inside untyped arrays and objects.",
+  "- Before answering, check every import against an actual export and check",
+  "  that the tests call the exact API the implementation provides.",
+  "- Replace scaffold placeholders completely. In particular, do not keep or",
+  "  re-export `notYetImplemented`, and do not add a second placeholder export",
+  "  through another module.",
+  "- Treat your own tests as production code: trace every asserted value",
+  "  against the implementation before answering. A test suite with any",
+  "  failing assertion is a failed implementation even when typecheck passes.",
+  "- Implement the smallest complete solution to the stated requirements.",
+  "  Do not invent extra APIs, compatibility layers, overloads, persistence,",
+  "  or requirements. For this initial generation, keep the patch under 700",
+  "  changed lines and write a focused test for each stated rule rather than",
+  "  a combinatorial test matrix.",
+  "- If this is a repair attempt, fix the verifier errors directly. Do not",
+  "  restart from a different architecture, rename the public API, or rewrite",
+  "  passing areas unrelated to the reported failure.",
 ].join("\n");
 
 // Files whose contents the executor is shown. Small, textual, and the only
@@ -96,26 +127,30 @@ export async function createGenerationTask(
   project: GeneratedProject,
   blueprint: BlueprintDocument,
   repoPath: string,
+  options: GenerationTaskOptions = {},
 ): Promise<GenerationTaskResult> {
   const repoListing = await describeRepository(repoPath);
   const work = new PostgresWorkRepository(pool);
   const contractId = randomUUID(),
     milestoneId = randomUUID();
   // Each attempt below reserves ATTEMPT_MAX_COST_USD_MICROS (500_000), and
-  // maxAttempts gives the chain up to 6 attempts to walk
-  // deepseek(x2) -> codex(x2) -> claude-sonnet-5(x2, the one-retry case from
-  // nextStaticTier()). The scope's own cap must fund all 6, not just 4: at
+  // maxAttempts gives every one of the five concrete tiers room for its one
+  // bounded transport retry: 5 tiers x 2 attempts = 10. Six was enough only
+  // when at most one transport failure occurred anywhere in the chain; the
+  // first heavy wild drill produced two honest empty DeepSeek Pro responses
+  // and exhausted the task immediately after its first Claude attempt. The
+  // scope's own cap funds all 10 reservations. At
   // the old 2_000_000 ($2.00) cap, the 5th reservation always failed closed
   // with "gateway budget unavailable or exhausted" -- so a run whose first
   // four attempts were legitimately rejected (exactly what the moneybag deep
-  // drill produced) could never reach claude-sonnet-5, the tier most likely
+  // drill produced) could never reach claude-sonnet-4-6, the tier most likely
   // to succeed, no matter how much of maxAttempts remained. Found in
   // CONTRACT-017D M2; 3_000_000 was the minimum that removed the ceiling.
   //
   // Raised to 5_000_000 on 2026-08-12, owner-directed headroom for a bigger
   // future project -- a brief wide enough to need more real files per attempt
   // (still $0.50/attempt, unchanged) or a run that legitimately needs every
-  // one of maxAttempts's 6 slots plus margin for a stray retry. Still just a
+  // all of maxAttempts's 10 slots. Still just a
   // ceiling: nothing here claims a run will spend it all, and 017D's actual
   // drills spent under $0.03 total.
   const CONTRACT_MAX_COST_USD_MICROS = 5_000_000;
@@ -137,12 +172,17 @@ export async function createGenerationTask(
     [contractId, CONTRACT_MAX_COST_USD_MICROS],
   );
 
+  const phaseLabel = options.phaseLabel ?? "complete";
+  const phaseSlug = phaseLabel.replaceAll(/[^a-z0-9-]/g, "-");
+  const phaseSourcePath = `src/generated/${phaseSlug}.ts`;
+  const phaseTestPath = `tests/generated/${phaseSlug}.test.ts`;
+  const phaseTestImportPath = `../../src/generated/${phaseSlug}.ts`;
   const task = await work.submit({
     contractId,
     milestoneId,
-    idempotencyKey: `generate-${project.id}`,
+    idempotencyKey: `generate-${project.id}-${phaseLabel}`,
     maxCostUsdMicros: CONTRACT_MAX_COST_USD_MICROS,
-    maxAttempts: 6, // enough to walk deepseek(x2) -> codex(x2) -> claude
+    maxAttempts: 10, // five concrete tiers, one bounded transport retry each
   });
   await work.controlTransition(task.id, "draft", "queued");
 
@@ -184,7 +224,7 @@ export async function createGenerationTask(
   const input = {
     taskId: task.id,
     taskClass: "bulk_code" as const,
-    idempotencyKey: `generate-${project.id}-${task.attemptCount + 1}`,
+    idempotencyKey: `generate-${project.id}-${phaseLabel}-${task.attemptCount + 1}`,
     attribution: {
       projectId: project.id,
       contractId,
@@ -204,8 +244,27 @@ export async function createGenerationTask(
           `Project: ${blueprint.displayName} (${blueprint.slug})`,
           `Stack: ${blueprint.stack.runtime}/${blueprint.stack.framework}/${blueprint.stack.database}`,
           "",
-          "Requirements:",
-          ...blueprint.requirements.map((r) => `- ${r}`),
+          `Generation phase: ${phaseLabel}`,
+          "",
+          "Implement only the requirements listed in this phase. Preserve all",
+          "existing exported APIs and tests from earlier accepted phases.",
+          "Prefer a small patch; do not rewrite passing code.",
+          "",
+          "For this phase, create or update only these paths:",
+          `- ${phaseSourcePath}`,
+          `- ${phaseTestPath}`,
+          "",
+          "Do not edit src/index.ts or tests/scaffold.test.ts. Put this",
+          "phase's exported API in the phase source file and import it from",
+          "the phase test file.",
+          `The test file must import the phase source with exactly ${JSON.stringify(
+            phaseTestImportPath,
+          )}.`,
+          "",
+          "Phase requirements:",
+          ...(options.requirements ?? blueprint.requirements).map(
+            (r) => `- ${r}`,
+          ),
           "",
           "The repository currently contains exactly these files, in full.",
           "Your diff must apply to them as they are written here.",
@@ -214,11 +273,19 @@ export async function createGenerationTask(
         ].join("\n"),
       },
     ],
-    maxOutputTokens: 8_000,
+    // Thinking models consume this same completion allowance for reasoning.
+    // At 8k, DeepSeek Pro exhausted the envelope twice on the correlated
+    // ledger brief and returned no content at all. DeepSeek V4's documented
+    // output ceiling is 384k, but reserving 128k caused the provider itself to
+    // terminate complex Pro calls around seven minutes even with live SSE
+    // traffic. 32k remains four times the original failing allowance and is
+    // ample for reasoning plus a multi-file diff, while allowing the provider
+    // to finish inside its execution window. Verification remains unchanged.
+    maxOutputTokens: 32_000,
     maxCostUsdMicros: 500_000,
     policyVersion: MODEL_POLICY_VERSION,
     route: staticRoute,
-    ownedPaths: "unscoped" as const,
+    ownedPaths: [phaseSourcePath, phaseTestPath],
     workspaceRoot: repoPath,
     verifyJob: {
       isolationRoot: projectRoot,

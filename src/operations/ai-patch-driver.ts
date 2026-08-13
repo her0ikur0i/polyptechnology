@@ -87,6 +87,53 @@ const sha256 = (value: string) =>
 // How much of the verification output is kept on the rejection record.
 const VERIFICATION_TAIL_BYTES = 1_200;
 
+function deepSeekPatchContract(reason: string | null): string {
+  return [
+    "DEEPSEEK PATCH OUTPUT CONTRACT",
+    "",
+    "Your answer will be consumed directly by an automated git patch applier.",
+    "Return only a unified git diff. The first non-whitespace bytes of your",
+    "answer must be exactly `diff --git `.",
+    "",
+    "Do not include markdown fences, explanations, analysis, summaries, file",
+    "trees, full-file dumps, or natural-language prefaces. Do not say you",
+    "cannot apply the patch. Emit the patch itself.",
+    "",
+    "Allowed output shape:",
+    "diff --git a/path b/path",
+    "--- a/path",
+    "+++ b/path",
+    "@@ ... @@",
+    "-old",
+    "+new",
+    "",
+    ...(reason === null
+      ? []
+      : [
+          "The previous attempt was rejected by the verifier. Produce a new",
+          "complete replacement diff that directly fixes this reason:",
+          reason,
+          "",
+          "Do not explain the fix. Return only the corrected diff.",
+        ]),
+  ].join("\n");
+}
+
+function patchMessagesForRoute(
+  messages: GatewayRequest["messages"],
+  route: ModelRoute,
+  fallbackReason: string | null,
+): GatewayRequest["messages"] {
+  if (route.provider !== "deepseek") return messages;
+  return [
+    ...messages,
+    {
+      role: "user",
+      content: deepSeekPatchContract(fallbackReason),
+    },
+  ];
+}
+
 // Why a patch was rejected, in the verifier's own words.
 //
 // `verification_failed` used to be recorded with nothing else, so a rejected
@@ -134,7 +181,21 @@ export class AiPatchExecutorDriver {
   async run(input: AiPatchTaskInput): Promise<AiPatchTaskResult> {
     const result = await this.gateway.execute({
       ...input.gatewayRequest,
+      messages: patchMessagesForRoute(
+        input.gatewayRequest.messages,
+        input.route,
+        input.fallbackReason,
+      ),
       routeOverride: input.route,
+      // Streaming exists to keep long thinking calls alive. Programming
+      // DeepSeek routes are deliberately non-thinking now: the observed heavy
+      // failure was 90k-118k reasoning characters and zero patch content. Use
+      // the buffered completion path so patch generation behaves like Codex
+      // and Claude: one final answer, then the same verifier.
+      ...(input.route.provider === "deepseek" &&
+      input.route.mode === "thinking"
+        ? { onDelta: () => {} }
+        : {}),
     });
 
     // Providers present a diff differently -- bare, fenced, or after a

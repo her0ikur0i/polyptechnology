@@ -213,6 +213,7 @@ export class ClaudeCliAdapter implements ManagedProviderAdapter {
   async listModels() {
     return [
       "claude-haiku-4-5-20251001",
+      "claude-sonnet-4-6",
       "claude-sonnet-5",
       "claude-opus-4-8",
       "claude-opus-5",
@@ -596,7 +597,10 @@ export class CodexCliAdapter implements ManagedProviderAdapter {
     ) => CodexJsonResult = parseCodexJsonl,
   ) {}
   async listModels() {
-    return ["gpt-5.6-terra", "gpt-5.6-sol"];
+    return ["gpt-5.5", "gpt-5.6"];
+  }
+  private cliModelId(requestedModelId: string) {
+    return requestedModelId === "gpt-5.6" ? "gpt-5.6-sol" : requestedModelId;
   }
   async invoke(
     route: ModelRoute,
@@ -649,7 +653,7 @@ export class CodexCliAdapter implements ManagedProviderAdapter {
         // no terminal to ask at. The sandbox above is the control, not a
         // prompt nobody could answer.
         "--model",
-        route.requestedModelId,
+        this.cliModelId(route.requestedModelId),
         "--config",
         `model_reasoning_effort=${route.effort ?? "high"}`,
         // Prompt omitted here on purpose -- see `input` below. Same reasoning

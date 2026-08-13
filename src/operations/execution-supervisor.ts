@@ -184,6 +184,22 @@ export class ExecutableTaskSupervisor {
     }
     return undefined;
   }
+  async runTask(taskId: string, signal: AbortSignal) {
+    const lease = await this.work.lease(taskId, this.workerId, this.ttlMs);
+    const outcome = await this.executeLease(lease, signal);
+    await this.notifier?.taskFinished({
+      taskId: outcome.summary.taskId,
+      attemptOrdinal: outcome.summary.attemptOrdinal,
+      outcome: outcome.task.state,
+      ...("reason" in outcome.summary
+        ? { reason: outcome.summary.reason }
+        : {}),
+      ...("detail" in outcome.summary && outcome.summary.detail !== undefined
+        ? { detail: outcome.summary.detail }
+        : {}),
+    });
+    return outcome;
+  }
   private async executeLease(lease: Lease, parentSignal: AbortSignal) {
     const spec = await this.loadSpec(lease.taskId),
       driver = this.drivers.get(spec.driver);
@@ -368,7 +384,7 @@ export class ExecutableTaskSupervisor {
 }
 type SpecRow = {
   task_id: string;
-  driver: "deterministic_sha256" | "ai_patch_executor";
+  driver: OperationTaskSpec["driver"];
   input: unknown;
   expected_output_sha256: string | null;
   provider_id: string | null;

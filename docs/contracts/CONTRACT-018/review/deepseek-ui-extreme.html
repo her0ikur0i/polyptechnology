@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Polyp Factory Console</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f3f4f6;
+      --panel: #ffffff;
+      --text: #111827;
+      --muted: #4b5563;
+      --border: #d1d5db;
+      --accent: #2563eb;
+      --ok: #059669;
+      --warn: #b45309;
+      --focus: #2563eb;
+      --rail: #1f2937;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.4;
+    }
+    .console {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      grid-template-rows: auto auto 1fr;
+      min-height: 100vh;
+      max-width: 1440px;
+      margin: 0 auto;
+    }
+    .rail {
+      grid-row: 1 / 4;
+      grid-column: 1;
+      background: var(--rail);
+      color: #e5e7eb;
+      padding: 1rem;
+    }
+    .rail h2 {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin: 0 0 0.75rem;
+      color: #9ca3af;
+    }
+    .rail a {
+      display: block;
+      color: #e5e7eb;
+      text-decoration: none;
+      padding: 0.5rem 0.75rem;
+      border-radius: 0.25rem;
+    }
+    .rail a:hover {
+      background: #374151;
+    }
+    .rail a:focus-visible,
+    button:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+    .status-bar {
+      grid-row: 1;
+      grid-column: 2;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      padding: 0.5rem 1rem;
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+    .status-bar .status {
+      color: var(--ok);
+      font-weight: 600;
+    }
+    main {
+      grid-row: 2 / 4;
+      grid-column: 2;
+      padding: 1rem;
+      display: grid;
+      gap: 1rem;
+    }
+    header.project-header {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 0.375rem;
+      padding: 1rem;
+    }
+    header.project-header h1 {
+      font-size: 1.25rem;
+      margin: 0 0 0.25rem;
+    }
+    header.project-header p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.875rem;
+    }
+    .panels {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+    }
+    section.panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 0.375rem;
+      padding: 1rem;
+    }
+    section.panel h2 {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin: 0 0 0.75rem;
+    }
+    dl {
+      margin: 0;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+      font-size: 0.875rem;
+    }
+    dt {
+      color: var(--muted);
+    }
+    dd {
+      margin: 0;
+      font-weight: 500;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 0.375rem;
+    }
+    th,
+    td {
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    thead th {
+      background: var(--panel);
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .flow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .flow-step {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 9999px;
+      padding: 0.25rem 0.75rem;
+      font-size: 0.75rem;
+    }
+    .flow-arrow {
+      color: var(--muted);
+    }
+    .signal {
+      color: var(--warn);
+      font-weight: 600;
+    }
+    @media (max-width: 767px) {
+      .console {
+        grid-template-columns: 1fr;
+        min-height: auto;
+      }
+      .rail {
+        grid-row: auto;
+        grid-column: 1;
+      }
+      .status-bar,
+      main {
+        grid-column: 1;
+      }
+      .status-bar {
+        grid-row: 2;
+      }
+      main {
+        grid-row: 3;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="console">
+    <nav class="rail" aria-labelledby="rail-heading">
+      <h2 id="rail-heading">Operation</h2>
+      <a href="#status">Status</a>
+      <a href="#routing">Routing</a>
+      <a href="#budget">Budget</a>
+      <a href="#run-state">Run state</a>
+      <a href="#deployment">Deployment</a>
+      <a href="#workflow">Workflow</a>
+      <a href="#timeline">Timeline</a>
+    </nav>
+    <div class="status-bar" role="status" aria-live="polite" id="status">
+      <span class="status">● Operational</span>
+      <span>Idle since 09:42 UTC</span>
+      <button type="button">Refresh</button>
+    </div>
+    <main>
+      <header class="project-header">
+        <h1>Polyp Factory Console</h1>
+        <p>Factory lineage polyps generated with phased model routing.</p>
+      </header>
+      <section class="panel" id="routing" aria-labelledby="routing-title">
+        <h2 id="routing-title">Model routing</h2>
+        <dl>
+          <dt>Primary</dt>
+          <dd>Claude Sonnet 4.5</dd>
+          <dt>Fallback</dt>
+          <dd>DeepSeek V4 Pro</dd>
+        </dl>
+      </section>
+      <section class="panel" id="budget" aria-labelledby="budget-title">
+        <h2 id="budget-title">Budget</h2>
+        <dl>
+          <dt>Used</dt>
+          <dd>68%</dd>
+          <dt>Cap</dt>
+          <dd>120k tokens / phase</dd>
+        </dl>
+      </section>
+      <section class="panel" id="run-state" aria-labelledby="run-state-title">
+        <h2 id="run-state-title">Run state</h2>
+        <dl>
+          <dt>Status</dt>
+          <dd>Idle</dd>
+          <dt>Last run</dt>
+          <dd>09:42 UTC</dd>
+        </dl>
+      </section>
+      <section class="panel" id="deployment" aria-labelledby="deployment-title">
+        <h2 id="deployment-title">Deployment</h2>
+        <dl>
+          <dt>Target</dt>
+          <dd>Staging</dd>
+          <dt>Build</dt>
+          <dd>#1287</dd>
+        </dl>
+      </section>
+      <section class="panel" id="workflow" aria-labelledby="workflow-title">
+        <h2 id="workflow-title">Workflow</h2>
+        <div class="flow">
+          <span class="flow-step">Scaffold</span>
+          <span class="flow-arrow" aria-hidden="true">→</span>
+          <span class="flow-step">Generate</span>
+          <span class="flow-arrow" aria-hidden="true">→</span>
+          <span class="flow-step">Verify</span>
+          <span class="flow-arrow" aria-hidden="true">→</span>
+          <span class="flow-step">Release</span>
+        </div>
+      </section>
+      <section class="panel" id="approvals" aria-labelledby="approvals-title">
+        <h2 id="approvals-title">Approvals</h2>
+        <dl>
+          <dt>Gate</dt>
+          <dd>Required</dd>
+          <dt>Pending</dt>
+          <dd>2</dd>
+        </dl>
+      </section>
+      <section class="panel" id="evidence" aria-labelledby="evidence-title">
+        <h2 id="evidence-title">Evidence</h2>
+        <dl>
+          <dt>Tests</dt>
+          <dd>Passed</dd>
+          <dt>Commit</dt>
+          <dd>a1b2c3</dd>
+        </dl>
+      </section>
+      <section class="panel" id="artifact-preview" aria-labelledby="artifact-preview-title">
+        <h2 id="artifact-preview-title">Artifact preview</h2>
+        <dl>
+          <dt>Console</dt>
+          <dd>HTML5</dd>
+          <dt>Build</dt>
+          <dd>457 kB</dd>
+        </dl>
+      </section>
+      <section class="panel" id="telemetry" aria-labelledby="telemetry-title">
+        <h2 id="telemetry-title">Telemetry</h2>
+        <dl>
+          <dt>Latency</dt>
+          <dd>142 ms</dd>
+          <dt>Errors</dt>
+          <dd>0</dd>
+        </dl>
+      </section>
+      <section class="panel" id="telegram-signal" aria-labelledby="telegram-signal-title">
+        <h2 id="telegram-signal-title">Telegram signal</h2>
+        <dl>
+          <dt>Channel</dt>
+          <dd>operators</dd>
+          <dt>Last</dt>
+          <dd class="signal">Backlog 3</dd>
+        </dl>
+      </section>
+      <section class="panel" id="timeline" aria-labelledby="timeline-title">
+        <h2 id="timeline-title">Generation phase timeline</h2>
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Phase</th>
+              <th scope="col">Status</th>
+              <th scope="col">Model</th>
+              <th scope="col">Attempts</th>
+              <th scope="col">Changed lines</th>
+              <th scope="col">Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            
+      <tr>
+        <th scope="row">phase-1-of-9</th>
+        <td>complete</td>
+        <td>Claude Sonnet 4.5</td>
+        <td>1</td>
+        <td>320</td>
+        <td>Initial console scaffolding established</td>
+      </tr>
+      <tr>
+        <th scope="row">phase-2-of-9</th>
+        <td>complete</td>
+        <td>Claude Sonnet 4.5</td>
+        <td>1</td>
+        <td>410</td>
+        <td>Left rail navigation implemented</td>
+      </tr>
+      <tr>
+        <th scope="row">phase-3-of-9</th>
+        <td>complete</td>
+        <td>DeepSeek V4 Pro</td>
+        <td>2</td>
+        <td>380</td>
+        <td>Model routing and budget panels</td>
+      </tr>
+      <tr>
+        <th scope="row">phase-4-of-9</th>
+        <td>complete</td>
+        <td>DeepSeek V4 Pro</td>
+        <td>3</td>
+        <td>455</td>
+        <td>DeepSeek V4 Flash rejected twice; DeepSeek V4 Pro accepted</td>
+      </tr>
+      <tr>
+        <th scope="row">phase-5-of-9</th>
+        <td>complete</td>
+        <td>Claude Sonnet 4.5</td>
+        <td>1</td>
+        <td>290</td>
+        <td>Run and deployment state indicators</td>
+      </tr>
+      <tr>
+        <th scope="row">phase-6-of-9</th>
+        <td>complete</td>
+        <td>DeepSeek V4 Pro</td>
+        <td>2</td>
+        <td>350</td>
+        <td>Workflow visualization drafted</td>
+      </tr>
+      <tr>
+        <th scope="row">phase-7-of-9</th>
+        <td>complete</td>
+        <td>Claude Sonnet 4.5</td>
+        <td>1</td>
+        <td>265</td>
+        <td>Responsive and accessibility pass</td>
+      </tr>
+      <tr>
+        <th scope="row">phase-8-of-9</th>
+        <td>complete</td>
+        <td>DeepSeek V4 Pro</td>
+        <td>2</td>
+        <td>310</td>
+        <td>Telemetry and signal panels integrated</td>
+      </tr>
+      <tr>
+        <th scope="row">phase-9-of-9</th>
+        <td>in-progress</td>
+        <td>Claude Sonnet 4.5</td>
+        <td>1</td>
+        <td>185</td>
+        <td>Final console polish and verification</td>
+      </tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
