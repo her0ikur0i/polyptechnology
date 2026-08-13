@@ -349,6 +349,71 @@ describe("dashboard", () => {
       await screen.findByText("deepseek · deepseek-v4-pro · $0.012345"),
     ).toBeInTheDocument();
   });
+  it("offers clarify-goals mode without exposing a raw model override", async () => {
+    MockEventSource.instances = [];
+    vi.stubGlobal("EventSource", MockEventSource);
+    const sentBodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (url === "/api/v1/orchestrator/conversations")
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              conversationId: "conversation-1",
+              projectId: "project-1",
+              title: "Vendor invoice tracker",
+              version: 0,
+            }),
+          });
+        if (url.endsWith("/messages") && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+          sentBodies.push(body);
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              message: {
+                id: "message-1",
+                conversationId: "conversation-1",
+                projectId: "project-1",
+                ordinal: 1,
+                role: "owner",
+                content: String(body.content),
+                classification: "internal",
+                contentSha256: "0".repeat(64),
+                createdAt: "2026-08-13T00:00:00.000Z",
+              },
+              replyTaskId: "00000000-0000-4000-8000-000000000404",
+            }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }),
+    );
+    renderDashboard();
+    await userEvent.click(screen.getByRole("link", { name: /Chat/ }));
+    await userEvent.type(
+      await screen.findByLabelText("Conversation title"),
+      "Vendor invoice tracker",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+    await userEvent.click(
+      await screen.findByRole("radio", { name: "Clarify goals" }),
+    );
+    expect(screen.getByText(/starting with DeepSeek Pro/i)).toBeInTheDocument();
+    const composer = screen.getByLabelText("Message");
+    expect(composer).toHaveAttribute(
+      "placeholder",
+      "Describe the outcome, users, constraints, and what is still uncertain.",
+    );
+    await userEvent.type(composer, "Need an internal CRM");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(sentBodies).toHaveLength(1);
+    expect(sentBodies[0]?.content).toContain("Clarify goals mode:");
+    expect(sentBodies[0]?.content).toContain("Need an internal CRM");
+    expect(sentBodies[0]).not.toHaveProperty("model");
+    expect(sentBodies[0]).not.toHaveProperty("mode");
+  });
   it("virtualizes long conversation threads while keeping the newest turns visible", async () => {
     MockEventSource.instances = [];
     vi.stubGlobal("EventSource", MockEventSource);

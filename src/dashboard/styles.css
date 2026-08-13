@@ -587,6 +587,52 @@ code {
   border-radius: 9px;
   line-height: 1.45;
 }
+.conversation-mode {
+  display: grid;
+  gap: 8px;
+}
+.mode-segments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.mode-segments legend {
+  width: 100%;
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.mode-segments label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #07111f;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.86rem;
+}
+.mode-segments label:has(input:checked) {
+  border-color: var(--cyan);
+  color: var(--text);
+  background: #102238;
+}
+.mode-segments input {
+  accent-color: var(--cyan);
+}
+.mode-route {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
 .attachment-upload {
   display: inline-flex;
   align-items: center;

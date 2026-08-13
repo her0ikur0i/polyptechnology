@@ -35,6 +35,25 @@ const REPLY_STREAM_MAX_RECONNECTS = 8;
 const THREAD_VIRTUALIZE_AFTER = 80;
 const THREAD_ROW_ESTIMATE_PX = 116;
 const THREAD_OVERSCAN_ROWS = 8;
+const conversationModes = {
+  auto: {
+    label: "Auto",
+    prefix: "",
+    route:
+      "Route: orchestration policy chooses DeepSeek Pro first, then governed fallback if verified failure requires it.",
+    placeholder: "Ask for help, decisions, or implementation work.",
+  },
+  clarify_goals: {
+    label: "Clarify goals",
+    prefix:
+      "Clarify goals mode: ask focused questions first. Do not draft a proposal or start implementation until the objective, users, scope, constraints, success criteria, and unknowns are clear.\n\n",
+    route:
+      "Route: clarify-goals uses the orchestration policy, starting with DeepSeek Pro. Fallback remains policy-gated; this mode does not bypass model controls.",
+    placeholder:
+      "Describe the outcome, users, constraints, and what is still uncertain.",
+  },
+} as const;
+type ConversationMode = keyof typeof conversationModes;
 const terminalReplyStates = new Set([
   "succeeded",
   "failed",
@@ -77,6 +96,13 @@ function isThreadNearBottom(thread: HTMLDivElement) {
   );
 }
 
+function applyConversationMode(draft: string, mode: ConversationMode) {
+  const trimmed = draft.trim();
+  const prefix = conversationModes[mode].prefix;
+  if (prefix.length === 0 || trimmed.startsWith(prefix.trim())) return trimmed;
+  return `${prefix}${trimmed}`.trim();
+}
+
 // Replaces the old bare "Generate project blueprint" form entirely
 // (confirmed decision, CONTRACT-014 scope): the interview happens through
 // a real conversation instead. A conversation can start with no project at
@@ -108,6 +134,8 @@ export function ConversationWorkspacePage({
   const [attachments, setAttachments] = useState<ConversationAttachment[]>([]);
   const [history, setHistory] = useState<ConversationSummary[]>([]);
   const [composerText, setComposerText] = useState("");
+  const [conversationMode, setConversationMode] =
+    useState<ConversationMode>("auto");
   const [error, setError] = useState<string>();
   const [starting, setStarting] = useState(false);
   const [sending, setSending] = useState(false);
@@ -388,6 +416,7 @@ export function ConversationWorkspacePage({
   async function sendDraft(draft: string, options: { clearComposer: boolean }) {
     if (!conversation || draft.trim().length === 0 || sending || awaitingReply)
       return;
+    const content = applyConversationMode(draft, conversationMode);
     const expectedVersion = messages.length;
     const optimisticId = `optimistic-${crypto.randomUUID()}`;
     const optimisticMessage: ConversationMessage = {
@@ -396,7 +425,7 @@ export function ConversationWorkspacePage({
       projectId: conversation.projectId,
       ordinal: expectedVersion + 1,
       role: "owner",
-      content: draft,
+      content,
       classification: "public",
       contentSha256: "pending",
       createdAt: new Date().toISOString(),
@@ -410,7 +439,7 @@ export function ConversationWorkspacePage({
         conversation.id,
         {
           projectId: conversation.projectId,
-          content: draft,
+          content,
           expectedVersion,
         },
         csrfToken,
@@ -856,6 +885,34 @@ export function ConversationWorkspacePage({
               className="composer"
               onSubmit={(event) => void handleSend(event)}
             >
+              <div className="conversation-mode">
+                <fieldset
+                  className="mode-segments"
+                  aria-label="Conversation mode"
+                  disabled={sending || awaitingReply}
+                >
+                  <legend>Mode</legend>
+                  {Object.entries(conversationModes).map(
+                    ([value, modeDefinition]) => (
+                      <label key={value}>
+                        <input
+                          type="radio"
+                          name="conversation-mode"
+                          value={value}
+                          checked={conversationMode === value}
+                          onChange={() =>
+                            setConversationMode(value as ConversationMode)
+                          }
+                        />
+                        <span>{modeDefinition.label}</span>
+                      </label>
+                    ),
+                  )}
+                </fieldset>
+                <p className="mode-route" aria-live="polite">
+                  {conversationModes[conversationMode].route}
+                </p>
+              </div>
               <label>
                 Message
                 <textarea
@@ -863,6 +920,7 @@ export function ConversationWorkspacePage({
                   aria-label="Message"
                   value={composerText}
                   onChange={(event) => setComposerText(event.target.value)}
+                  placeholder={conversationModes[conversationMode].placeholder}
                   onKeyDown={(event) => {
                     if (
                       event.key === "Enter" &&
