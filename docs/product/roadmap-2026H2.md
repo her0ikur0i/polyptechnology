@@ -297,70 +297,46 @@ hostile content rather than assumed from the library's reputation.
 delivers behaviour on the current visual language, so a behaviour regression and
 a restyling can never be confused for one another.
 
-## CONTRACT-019 — Factory Live: the agents at work, for real
+## CONTRACT-019 — Dashboard completion and authenticated access
 
-**Objective.** Give the visual agent view an actual server. Added to the
-roadmap at the owner's direction (2026-08-09), with the standing instruction
-that it must be real: _"tentu saja nyata, we're doing real work here, not
-dummy."_
+**Objective.** Make the Master Dashboard the owner's daily operating surface and
+put it behind authenticated access at `https://dash.surachmancenter.com`.
 
-The audit found that `src/dashboard/factory-live/api.ts` calls
-`/api/v1/factory-live/snapshot` and `/api/v1/factory-live/events`, and that
-neither route exists on the server. What already exists is genuinely good and
-is not being rebuilt: the Canvas 2D renderer, the deterministic layout rebuild
-keyed on `structureVersion`, monotonic event IDs with gap detection, the caps
-on nodes/edges/particles/DPR, the 30/15/5 FPS frame-budget controller, the
-pause-when-hidden behaviour, the reduced-motion static fallback, and the
-parallel semantic DOM tree — all specified in
-`docs/architecture/adr-0004-factory-live-rendering.md` and
-`docs/SYSTEM-SPECIFICATION.md` §21. What is missing is everything behind them.
+This replaces the earlier narrow "Factory Live only" CONTRACT-019 after the
+owner's 2026-08-13 direction. Factory Live is still required, but it is one
+small milestone in a broader frontend completion pass: conversation, history,
+projects, usage, model selection, system monitor, Telegram operations, project
+generation, and visible agent work.
 
-- A snapshot route and an SSE event route, carrying the same owner
-  authentication and project-scope filtering as every other Control API route.
-- A real projection from durable state into the `LiveNode`/`LiveEdge`/
-  `LiveEvent` shapes the client already validates: work-engine leases and
-  fencing, task attempts and their outcomes, gateway routing decisions
-  including which tier is executing and why it escalated, approval waits, and
-  verification-gate results. The drill-down the specification defines —
-  factory → project → contract → milestone → **agent** → task/file — is
-  populated from records that already exist; nothing here invents new data.
-- Monotonic sequencing that survives reconnects and process restarts, so the
-  client's existing gap-recovery path is exercised by real gaps rather than
-  simulated ones.
-- Replacement of fixture-only test coverage: `tests/dashboard/factory-live.test.tsx`
-  keeps its fixture-driven renderer tests, and new integration tests drive the
-  real producer end to end.
-- Genuine re-verification of release criterion 8 against the real producer.
-  CONTRACT-015 M0 corrects the record in
-  `docs/contracts/CONTRACT-010/acceptance-matrix.md` to state what is actually
-  true today; this contract is what earns the `Verified` back.
+**Operating model.** DeepSeek is the main implementation worker. Codex is the
+low-usage strategist, reviewer, integrator, verifier, and final gatekeeper.
+Milestones are deliberately small so DeepSeek never receives one giant
+frontend task.
 
-**Amended 2026-08-11 — the renderer is in scope after all, and the reference is
-named.** On reviewing the mockup the owner asked for Factory Live to look like
-`references/neural-reference-3d.html` in their own `her0ikur0i/polyptech`
-repository, plus Gource. That reference is not a new direction: it is the
-"reviewed Polyptech reference" §21 was written _from_, and today's renderer is
-a flat 2D graph that does not resemble it.
+**Access.** M0 authorizes work on `dash.surachmancenter.com` with
+authentication, including changing or bypassing the old
+`polyptech-dashboard.service` only as required for that hostname. It does not
+authorize unrelated DNS, production data promotion, generated-project public
+domains, or secret disclosure.
 
-- **The mesh.** A bright core, clusters radiating outward on their own axes,
-  multi-segment trunks, subgroups and leaf nodes, depth-sorted edges, and
-  drag-to-rotate with inertia — all Canvas 2D pseudo-3D, as §21 requires, with
-  no 3D library added.
-- **The particles carry meaning, as §21 already states**: outward means
-  delegation, returning means evidence. The reference recurses a particle into
-  each child on arrival, which is exactly delegation fanning out.
-- **Gource's contribution is growth over time.** The tree gains nodes as files
-  are actually written by a run, rather than being drawn once at its final
-  size. This is the part that makes it a view of work happening rather than a
-  diagram of structure.
+**Scope.**
 
-Frame budget, caps, DPR limits, pause-when-hidden and the reduced-motion static
-fallback all still apply — the reference is a look, not a licence to drop the
-performance contract on a 2 vCPU host.
+- Dashboard information architecture and navigation map.
+- Authenticated `dash.surachmancenter.com` access with rollback proof.
+- Telegram settings, connection test, test message, and non-spammy report
+  standards.
+- Conversation goal-clarification mode using a strong DeepSeek route first.
+- Project generation flow from conversation/proposal through blueprint,
+  generation, evidence, and run state.
+- Runs/attempts/model-cost views that match the ledger and Telegram reports.
+- Policy-governed provider/model controls without unsafe arbitrary bypasses.
+- Factory Live first real-data visualization pass, including the previously
+  recorded Polyptech/Gource direction, without inventing activity.
+- Responsive/accessibility/loading/error polish, live drill, README, security
+  review, and close.
 
-**Excludes.** The dashboard shell's visual language, which stays with
-CONTRACT-020. Replay of historical streams beyond what the current client
-already supports.
+**Excludes.** Public generated-project domains, production data promotion, raw
+secrets in git, and arbitrary per-message model bypasses.
 
 ## CONTRACT-020 — Design system and shell
 
