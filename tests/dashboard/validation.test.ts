@@ -19,6 +19,7 @@ import {
   parseReplyTaskStatus,
   parseSendMessageResult,
   parseTelegramSettings,
+  parseTelegramTestResult,
   parseTranslationTaskResult,
 } from "../../src/dashboard/validation.js";
 const observed = (data: unknown) => ({
@@ -87,6 +88,22 @@ describe("telegram settings response validation", () => {
     ).toThrow();
     expect(() =>
       parseTelegramSettings({ ...telegram, authorizedUserIds: "7" }),
+    ).toThrow();
+  });
+  it("accepts and rejects Telegram test result payloads", () => {
+    expect(
+      parseTelegramTestResult({
+        state: "passed",
+        checkedAt: "2026-08-13T00:00:00.000Z",
+        summary: "Telegram bot connectivity passed.",
+      }).state,
+    ).toBe("passed");
+    expect(() =>
+      parseTelegramTestResult({
+        state: "queued",
+        checkedAt: "2026-08-13T00:00:00.000Z",
+        summary: "nope",
+      }),
     ).toThrow();
   });
 });

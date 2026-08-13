@@ -56,11 +56,16 @@ async function withServer<T>(
   accessAuthMode: "disabled" | "cloudflare",
   run: (baseUrl: string, csrfSecret: string) => Promise<T>,
   dashboardDistPath?: string,
+  options?: {
+    env?: NodeJS.ProcessEnv;
+    telegramFetch?: typeof fetch;
+  },
 ): Promise<T> {
   const pool = new pg.Pool({ connectionString: databaseUrl });
   const csrfSecret = "test-csrf-secret-".padEnd(40, "x");
   const config = loadConfig({
     ...process.env,
+    ...(options?.env ?? {}),
     ACCESS_AUTH_MODE: accessAuthMode,
     NODE_ENV: "test",
     PROJECT_WORKSPACES_ROOT: mkdtempSync(
@@ -75,6 +80,7 @@ async function withServer<T>(
     config,
     csrfSecret,
     ...(dashboardDistPath ? { dashboardDistPath } : {}),
+    ...(options?.telegramFetch ? { telegramFetch: options.telegramFetch } : {}),
   });
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
@@ -251,6 +257,63 @@ test(
     } finally {
       await pool.end();
     }
+  },
+);
+
+test(
+  "Telegram test message is owner-gated, bounded, and escaped",
+  { skip: databaseUrl === undefined },
+  async () => {
+    const telegramCalls: Array<{ url: string; body: unknown }> = [];
+    const telegramFetch: typeof fetch = async (url, init) => {
+      telegramCalls.push({
+        url: String(url),
+        body: JSON.parse(String(init?.body ?? "{}")),
+      });
+      return new Response(JSON.stringify({ ok: true, result: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    await withServer(
+      "disabled",
+      async (baseUrl, csrfSecret) => {
+        const response = await fetch(
+          `${baseUrl}/api/v1/settings/telegram/test`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-csrf-token": csrfSecret,
+            },
+            body: JSON.stringify({ kind: "test_message" }),
+          },
+        );
+        assert.equal(response.status, 200);
+        assert.equal(telegramCalls.length, 1);
+        assert.match(telegramCalls[0]!.url, /\/sendMessage$/);
+        const body = telegramCalls[0]!.body as {
+          chat_id?: string;
+          text?: string;
+          parse_mode?: string;
+        };
+        assert.equal(body.chat_id, "-1001");
+        assert.equal(body.parse_mode, "HTML");
+        assert.ok((body.text ?? "").length < 4_000);
+        assert.match(body.text ?? "", /Telegram test message/);
+        assert.match(body.text ?? "", /bounded &lt;owner&gt;&amp;dashboard/);
+        assert.doesNotMatch(body.text ?? "", /<owner>/);
+      },
+      undefined,
+      {
+        env: {
+          TELEGRAM_BOT_TOKEN: "123:abc",
+          TELEGRAM_CHAT_ID: "-1001",
+          TELEGRAM_USER_ID: "42",
+        },
+        telegramFetch,
+      },
+    );
   },
 );
 

@@ -3,18 +3,17 @@ import {
   Activity,
   Bot,
   Boxes,
-  BrainCircuit,
   ChevronRight,
   ClipboardCheck,
   Factory,
   FolderKanban,
   GitPullRequestArrow,
+  MessageSquare,
   Menu,
   Network,
   ServerCog,
   Settings2,
   ShieldCheck,
-  SlidersHorizontal,
   X,
 } from "lucide-react";
 import {
@@ -34,7 +33,7 @@ import {
 } from "./components.js";
 import type { DashboardSnapshot, ModelAttempt } from "./types.js";
 import { useSnapshot } from "./use-snapshot.js";
-import { saveTelegramSettings } from "./api.js";
+import { saveTelegramSettings, testTelegram } from "./api.js";
 import "./styles.css";
 // The three real page modules are code-split; everything else routed below is
 // defined inline in this file, so lazy-loading it would move nothing. These
@@ -60,15 +59,14 @@ const PolicyControlPage = lazy(() =>
 );
 const nav = [
   { to: "/", label: "Overview", icon: Factory },
-  { to: "/orchestrator", label: "Orchestrator", icon: BrainCircuit },
-  { to: "/policy", label: "Policy", icon: SlidersHorizontal },
-  { to: "/factory-live", label: "Factory Live", icon: Activity },
+  { to: "/orchestrator", label: "Chat", icon: MessageSquare },
   { to: "/projects", label: "Projects", icon: FolderKanban },
-  { to: "/contracts", label: "Contracts / Runs", icon: GitPullRequestArrow },
-  { to: "/agents", label: "Agents", icon: Bot },
-  { to: "/providers", label: "Providers & Models", icon: Network },
+  { to: "/runs", label: "Runs", icon: GitPullRequestArrow },
   { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
-  { to: "/infrastructure", label: "Infrastructure", icon: ServerCog },
+  { to: "/factory-live", label: "Factory Live", icon: Activity },
+  { to: "/providers", label: "Models", icon: Network },
+  { to: "/telegram", label: "Telegram", icon: Bot },
+  { to: "/system", label: "System", icon: ServerCog },
   { to: "/settings", label: "Settings", icon: Settings2 },
 ];
 function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
@@ -189,7 +187,23 @@ function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
               />
               <Route
                 path="/settings"
-                element={<Settings snapshot={snapshot} />}
+                element={
+                  <TelegramSettings
+                    snapshot={snapshot}
+                    title="Settings"
+                    detail="References and policy state only. Secret values never enter this client."
+                  />
+                }
+              />
+              <Route
+                path="/telegram"
+                element={
+                  <TelegramSettings
+                    snapshot={snapshot}
+                    title="Telegram"
+                    detail="Operational reporting channel, approval bridge and connectivity state. Secret values never enter this client."
+                  />
+                }
               />
               <Route
                 path="/approvals"
@@ -215,6 +229,16 @@ function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
                     title="Projects"
                     observation={snapshot.projects}
                     columns={["name", "lifecycle", "attention", "updatedAt"]}
+                  />
+                }
+              />
+              <Route
+                path="/runs"
+                element={
+                  <RegistryPage
+                    title="Runs"
+                    observation={snapshot.contracts}
+                    columns={["id", "milestone", "state", "gateStatus"]}
                   />
                 }
               />
@@ -255,11 +279,20 @@ function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
                 }
               />
               <Route
+                path="/system"
+                element={
+                  <Placeholder
+                    title="System"
+                    detail="Host, container, service, database, budget and backup observations."
+                  />
+                }
+              />
+              <Route
                 path="/infrastructure"
                 element={
                   <Placeholder
-                    title="Infrastructure"
-                    detail="Host, container, service, database and backup observations."
+                    title="System"
+                    detail="Host, container, service, database, budget and backup observations."
                   />
                 }
               />
@@ -541,7 +574,15 @@ function AttemptRow({ value }: { value: ModelAttempt }) {
     </tr>
   );
 }
-function Settings({ snapshot }: { snapshot: DashboardSnapshot }) {
+function TelegramSettings({
+  snapshot,
+  title,
+  detail,
+}: {
+  snapshot: DashboardSnapshot;
+  title: string;
+  detail: string;
+}) {
   const value = snapshot.telegram.data;
   const [secretRef, setSecretRef] = useState(value.secretRef ?? "");
   const [chatIds, setChatIds] = useState(value.authorizedChatIds.join(", "));
@@ -550,6 +591,10 @@ function Settings({ snapshot }: { snapshot: DashboardSnapshot }) {
     "idle" | "saving" | "saved" | "error"
   >("idle");
   const [saveError, setSaveError] = useState("");
+  const [testState, setTestState] = useState<
+    "idle" | "checking" | "sending" | "passed" | "failed"
+  >("idle");
+  const [testSummary, setTestSummary] = useState("");
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setSaveState("saving");
@@ -577,12 +622,23 @@ function Settings({ snapshot }: { snapshot: DashboardSnapshot }) {
       );
     }
   }
+  async function runTelegramTest(kind: "connectivity" | "test_message") {
+    setTestState(kind === "connectivity" ? "checking" : "sending");
+    setTestSummary("");
+    try {
+      const result = await testTelegram(kind, snapshot.commandPolicy.csrfToken);
+      setTestState(result.state);
+      setTestSummary(result.summary);
+    } catch (error) {
+      setTestState("failed");
+      setTestSummary(
+        error instanceof Error ? error.message : "Telegram test failed.",
+      );
+    }
+  }
   return (
     <div className="page">
-      <PageHeader
-        title="Settings"
-        detail="References and policy state only. Secret values never enter this client."
-      />
+      <PageHeader title={title} detail={detail} />
       <Panel
         title="Telegram approvals"
         eyebrow="REMOTE CHANNEL"
@@ -669,6 +725,52 @@ function Settings({ snapshot }: { snapshot: DashboardSnapshot }) {
                     ? "Owner approval required before a paid probe."
                     : "No paid probe approval pending."}
                 </p>
+              </div>
+              <div>
+                <h3>Test channel</h3>
+                <p>
+                  Connectivity uses the server-side bot token only. Test message
+                  sends one bounded report to the configured Telegram chat.
+                </p>
+                <div className="settings-actions">
+                  <button
+                    type="button"
+                    disabled={
+                      testState === "checking" ||
+                      testState === "sending" ||
+                      !snapshot.commandPolicy.canConfigureTelegram
+                    }
+                    onClick={() => void runTelegramTest("connectivity")}
+                  >
+                    {testState === "checking"
+                      ? "Checking…"
+                      : "Check connection"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      testState === "checking" ||
+                      testState === "sending" ||
+                      !snapshot.commandPolicy.canConfigureTelegram
+                    }
+                    onClick={() => void runTelegramTest("test_message")}
+                  >
+                    {testState === "sending" ? "Sending…" : "Send test message"}
+                  </button>
+                </div>
+                <span role="status">{testSummary}</span>
+              </div>
+              <div>
+                <h3>Report rules</h3>
+                <ul className="compact-list">
+                  <li>Terminal events only; no internal success spam.</li>
+                  <li>Human title, subject and short summary first.</li>
+                  <li>
+                    Model, tokens, cost, budget and fallback only when useful.
+                  </li>
+                  <li>Bounded, escaped, text-only operational reports.</li>
+                  <li>Human labels before UUIDs whenever one exists.</li>
+                </ul>
               </div>
               <div className="settings-actions">
                 <button
@@ -766,9 +868,11 @@ function PageHeader({ title, detail }: { title: string; detail: string }) {
 export function DashboardApp({
   initialSnapshot,
   router = "browser",
+  initialPath = "/",
 }: {
   initialSnapshot?: DashboardSnapshot;
   router?: "browser" | "memory";
+  initialPath?: string;
 }) {
   const state = useSnapshot(initialSnapshot);
   if (state.kind !== "ready")
@@ -780,7 +884,7 @@ export function DashboardApp({
     );
   if (router === "memory")
     return (
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[initialPath]}>
         <Shell snapshot={state.value} />
       </MemoryRouter>
     );

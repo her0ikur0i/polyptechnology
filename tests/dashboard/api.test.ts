@@ -3,6 +3,7 @@ import {
   cancelReplyTask,
   saveTelegramSettings,
   subscribeReplyStream,
+  testTelegram,
 } from "../../src/dashboard/api.js";
 afterEach(() => vi.unstubAllGlobals());
 
@@ -81,6 +82,33 @@ describe("dashboard commands", () => {
       ),
     ).rejects.toThrow(/invalid references/);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("runs Telegram tests through the authenticated CSRF command boundary", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          state: "passed",
+          checkedAt: "2026-08-13T00:00:00.000Z",
+          summary: "Telegram test message sent.",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(testTelegram("test_message", "csrf-value")).resolves.toEqual({
+      state: "passed",
+      checkedAt: "2026-08-13T00:00:00.000Z",
+      summary: "Telegram test message sent.",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/settings/telegram/test",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "same-origin",
+        headers: expect.objectContaining({ "X-CSRF-Token": "csrf-value" }),
+        body: JSON.stringify({ kind: "test_message" }),
+      }),
+    );
   });
   it("subscribes to reply chunk streams and closes on terminal state", () => {
     MockEventSource.instances = [];

@@ -29,12 +29,15 @@ import {
   createTelegramWebhookHandler,
   requireTelegramWebhookSecret,
 } from "./telegram-webhook.js";
+import { TelegramHttpTransport } from "../telegram/gateway.js";
+import { renderReport } from "../telegram/report.js";
 
 export interface ControlApiDeps {
   pool: Pool;
   config: AppConfig;
   csrfSecret?: string;
   dashboardDistPath?: string;
+  telegramFetch?: typeof fetch;
 }
 
 // The Control API server ADR-0003 always assumed but never had: implements
@@ -109,6 +112,7 @@ export function createControlApi(deps: ControlApiDeps): Express {
   const policyStore = new PostgresPolicyStore(pool);
   const policy = new OwnerPolicyService(policyStore, csrfSecret);
   const telegram = new PostgresTelegramSettingsStore(pool);
+  const telegramFetcher = deps.telegramFetch ?? fetch;
 
   const app = express();
   app.set("trust proxy", config.trustedProxyHops);
@@ -227,6 +231,70 @@ export function createControlApi(deps: ControlApiDeps): Express {
       } catch (error) {
         res.status(400).json({
           error: error instanceof Error ? error.message : "invalid settings",
+        });
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/settings/telegram/test",
+    requireOwner,
+    requireCsrf(csrfSecret),
+    async (req, res) => {
+      try {
+        const kind = req.body?.kind;
+        if (kind !== "connectivity" && kind !== "test_message")
+          throw new Error("invalid telegram test kind");
+        if (config.telegramBotToken === undefined)
+          throw new Error("telegram bot token is not configured");
+        if (kind === "test_message" && config.telegramChatId === undefined)
+          throw new Error("telegram chat id is not configured");
+        const transport = new TelegramHttpTransport(
+          config.telegramBotToken,
+          telegramFetcher,
+        );
+        if (kind === "connectivity") {
+          await transport.call("getMe", {});
+          res.json({
+            state: "passed",
+            checkedAt: new Date().toISOString(),
+            summary: "Telegram bot connectivity passed.",
+          });
+          return;
+        }
+        const text = renderReport({
+          category: "success",
+          title: "Telegram test message",
+          subject: "Polyp AI Factory",
+          detail: [
+            {
+              icon: "warning",
+              text: "This is a bounded <owner>&dashboard connectivity test.",
+            },
+            {
+              icon: "gate",
+              text: "Operational reports stay terminal, human-readable and quiet.",
+            },
+          ],
+        });
+        if (text.length > 4_000)
+          throw new Error("telegram test message exceeds safe length");
+        await transport.call("sendMessage", {
+          chat_id: config.telegramChatId,
+          text,
+          parse_mode: "HTML",
+        });
+        res.json({
+          state: "passed",
+          checkedAt: new Date().toISOString(),
+          summary: "Telegram test message sent.",
+        });
+      } catch (error) {
+        res.status(400).json({
+          state: "failed",
+          checkedAt: new Date().toISOString(),
+          summary:
+            error instanceof Error ? error.message : "Telegram test failed.",
         });
       }
     },

@@ -424,6 +424,15 @@ code {
   color: var(--muted);
   font-weight: 400;
 }
+.compact-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-weight: 400;
+}
+.compact-list li + li {
+  margin-top: 6px;
+}
 .chat-thread {
   display: flex;
   flex-direction: column;

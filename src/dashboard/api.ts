@@ -2,6 +2,7 @@ import type {
   DashboardSnapshot,
   TelegramSettings,
   TelegramSettingsCommand,
+  TelegramTestResult,
 } from "./types.js";
 import {
   parseActivePolicy,
@@ -25,6 +26,7 @@ import {
   parseReplyTaskStatus,
   parseSendMessageResult,
   parseTelegramSettings,
+  parseTelegramTestResult,
   parseTranslationTaskResult,
 } from "./validation.js";
 export class DashboardApiError extends Error {
@@ -84,6 +86,28 @@ export async function saveTelegramSettings(
         : "Telegram settings were not saved.",
     );
   return parseTelegramSettings(await response.json());
+}
+
+export async function testTelegram(
+  kind: "connectivity" | "test_message",
+  csrfToken: string,
+  signal?: AbortSignal,
+): Promise<TelegramTestResult> {
+  const response = await fetch("/api/v1/settings/telegram/test", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "X-CSRF-Token": csrfToken,
+    },
+    body: JSON.stringify({ kind }),
+    ...(signal ? { signal } : {}),
+  });
+  const result = parseTelegramTestResult(await response.json());
+  if (!response.ok)
+    throw new DashboardApiError(response.status, result.summary);
+  return result;
 }
 export interface FactoryProjectCommand {
   slug: string;

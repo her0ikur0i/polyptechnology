@@ -122,6 +122,21 @@ export function parseTelegramSettings(value: unknown): TelegramSettings {
   return value;
 }
 
+export function parseTelegramTestResult(value: unknown) {
+  if (
+    !record(value) ||
+    !["passed", "failed"].includes(String(value.state)) ||
+    !string(value.checkedAt) ||
+    !string(value.summary)
+  )
+    throw new Error("Invalid Telegram test result");
+  return value as {
+    state: "passed" | "failed";
+    checkedAt: string;
+    summary: string;
+  };
+}
+
 function factoryProjectResult(value: unknown): value is {
   projectId: string;
   state: string;

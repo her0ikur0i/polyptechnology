@@ -68,8 +68,17 @@ const snapshot: DashboardSnapshot = {
   }),
   commandPolicy: { csrfToken: "test-csrf", canConfigureTelegram: true },
 };
-const renderDashboard = (value: DashboardSnapshot = snapshot) =>
-  render(<DashboardApp initialSnapshot={value} router="memory" />);
+const renderDashboard = (
+  value: DashboardSnapshot = snapshot,
+  initialPath = "/",
+) =>
+  render(
+    <DashboardApp
+      initialSnapshot={value}
+      router="memory"
+      initialPath={initialPath}
+    />,
+  );
 describe("dashboard", () => {
   beforeEach(() => window.history.replaceState({}, "", "/"));
   afterEach(() => vi.unstubAllGlobals());
@@ -84,14 +93,25 @@ describe("dashboard", () => {
     expect(screen.getAllByText("CONTRACT-007 · M3").length).toBeGreaterThan(0);
   });
   it("shows concrete model tracking and reference-only Telegram configuration", async () => {
-    renderDashboard();
-    await userEvent.click(
-      screen.getByRole("link", { name: /Providers & Models/ }),
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            state: "passed",
+            checkedAt: "2026-08-13T00:00:00.000Z",
+            summary: "Telegram bot connectivity passed.",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
     );
+    renderDashboard();
+    await userEvent.click(screen.getByRole("link", { name: /Models/ }));
     expect(screen.getAllByText("deepseek-v4-pro")).toHaveLength(2);
     expect(screen.getByLabelText("Verified")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("link", { name: /Settings/ }));
-    await screen.findByRole("heading", { name: "Settings" });
+    await userEvent.click(screen.getByRole("link", { name: /Telegram/ }));
+    await screen.findByRole("heading", { name: "Telegram" });
     const input = await screen.findByLabelText(/Bot secret reference/);
     expect(input).toHaveValue("secret://polyp/telegram/bot-token");
     expect(input).not.toHaveAttribute("readonly");
@@ -101,6 +121,21 @@ describe("dashboard", () => {
     expect(
       screen.getByText(/Owner approval required before a paid probe/),
     ).toBeInTheDocument();
+    expect(screen.getByText(/Terminal events only/)).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Check connection" }),
+    );
+    expect(
+      await screen.findByText("Telegram bot connectivity passed."),
+    ).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/v1/settings/telegram/test",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ "X-CSRF-Token": "test-csrf" }),
+        body: JSON.stringify({ kind: "connectivity" }),
+      }),
+    );
   });
   it("exposes stale provenance and has no automated accessibility violations", async () => {
     const stale = structuredClone(snapshot);
@@ -118,13 +153,29 @@ describe("dashboard", () => {
       "fetch",
       vi.fn().mockRejectedValue(new Error("no policy active in this test")),
     );
-    renderDashboard();
-    await userEvent.click(screen.getByRole("link", { name: /Policy/ }));
+    renderDashboard(snapshot, "/policy");
     await screen.findByRole("heading", { name: "Orchestration Policy" });
     const result = await axe.run(document.body, {
       rules: { "color-contrast": { enabled: false } },
     });
     expect(result.violations.map((item) => item.id)).toEqual([]);
+  });
+  it("exposes the owner-facing M3 rail destinations", async () => {
+    renderDashboard();
+    await userEvent.click(screen.getByRole("link", { name: /Runs/ }));
+    expect(
+      await screen.findByRole("heading", { name: "Runs" }),
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("link", { name: /System/ }));
+    expect(
+      await screen.findByRole("heading", { name: "System" }),
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("link", { name: /Settings/ }));
+    expect(
+      await screen.findByRole("heading", { name: "Settings" }),
+    ).toBeInTheDocument();
   });
   it("renders the Orchestrator conversation workspace with no automated accessibility violations", async () => {
     vi.stubGlobal(
@@ -144,7 +195,7 @@ describe("dashboard", () => {
       }),
     );
     renderDashboard();
-    await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
+    await userEvent.click(screen.getByRole("link", { name: /Chat/ }));
     // findBy, not getBy: the workspace is a code-split chunk (CONTRACT-015 M6),
     // so navigating to it now crosses a Suspense boundary the owner also waits
     // on. A synchronous query here would assert against the loading fallback.
@@ -211,7 +262,7 @@ describe("dashboard", () => {
       }),
     );
     renderDashboard();
-    await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
+    await userEvent.click(screen.getByRole("link", { name: /Chat/ }));
     // findBy, not getBy: the workspace is a code-split chunk (CONTRACT-015 M6),
     // so navigating to it now crosses a Suspense boundary the owner also waits
     // on. A synchronous query here would assert against the loading fallback.
@@ -285,7 +336,7 @@ describe("dashboard", () => {
       }),
     );
     renderDashboard();
-    await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
+    await userEvent.click(screen.getByRole("link", { name: /Chat/ }));
     await userEvent.type(
       await screen.findByLabelText("Conversation title"),
       "Vendor invoice tracker",
@@ -369,7 +420,7 @@ describe("dashboard", () => {
       }),
     );
     renderDashboard();
-    await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
+    await userEvent.click(screen.getByRole("link", { name: /Chat/ }));
     await userEvent.type(
       await screen.findByLabelText("Conversation title"),
       "Vendor invoice tracker",
@@ -465,7 +516,7 @@ describe("dashboard", () => {
       }),
     );
     renderDashboard();
-    await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
+    await userEvent.click(screen.getByRole("link", { name: /Chat/ }));
     await userEvent.type(
       await screen.findByLabelText("Conversation title"),
       "Vendor invoice tracker",
@@ -563,7 +614,7 @@ describe("dashboard", () => {
       }),
     );
     renderDashboard();
-    await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
+    await userEvent.click(screen.getByRole("link", { name: /Chat/ }));
     await userEvent.type(
       await screen.findByLabelText("Conversation title"),
       "Vendor invoice tracker",
@@ -598,8 +649,7 @@ describe("dashboard", () => {
         });
       }),
     );
-    renderDashboard();
-    await userEvent.click(screen.getByRole("link", { name: /Policy/ }));
+    renderDashboard(snapshot, "/policy");
     await userEvent.click(
       await screen.findByRole("button", { name: "Create draft" }),
     );

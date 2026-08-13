@@ -79,6 +79,11 @@ export interface TelegramSettingsCommand {
   authorizedChatIds: ReadonlyArray<string>;
   authorizedUserIds: ReadonlyArray<string>;
 }
+export interface TelegramTestResult {
+  state: "passed" | "failed";
+  checkedAt: string;
+  summary: string;
+}
 export interface CommandPolicy {
   csrfToken: string;
   canConfigureTelegram: boolean;

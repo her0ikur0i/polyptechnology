@@ -1,4 +1,6 @@
 import pg from "pg";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { AiGateway } from "../src/gateway/gateway.js";
 import { DeepSeekAdapter } from "../src/gateway/deepseek-adapter.js";
 import { FileSecretResolver } from "../src/gateway/file-secret-resolver.js";
@@ -10,6 +12,17 @@ const allowed = new Set<TaskClass>([
   "complex_backend",
   "independent_review",
 ]);
+export const MANAGED_DEEPSEEK_BUDGET_USD_MICROS = 1_000_000;
+export async function ensureManagedBudgetAccount(
+  pool: Pick<pg.Pool, "query">,
+  contractId: string,
+  maxCostUsdMicros = MANAGED_DEEPSEEK_BUDGET_USD_MICROS,
+): Promise<void> {
+  await pool.query(
+    "INSERT INTO ai_budget_accounts(scope_id,max_cost_usd_micros) VALUES($1,$2) ON CONFLICT (scope_id) DO NOTHING",
+    [contractId, maxCostUsdMicros],
+  );
+}
 async function main() {
   const databaseUrl = process.env.TEST_DATABASE_URL,
     contractId = process.env.MANAGED_CONTRACT_ID,
@@ -29,6 +42,7 @@ async function main() {
     throw new Error("invalid managed task input");
   const pool = new pg.Pool({ connectionString: databaseUrl });
   try {
+    await ensureManagedBudgetAccount(pool, contractId);
     const gateway = new AiGateway(new PostgresAttemptLedger(pool), [
       new DeepSeekAdapter(
         process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
@@ -74,7 +88,15 @@ async function main() {
     await pool.end();
   }
 }
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : "managed task failed");
-  process.exitCode = 1;
-});
+const invokedPath =
+  process.argv[1] === undefined
+    ? undefined
+    : pathToFileURL(resolve(process.argv[1])).href;
+if (invokedPath === import.meta.url) {
+  main().catch((error) => {
+    console.error(
+      error instanceof Error ? error.message : "managed task failed",
+    );
+    process.exitCode = 1;
+  });
+}

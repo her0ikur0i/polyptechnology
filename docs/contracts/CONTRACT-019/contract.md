@@ -215,6 +215,7 @@ service target documented in M2 evidence.
 - `migrations/**`
 - `package.json`
 - `package-lock.json`
+- `scripts/managed-deepseek-task.ts`
 - `src/control-api/**`
 - `src/dashboard/**`
 - `src/factory/**`
