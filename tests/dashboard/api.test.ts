@@ -109,4 +109,25 @@ describe("dashboard commands", () => {
     expect(source.closed).toBe(true);
     subscription.close();
   });
+  it("surfaces server retry cursors and closes the current stream", () => {
+    MockEventSource.instances = [];
+    vi.stubGlobal("EventSource", MockEventSource);
+    const retries: number[] = [];
+    subscribeReplyStream(
+      "00000000-0000-4000-8000-000000000002",
+      {
+        onChunk: () => {},
+        onDone: () => {},
+        onRetry: (event) => retries.push(event.after),
+        onError: (error) => {
+          throw error;
+        },
+      },
+      4,
+    );
+    const source = MockEventSource.instances[0]!;
+    source.emit("retry", { after: 9 });
+    expect(retries).toEqual([9]);
+    expect(source.closed).toBe(true);
+  });
 });

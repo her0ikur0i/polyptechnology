@@ -439,10 +439,76 @@ code {
   border: 1px solid var(--border);
   background: var(--panel);
 }
-.chat-bubble p {
+.message-content {
+  margin-top: 4px;
+}
+.message-content p {
   margin: 4px 0 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.message-content a {
+  color: var(--cyan);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.message-content code {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 1px 5px;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    monospace;
+}
+.message-code {
+  margin: 10px 0 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.2);
+}
+.message-code figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.78em;
+}
+.message-code figcaption span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.message-code figcaption button {
+  padding: 4px 8px;
+  border-radius: 7px;
+}
+.message-code pre {
+  margin: 0;
+  padding: 10px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.message-code pre code {
+  display: block;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--text);
+}
+.code-token--keyword {
+  color: var(--violet);
+}
+.code-token--string {
+  color: var(--green);
+}
+.code-token--comment {
+  color: var(--muted);
 }
 .chat-bubble__role {
   font-size: 0.75em;

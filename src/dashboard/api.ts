@@ -409,6 +409,7 @@ export function subscribeReplyStream(
   callbacks: {
     onChunk(chunk: { ordinal: number; fragment: string }): void;
     onDone(done: { state: string }): void;
+    onRetry?(retry: { after: number }): void;
     onError(error: Error): void;
   },
   afterOrdinal = 0,
@@ -437,6 +438,25 @@ export function subscribeReplyStream(
   source.addEventListener("done", (event) => {
     try {
       callbacks.onDone(parseReplyStreamDone(JSON.parse(event.data)));
+    } catch (error) {
+      callbacks.onError(
+        error instanceof Error ? error : new Error("Invalid reply stream."),
+      );
+    } finally {
+      source.close();
+    }
+  });
+  source.addEventListener("retry", (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      if (
+        typeof payload !== "object" ||
+        payload === null ||
+        !Number.isInteger((payload as { after?: unknown }).after) ||
+        (payload as { after: number }).after < 0
+      )
+        throw new Error("Invalid reply stream retry payload");
+      callbacks.onRetry?.({ after: (payload as { after: number }).after });
     } catch (error) {
       callbacks.onError(
         error instanceof Error ? error : new Error("Invalid reply stream."),

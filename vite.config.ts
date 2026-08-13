@@ -14,5 +14,11 @@ export default defineConfig({
     include: ["tests/dashboard/**/*.test.{ts,tsx}"],
     exclude: ["dist/**", "dist-dashboard/**", "node_modules/**"],
     css: true,
+    // Dashboard tests deliberately mutate browser-wide state: history,
+    // matchMedia, fetch, and axe's document scan target. Running files in
+    // parallel made route tests race each other and time out under the full
+    // suite even when each file passed alone.
+    fileParallelism: false,
+    testTimeout: 10_000,
   },
 });

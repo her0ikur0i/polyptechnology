@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { once } from "node:events";
 import express from "express";
 import { rateLimit } from "express-rate-limit";
 import type { Express } from "express";
@@ -45,6 +46,8 @@ export interface ControlApiDeps {
 // because Express's router matches paths case-insensitively by default.
 const TELEGRAM_WEBHOOK_PATH = "/api/v1/telegram/webhook";
 const REPLY_STREAM_POLL_MS = 250;
+const REPLY_STREAM_MAX_MS = 300_000;
+const REPLY_STREAM_MAX_PER_TASK = 3;
 const replyStreamTerminalStates = new Set([
   "succeeded",
   "failed",
@@ -54,6 +57,29 @@ const replyStreamTerminalStates = new Set([
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const activeReplyStreamsByTask = new Map<string, number>();
+
+async function writeSse(
+  res: express.Response,
+  payload: string,
+  deadlineMs: number,
+): Promise<boolean> {
+  if (res.destroyed || res.writableEnded) return false;
+  if (res.write(payload)) return true;
+  const remainingMs = Math.max(1, deadlineMs - Date.now());
+  const timedOut = Symbol("timed-out");
+  const result = await Promise.race([
+    once(res, "drain").then(() => true),
+    once(res, "close").then(() => false),
+    sleep(remainingMs).then(() => timedOut),
+  ]);
+  if (result === timedOut) {
+    res.end();
+    return false;
+  }
+  return result === true;
 }
 
 export function createControlApi(deps: ControlApiDeps): Express {
@@ -567,43 +593,76 @@ export function createControlApi(deps: ControlApiDeps): Express {
         res.status(404).json({ error: "reply task not found" });
         return;
       }
+      const active = activeReplyStreamsByTask.get(taskId) ?? 0;
+      if (active >= REPLY_STREAM_MAX_PER_TASK) {
+        res.status(429).json({ error: "too many reply streams" });
+        return;
+      }
+      activeReplyStreamsByTask.set(taskId, active + 1);
 
       let closed = false;
+      const openedAt = Date.now();
+      const deadlineMs = openedAt + REPLY_STREAM_MAX_MS;
       req.on("close", () => {
         closed = true;
       });
-      res.status(200);
-      res.set({
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
-        "X-Accel-Buffering": "no",
-      });
-      res.flushHeaders();
+      try {
+        res.status(200);
+        res.set({
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+        });
+        res.flushHeaders();
 
-      let cursor = after;
-      let state = task.rows[0]!.state;
-      while (!closed) {
-        const chunks = await replyChunks.since(taskId, cursor);
-        for (const chunk of chunks) {
-          cursor = chunk.ordinal;
-          res.write(
-            `event: chunk\ndata: ${JSON.stringify(chunk)}\nid: ${chunk.ordinal}\n\n`,
+        let cursor = after;
+        let state = task.rows[0]!.state;
+        while (!closed) {
+          const chunks = await replyChunks.since(taskId, cursor);
+          for (const chunk of chunks) {
+            cursor = chunk.ordinal;
+            if (
+              !(await writeSse(
+                res,
+                `event: chunk\ndata: ${JSON.stringify(chunk)}\nid: ${chunk.ordinal}\n\n`,
+                deadlineMs,
+              ))
+            )
+              return;
+          }
+
+          const current = await pool.query<{ state: string }>(
+            "SELECT state FROM tasks WHERE id=$1",
+            [taskId],
           );
+          state = current.rows[0]?.state ?? "cancelled";
+          if (replyStreamTerminalStates.has(state)) {
+            await writeSse(
+              res,
+              `event: done\ndata: ${JSON.stringify({ state })}\n\n`,
+              deadlineMs,
+            );
+            res.end();
+            return;
+          }
+          if (Date.now() >= deadlineMs) {
+            await writeSse(
+              res,
+              `event: retry\ndata: ${JSON.stringify({ after: cursor })}\n\n`,
+              deadlineMs,
+            );
+            res.end();
+            return;
+          }
+          if (chunks.length === 0)
+            await writeSse(res, ": keep-alive\n\n", deadlineMs);
+          await sleep(REPLY_STREAM_POLL_MS);
         }
-
-        const current = await pool.query<{ state: string }>(
-          "SELECT state FROM tasks WHERE id=$1",
-          [taskId],
-        );
-        state = current.rows[0]?.state ?? "cancelled";
-        if (replyStreamTerminalStates.has(state)) {
-          res.write(`event: done\ndata: ${JSON.stringify({ state })}\n\n`);
-          res.end();
-          return;
-        }
-        if (chunks.length === 0) res.write(": keep-alive\n\n");
-        await sleep(REPLY_STREAM_POLL_MS);
+      } finally {
+        const remaining = (activeReplyStreamsByTask.get(taskId) ?? 1) - 1;
+        if (remaining <= 0) activeReplyStreamsByTask.delete(taskId);
+        else activeReplyStreamsByTask.set(taskId, remaining);
       }
     },
   );

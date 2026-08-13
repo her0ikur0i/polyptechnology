@@ -140,5 +140,6 @@ post-and-wait workspace, which keeps working throughout.
 - `src/orchestrator/**`
 - `package.json`
 - `package-lock.json`
+- `vite.config.ts`
 - `scripts/**`
 - `tests/**`

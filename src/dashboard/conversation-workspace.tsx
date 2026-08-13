@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Panel, StatusBadge } from "./components.js";
+import { MessageContent } from "./message-renderer.js";
 import {
   startConversation,
   sendConversationMessage,
@@ -28,6 +29,8 @@ import type { ProjectSummary } from "./types.js";
 
 const REPLY_POLL_INTERVAL_MS = 1500;
 const REPLY_POLL_MAX_ATTEMPTS = 60; // ~90s before giving up and letting the owner refresh by hand
+const REPLY_STREAM_RECONNECT_DELAY_MS = 700;
+const REPLY_STREAM_MAX_RECONNECTS = 8;
 const terminalReplyStates = new Set([
   "succeeded",
   "failed",
@@ -84,6 +87,7 @@ export function ConversationWorkspacePage({
   const threadEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeReplyStreamRef = useRef<ReplyStreamSubscription>();
+  const replyReconnectTimerRef = useRef<number>();
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ block: "end" });
@@ -91,10 +95,19 @@ export function ConversationWorkspacePage({
 
   useEffect(
     () => () => {
-      activeReplyStreamRef.current?.close();
+      cancelActiveReplyStream();
     },
     [],
   );
+
+  function cancelActiveReplyStream() {
+    activeReplyStreamRef.current?.close();
+    activeReplyStreamRef.current = undefined;
+    if (replyReconnectTimerRef.current !== undefined) {
+      window.clearTimeout(replyReconnectTimerRef.current);
+      replyReconnectTimerRef.current = undefined;
+    }
+  }
 
   async function refreshMessages(conversationId: string, projectId: string) {
     const [nextMessages, nextAttachments] = await Promise.all([
@@ -144,40 +157,68 @@ export function ConversationWorkspacePage({
     conversationId: string,
     projectId: string,
   ) {
-    activeReplyStreamRef.current?.close();
+    cancelActiveReplyStream();
     setAwaitingReply(true);
     setStreamingReply("");
     let settled = false;
     let lastOrdinal = 0;
-    try {
-      activeReplyStreamRef.current = subscribeReplyStream(taskId, {
-        onChunk: (chunk) => {
-          if (settled || chunk.ordinal <= lastOrdinal) return;
-          lastOrdinal = chunk.ordinal;
-          setStreamingReply((current) => `${current}${chunk.fragment}`);
-        },
-        onDone: (done) => {
-          settled = true;
-          activeReplyStreamRef.current = undefined;
-          void refreshMessages(conversationId, projectId).finally(() => {
-            setAwaitingReply(false);
-            setStreamingReply("");
-            if (done.state !== "succeeded")
-              setError(
-                `The assistant could not reply (task ${done.state}). Your message is saved -- try sending another.`,
+    let reconnects = 0;
+
+    function connect(afterOrdinal: number) {
+      if (settled) return;
+      activeReplyStreamRef.current?.close();
+      try {
+        activeReplyStreamRef.current = subscribeReplyStream(
+          taskId,
+          {
+            onChunk: (chunk) => {
+              if (settled || chunk.ordinal <= lastOrdinal) return;
+              lastOrdinal = chunk.ordinal;
+              setStreamingReply((current) => `${current}${chunk.fragment}`);
+            },
+            onDone: (done) => {
+              settled = true;
+              activeReplyStreamRef.current = undefined;
+              void refreshMessages(conversationId, projectId).finally(() => {
+                setAwaitingReply(false);
+                setStreamingReply("");
+                if (done.state !== "succeeded")
+                  setError(
+                    `The assistant could not reply (task ${done.state}). Your message is saved -- try sending another.`,
+                  );
+              });
+            },
+            onRetry: (retry) => {
+              reconnects = 0;
+              replyReconnectTimerRef.current = window.setTimeout(
+                () => connect(Math.max(lastOrdinal, retry.after)),
+                REPLY_STREAM_RECONNECT_DELAY_MS,
               );
-          });
-        },
-        onError: () => {
-          if (settled) return;
-          settled = true;
-          activeReplyStreamRef.current = undefined;
-          void pollReply(taskId, conversationId, projectId);
-        },
-      });
-    } catch {
-      void pollReply(taskId, conversationId, projectId);
+            },
+            onError: () => {
+              if (settled) return;
+              activeReplyStreamRef.current = undefined;
+              if (reconnects < REPLY_STREAM_MAX_RECONNECTS) {
+                reconnects += 1;
+                replyReconnectTimerRef.current = window.setTimeout(
+                  () => connect(lastOrdinal),
+                  REPLY_STREAM_RECONNECT_DELAY_MS,
+                );
+                return;
+              }
+              settled = true;
+              void pollReply(taskId, conversationId, projectId);
+            },
+          },
+          afterOrdinal,
+        );
+      } catch {
+        settled = true;
+        void pollReply(taskId, conversationId, projectId);
+      }
     }
+
+    connect(0);
   }
 
   async function handleStart(event: React.FormEvent) {
@@ -197,6 +238,7 @@ export function ConversationWorkspacePage({
         projectId: started.projectId,
         title: started.title,
       });
+      cancelActiveReplyStream();
       setMessages([]);
       setAttachments([]);
       setAwaitingReply(false);
@@ -509,8 +551,7 @@ export function ConversationWorkspacePage({
     setProposal(undefined);
     setTranslationState("idle");
     setGenerationResult(undefined);
-    activeReplyStreamRef.current?.close();
-    activeReplyStreamRef.current = undefined;
+    cancelActiveReplyStream();
     setAwaitingReply(false);
     setStreamingReply("");
     try {
@@ -597,7 +638,7 @@ export function ConversationWorkspacePage({
                   className={`chat-bubble chat-bubble--${message.role}`}
                 >
                   <span className="chat-bubble__role">{message.role}</span>
-                  <p>{message.content}</p>
+                  <MessageContent content={message.content} />
                 </div>
               ))}
               {awaitingReply && (
@@ -606,7 +647,7 @@ export function ConversationWorkspacePage({
                   aria-live="polite"
                 >
                   <span className="chat-bubble__role">assistant</span>
-                  <p>{streamingReply || "Thinking…"}</p>
+                  <MessageContent content={streamingReply || "Thinking…"} />
                 </div>
               )}
               <div ref={threadEndRef} />

@@ -1038,6 +1038,81 @@ test(
 );
 
 test(
+  "reply task SSE stream caps concurrent readers for a nonterminal task",
+  { skip: databaseUrl === undefined },
+  async () => {
+    await withServer("disabled", async (baseUrl, csrfSecret) => {
+      const headers = {
+        "content-type": "application/json",
+        "x-csrf-token": csrfSecret,
+      };
+      const started = await (
+        await fetch(`${baseUrl}/api/v1/orchestrator/conversations`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            title: "Stream cap",
+            idempotencyKey: randomUUID(),
+            occurredAt: new Date().toISOString(),
+          }),
+        })
+      ).json();
+      const sendResult = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/messages`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              projectId: started.projectId,
+              content: "Keep this task queued.",
+              expectedVersion: 0,
+              idempotencyKey: randomUUID(),
+              occurredAt: new Date().toISOString(),
+            }),
+          },
+        )
+      ).json();
+      const controllers = [
+        new AbortController(),
+        new AbortController(),
+        new AbortController(),
+      ];
+      try {
+        const responses = await Promise.all(
+          controllers.map((controller) =>
+            fetch(
+              `${baseUrl}/api/v1/orchestrator/reply-tasks/${sendResult.replyTaskId}/stream`,
+              { signal: controller.signal },
+            ),
+          ),
+        );
+        assert.deepEqual(
+          responses.map((response) => response.status),
+          [200, 200, 200],
+        );
+        const rejected = await fetch(
+          `${baseUrl}/api/v1/orchestrator/reply-tasks/${sendResult.replyTaskId}/stream`,
+        );
+        assert.equal(rejected.status, 429);
+      } finally {
+        for (const controller of controllers) controller.abort();
+        const cleanupPool = new pg.Pool({ connectionString: databaseUrl });
+        try {
+          await new PostgresWorkRepository(cleanupPool).controlTransition(
+            sendResult.replyTaskId,
+            "queued",
+            "cancelled",
+          );
+        } finally {
+          await cleanupPool.end();
+        }
+      }
+    });
+  },
+);
+
+test(
   "starting a conversation on an existing project reuses it instead of bootstrapping a new one",
   { skip: databaseUrl === undefined },
   async () => {
