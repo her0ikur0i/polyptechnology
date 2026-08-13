@@ -32,6 +32,9 @@ const REPLY_POLL_INTERVAL_MS = 1500;
 const REPLY_POLL_MAX_ATTEMPTS = 60; // ~90s before giving up and letting the owner refresh by hand
 const REPLY_STREAM_RECONNECT_DELAY_MS = 700;
 const REPLY_STREAM_MAX_RECONNECTS = 8;
+const THREAD_VIRTUALIZE_AFTER = 80;
+const THREAD_ROW_ESTIMATE_PX = 116;
+const THREAD_OVERSCAN_ROWS = 8;
 const terminalReplyStates = new Set([
   "succeeded",
   "failed",
@@ -48,6 +51,30 @@ function modelLabel(message: ConversationMessage) {
   if (attribution === undefined) return undefined;
   const model = attribution.resolvedModelId ?? attribution.requestedModelId;
   return `${attribution.provider} · ${model} · ${formatCost(attribution.costUsdMicros)}`;
+}
+
+function virtualWindowFor(
+  scrollTop: number,
+  viewportHeight: number,
+  messageCount: number,
+) {
+  const visibleRows = Math.ceil(viewportHeight / THREAD_ROW_ESTIMATE_PX);
+  const start = Math.max(
+    0,
+    Math.floor(scrollTop / THREAD_ROW_ESTIMATE_PX) - THREAD_OVERSCAN_ROWS,
+  );
+  const end = Math.min(
+    messageCount,
+    start + visibleRows + THREAD_OVERSCAN_ROWS * 2,
+  );
+  return { start, end };
+}
+
+function isThreadNearBottom(thread: HTMLDivElement) {
+  return (
+    thread.scrollHeight - thread.scrollTop - thread.clientHeight <
+    THREAD_ROW_ESTIMATE_PX
+  );
 }
 
 // Replaces the old bare "Generate project blueprint" form entirely
@@ -97,16 +124,88 @@ export function ConversationWorkspacePage({
   >("idle");
   const [generating, setGenerating] = useState(false);
   const [generationResult, setGenerationResult] = useState<string>();
+  const [virtualWindow, setVirtualWindow] = useState({ start: 0, end: 0 });
+  const threadRef = useRef<HTMLDivElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const activeReplyStreamRef = useRef<ReplyStreamSubscription>();
   const replyReconnectTimerRef = useRef<number>();
+  const threadStickToBottomRef = useRef(true);
+  const virtualizedThread = messages.length > THREAD_VIRTUALIZE_AFTER;
+  const visibleMessages = virtualizedThread
+    ? messages.slice(virtualWindow.start, virtualWindow.end)
+    : messages;
+  const spacerBeforePx = virtualizedThread
+    ? virtualWindow.start * THREAD_ROW_ESTIMATE_PX
+    : 0;
+  const spacerAfterPx = virtualizedThread
+    ? Math.max(0, messages.length - virtualWindow.end) * THREAD_ROW_ESTIMATE_PX
+    : 0;
 
   useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, awaitingReply]);
+    const thread = threadRef.current;
+    if (virtualizedThread) {
+      if (thread && !threadStickToBottomRef.current) {
+        setVirtualWindow(
+          virtualWindowFor(
+            thread.scrollTop,
+            thread.clientHeight,
+            messages.length,
+          ),
+        );
+      } else {
+        const visibleRows =
+          Math.ceil((thread?.clientHeight || 460) / THREAD_ROW_ESTIMATE_PX) +
+          THREAD_OVERSCAN_ROWS * 2;
+        setVirtualWindow({
+          start: Math.max(0, messages.length - visibleRows),
+          end: messages.length,
+        });
+      }
+    } else {
+      setVirtualWindow({ start: 0, end: messages.length });
+    }
+    if (threadStickToBottomRef.current)
+      threadEndRef.current?.scrollIntoView({ block: "end" });
+  }, [messages, awaitingReply, virtualizedThread]);
+
+  function syncVirtualWindow() {
+    if (!virtualizedThread) return;
+    const thread = threadRef.current;
+    if (!thread) return;
+    threadStickToBottomRef.current = isThreadNearBottom(thread);
+    setVirtualWindow(
+      virtualWindowFor(thread.scrollTop, thread.clientHeight, messages.length),
+    );
+  }
+
+  function renderMessage(message: ConversationMessage) {
+    const attribution =
+      message.role === "assistant" ? modelLabel(message) : undefined;
+    return (
+      <div
+        key={message.id}
+        className={`chat-bubble chat-bubble--${message.role}`}
+      >
+        <span className="chat-bubble__role">{message.role}</span>
+        <MessageContent content={message.content} />
+        {attribution && (
+          <span className="chat-bubble__meta">{attribution}</span>
+        )}
+        {message.role === "owner" && (
+          <button
+            type="button"
+            className="chat-bubble__action"
+            onClick={() => editMessage(message)}
+          >
+            Edit
+          </button>
+        )}
+      </div>
+    );
+  }
 
   useEffect(
     () => () => {
@@ -264,6 +363,7 @@ export function ConversationWorkspacePage({
         projectId: started.projectId,
         title: started.title,
       });
+      threadStickToBottomRef.current = true;
       cancelActiveReplyStream();
       setMessages([]);
       setAttachments([]);
@@ -635,6 +735,7 @@ export function ConversationWorkspacePage({
       projectId: item.projectId,
       title: item.title,
     });
+    threadStickToBottomRef.current = true;
     setProposal(undefined);
     setTranslationState("idle");
     setGenerationResult(undefined);
@@ -714,35 +815,24 @@ export function ConversationWorkspacePage({
               <StatusBadge label={`v${messages.length}`} tone="neutral" />
             }
           >
-            <div className="chat-thread">
+            <div
+              className="chat-thread"
+              ref={threadRef}
+              onScroll={syncVirtualWindow}
+            >
               {messages.length === 0 && (
                 <p className="empty">
                   Send the first message to start the interview.
                 </p>
               )}
-              {messages.map((message) => (
+              {spacerBeforePx > 0 && (
                 <div
-                  key={message.id}
-                  className={`chat-bubble chat-bubble--${message.role}`}
-                >
-                  <span className="chat-bubble__role">{message.role}</span>
-                  <MessageContent content={message.content} />
-                  {message.role === "assistant" && modelLabel(message) && (
-                    <span className="chat-bubble__meta">
-                      {modelLabel(message)}
-                    </span>
-                  )}
-                  {message.role === "owner" && (
-                    <button
-                      type="button"
-                      className="chat-bubble__action"
-                      onClick={() => editMessage(message)}
-                    >
-                      Edit
-                    </button>
-                  )}
-                </div>
-              ))}
+                  className="chat-thread__spacer"
+                  style={{ height: spacerBeforePx }}
+                  aria-hidden="true"
+                />
+              )}
+              {visibleMessages.map(renderMessage)}
               {awaitingReply && (
                 <div
                   className="chat-bubble chat-bubble--assistant chat-bubble--pending"
@@ -751,6 +841,13 @@ export function ConversationWorkspacePage({
                   <span className="chat-bubble__role">assistant</span>
                   <MessageContent content={streamingReply || "Thinking…"} />
                 </div>
+              )}
+              {spacerAfterPx > 0 && (
+                <div
+                  className="chat-thread__spacer"
+                  style={{ height: spacerAfterPx }}
+                  aria-hidden="true"
+                />
               )}
               <div ref={threadEndRef} />
             </div>

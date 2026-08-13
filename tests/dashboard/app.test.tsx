@@ -296,6 +296,97 @@ describe("dashboard", () => {
       await screen.findByText("deepseek · deepseek-v4-pro · $0.012345"),
     ).toBeInTheDocument();
   });
+  it("virtualizes long conversation threads while keeping the newest turns visible", async () => {
+    MockEventSource.instances = [];
+    vi.stubGlobal("EventSource", MockEventSource);
+    const longThread = Array.from({ length: 200 }, (_, index) => ({
+      id: `message-${index}`,
+      conversationId: "conversation-1",
+      projectId: "project-1",
+      ordinal: index + 1,
+      role: index % 2 === 0 ? "owner" : "assistant",
+      content: `Turn ${index}`,
+      classification: "internal",
+      contentSha256: "0".repeat(64),
+      createdAt: "2026-08-13T00:00:00.000Z",
+    }));
+    const sentBodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (url === "/api/v1/orchestrator/conversations")
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              conversationId: "conversation-1",
+              projectId: "project-1",
+              title: "Vendor invoice tracker",
+              version: 0,
+            }),
+          });
+        if (url.includes("/projects/project-1/conversations"))
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              {
+                id: "conversation-1",
+                projectId: "project-1",
+                title: "Vendor invoice tracker",
+                version: 1,
+                createdAt: "2026-08-13T00:00:00.000Z",
+              },
+            ],
+          });
+        if (url.includes("/messages?"))
+          return Promise.resolve({
+            ok: true,
+            json: async () => longThread,
+          });
+        if (url.endsWith("/messages") && init?.method === "POST") {
+          const body = JSON.parse(String(init.body));
+          sentBodies.push(body);
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              message: {
+                id: "message-200",
+                conversationId: "conversation-1",
+                projectId: "project-1",
+                ordinal: 201,
+                role: "owner",
+                content: String(body.content),
+                classification: "internal",
+                contentSha256: "0".repeat(64),
+                createdAt: "2026-08-13T00:00:01.000Z",
+              },
+              replyTaskId: "00000000-0000-4000-8000-000000000303",
+            }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }),
+    );
+    render(<DashboardApp initialSnapshot={snapshot} />);
+    await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
+    await userEvent.type(
+      await screen.findByLabelText("Conversation title"),
+      "Vendor invoice tracker",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Vendor invoice tracker" }),
+    );
+
+    expect(await screen.findByText("Turn 199")).toBeInTheDocument();
+    expect(screen.queryByText("Turn 0")).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".chat-bubble").length).toBeLessThan(40);
+    await userEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+    expect(sentBodies).toHaveLength(1);
+    expect(sentBodies[0]).toMatchObject({
+      content: "Turn 198",
+      expectedVersion: 200,
+    });
+  });
   it("supports composer send semantics, stop, regenerate, edit, and draft recovery", async () => {
     MockEventSource.instances = [];
     vi.stubGlobal("EventSource", MockEventSource);

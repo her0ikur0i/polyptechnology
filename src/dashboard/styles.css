@@ -440,6 +440,9 @@ code {
   border: 1px solid var(--border);
   background: var(--panel);
 }
+.chat-thread__spacer {
+  flex: 0 0 auto;
+}
 .chat-bubble__action {
   margin-top: 8px;
   padding: 4px 8px;
