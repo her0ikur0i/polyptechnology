@@ -60,14 +60,16 @@ async function loadContracts(pool: Pool): Promise<ContractSummary[]> {
     latest_milestone: string | null;
     gates_total: string;
     gates_passed: string;
+    task_ids: ReadonlyArray<string>;
   }>(
     `SELECT c.id, c.status, c.published_sha,
             (SELECT m.ordinal::text FROM milestones m WHERE m.contract_id = c.id ORDER BY m.ordinal DESC LIMIT 1) AS latest_milestone,
             COUNT(g.evidence_id) AS gates_total,
             COUNT(g.evidence_id) FILTER (WHERE g.passed) AS gates_passed
+            , COALESCE((SELECT array_agg(t.id ORDER BY t.id) FROM tasks t WHERE t.contract_id = c.id), '{}'::text[]) AS task_ids
      FROM factory_contracts c
      LEFT JOIN gate_evidence g ON g.contract_id = c.id
-     GROUP BY c.id, c.status, c.published_sha
+     GROUP BY c.id, c.status, c.published_sha, c.id
      ORDER BY c.id DESC LIMIT 100`,
   );
   return result.rows.map((row) => {
@@ -75,6 +77,7 @@ async function loadContracts(pool: Pool): Promise<ContractSummary[]> {
       passed = Number(row.gates_passed);
     const gateStatus =
       total === 0 ? "pending" : passed === total ? "passed" : "failed";
+    const taskIds = row.task_ids;
     return {
       id: row.id,
       title: row.id,
@@ -82,6 +85,7 @@ async function loadContracts(pool: Pool): Promise<ContractSummary[]> {
       state: row.status,
       gateStatus,
       ...(row.published_sha ? { publishedSha: row.published_sha } : {}),
+      taskIds,
     };
   });
 }

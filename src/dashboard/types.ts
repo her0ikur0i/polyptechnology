@@ -29,6 +29,7 @@ export interface ContractSummary {
   state: string;
   gateStatus: string;
   publishedSha?: string;
+  taskIds?: ReadonlyArray<string>;
 }
 export interface ModelAttempt {
   id: string;
