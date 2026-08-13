@@ -66,10 +66,10 @@ async function loadContracts(pool: Pool): Promise<ContractSummary[]> {
             (SELECT m.ordinal::text FROM milestones m WHERE m.contract_id = c.id ORDER BY m.ordinal DESC LIMIT 1) AS latest_milestone,
             COUNT(g.evidence_id) AS gates_total,
             COUNT(g.evidence_id) FILTER (WHERE g.passed) AS gates_passed
-            , COALESCE((SELECT array_agg(t.id ORDER BY t.id) FROM tasks t WHERE t.contract_id = c.id), '{}'::text[]) AS task_ids
+            , COALESCE((SELECT array_agg(t.id::text ORDER BY t.id) FROM tasks t WHERE t.contract_id = c.id), '{}'::text[]) AS task_ids
      FROM factory_contracts c
      LEFT JOIN gate_evidence g ON g.contract_id = c.id
-     GROUP BY c.id, c.status, c.published_sha, c.id
+     GROUP BY c.id, c.status, c.published_sha
      ORDER BY c.id DESC LIMIT 100`,
   );
   return result.rows.map((row) => {

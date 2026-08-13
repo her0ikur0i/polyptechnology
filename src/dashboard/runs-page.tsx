@@ -13,6 +13,34 @@ export function RunsPage({ snapshot }: { snapshot: DashboardSnapshot }) {
     <div className="page runs-page">
       <h1>Runs</h1>
 
+      <section className="runs-aggregates" aria-label="Aggregate metrics">
+        <dl className="aggregate-metrics">
+          <div>
+            <dt>Total runs</dt>
+            <dd>{contracts.length}</dd>
+          </div>
+          <div>
+            <dt>Total attempts</dt>
+            <dd>{attempts.length}</dd>
+          </div>
+          <div>
+            <dt>Verified attempts</dt>
+            <dd>{attempts.filter((attempt) => attempt.verified).length}</dd>
+          </div>
+          <div>
+            <dt>Total ledger cost</dt>
+            <dd>
+              {formatCostUsdMicros(
+                attempts.reduce(
+                  (sum, attempt) => sum + attempt.costUsdMicros,
+                  0,
+                ),
+              )}
+            </dd>
+          </div>
+        </dl>
+      </section>
+
       <section className="runs-contracts" aria-label="Contract runs">
         {contracts.map((contract) => {
           const relatedAttempts = attempts.filter((attempt) =>
