@@ -35,6 +35,7 @@ import type { DashboardSnapshot, ModelAttempt } from "./types.js";
 import { useSnapshot } from "./use-snapshot.js";
 import { saveTelegramSettings, testTelegram } from "./api.js";
 import "./styles.css";
+import RunsPage from "./runs-page.js";
 // The three real page modules are code-split; everything else routed below is
 // defined inline in this file, so lazy-loading it would move nothing. These
 // three are where the weight actually is -- factory-live alone pulls in the
@@ -232,16 +233,7 @@ function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
                   />
                 }
               />
-              <Route
-                path="/runs"
-                element={
-                  <RegistryPage
-                    title="Runs"
-                    observation={snapshot.contracts}
-                    columns={["id", "milestone", "state", "gateStatus"]}
-                  />
-                }
-              />
+              <Route path="/runs" element={<RunsPage snapshot={snapshot} />} />
               <Route
                 path="/contracts"
                 element={

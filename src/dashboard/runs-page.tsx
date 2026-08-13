@@ -16,7 +16,7 @@ export function RunsPage({ snapshot }: { snapshot: DashboardSnapshot }) {
   const totalLedgerCost = attempts.reduce((sum, a) => sum + a.costUsdMicros, 0);
 
   return (
-    <main className="runs-page">
+    <div className="page runs-page">
       <h1>Runs</h1>
 
       <section className="runs-metrics" aria-label="Aggregate run metrics">
@@ -175,6 +175,6 @@ export function RunsPage({ snapshot }: { snapshot: DashboardSnapshot }) {
           </section>
         )}
       </Observation>
-    </main>
+    </div>
   );
 }
