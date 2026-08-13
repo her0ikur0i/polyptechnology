@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  cancelReplyTask,
   saveTelegramSettings,
   subscribeReplyStream,
 } from "../../src/dashboard/api.js";
@@ -129,5 +130,32 @@ describe("dashboard commands", () => {
     source.emit("retry", { after: 9 });
     expect(retries).toEqual([9]);
     expect(source.closed).toBe(true);
+  });
+
+  it("cancels reply tasks through the authenticated command boundary", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          taskId: "00000000-0000-4000-8000-000000000003",
+          state: "cancelled",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      cancelReplyTask("00000000-0000-4000-8000-000000000003", "csrf"),
+    ).resolves.toEqual({
+      taskId: "00000000-0000-4000-8000-000000000003",
+      state: "cancelled",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/orchestrator/reply-tasks/00000000-0000-4000-8000-000000000003/cancel",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "same-origin",
+        headers: expect.objectContaining({ "X-CSRF-Token": "csrf" }),
+      }),
+    );
   });
 });

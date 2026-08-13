@@ -40,7 +40,8 @@ body {
     radial-gradient(circle at 80% 0%, #152747 0, transparent 38rem), var(--bg);
 }
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 .skip-link {
@@ -439,6 +440,15 @@ code {
   border: 1px solid var(--border);
   background: var(--panel);
 }
+.chat-bubble__action {
+  margin-top: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
 .message-content {
   margin-top: 4px;
 }
@@ -527,6 +537,32 @@ code {
 .chat-bubble--pending p {
   color: var(--muted);
   font-style: italic;
+}
+.composer {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.composer label {
+  display: grid;
+  gap: 8px;
+  font-weight: 700;
+}
+.composer textarea {
+  width: 100%;
+  min-height: 44px;
+  max-height: 260px;
+  resize: none;
+  overflow-y: auto;
+  padding: 11px 12px;
+  color: var(--text);
+  background: #07111f;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  line-height: 1.45;
 }
 .attachment-upload {
   display: inline-flex;

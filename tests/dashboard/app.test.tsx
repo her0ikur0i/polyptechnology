@@ -5,6 +5,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardApp } from "../../src/dashboard/app.js";
 import { StatePage } from "../../src/dashboard/components.js";
 import type { DashboardSnapshot } from "../../src/dashboard/types.js";
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+  closed = false;
+
+  constructor(readonly url: string) {
+    MockEventSource.instances.push(this);
+  }
+
+  addEventListener() {
+    // The composer test keeps the stream open until Stop is clicked.
+  }
+
+  close() {
+    this.closed = true;
+  }
+}
 const observed = <T,>(data: T) => ({
   data,
   observedAt: "2026-08-08T00:00:00.000Z",
@@ -211,6 +227,199 @@ describe("dashboard", () => {
         headers: expect.objectContaining({ "X-CSRF-Token": "test-csrf" }),
       }),
     );
+  });
+  it("supports composer send semantics, stop, regenerate, edit, and draft recovery", async () => {
+    MockEventSource.instances = [];
+    vi.stubGlobal("EventSource", MockEventSource);
+    const serverMessages: Array<{
+      id: string;
+      conversationId: string;
+      projectId: string;
+      ordinal: number;
+      role: "owner" | "assistant" | "system";
+      content: string;
+      classification: string;
+      contentSha256: string;
+      createdAt: string;
+    }> = [];
+    const sentBodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url === "/api/v1/orchestrator/conversations")
+          return new Response(
+            JSON.stringify({
+              conversationId: "conversation-1",
+              projectId: "project-1",
+              title: "Vendor invoice tracker",
+              version: 0,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        if (url.includes("/messages?"))
+          return new Response(JSON.stringify(serverMessages), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        if (url.endsWith("/messages") && init?.method === "POST") {
+          const body = JSON.parse(String(init.body));
+          sentBodies.push(body);
+          if (String(body.content).includes("will fail"))
+            return new Response(JSON.stringify({ error: "nope" }), {
+              status: 500,
+              headers: { "content-type": "application/json" },
+            });
+          const message = {
+            id: `message-${serverMessages.length + 1}`,
+            conversationId: "conversation-1",
+            projectId: "project-1",
+            ordinal: serverMessages.length + 1,
+            role: "owner" as const,
+            content: String(body.content),
+            classification: "internal",
+            contentSha256: "0".repeat(64),
+            createdAt: "2026-08-13T00:00:00.000Z",
+          };
+          serverMessages.push(message);
+          return new Response(
+            JSON.stringify({
+              message,
+              replyTaskId: "00000000-0000-4000-8000-000000000101",
+            }),
+            { status: 201, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (url.endsWith("/00000000-0000-4000-8000-000000000101/cancel"))
+          return new Response(
+            JSON.stringify({
+              taskId: "00000000-0000-4000-8000-000000000101",
+              state: "cancelled",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+    render(<DashboardApp initialSnapshot={snapshot} />);
+    await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
+    await userEvent.type(
+      await screen.findByLabelText("Conversation title"),
+      "Vendor invoice tracker",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+    const composer = await screen.findByLabelText("Message");
+
+    await userEvent.type(composer, "will fail");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The command was not accepted.",
+    );
+    expect(composer).toHaveValue("will fail");
+
+    await userEvent.clear(composer);
+    await userEvent.type(composer, "First draft");
+    await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
+    expect(composer).toHaveValue("First draft\n");
+    await userEvent.type(composer, " line two");
+    await userEvent.keyboard("{Enter}");
+    expect(await screen.findByText(/First draft/)).toBeInTheDocument();
+    expect(MockEventSource.instances[0]?.url).toContain(
+      "/api/v1/orchestrator/reply-tasks/00000000-0000-4000-8000-000000000101/stream",
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "Stop" }));
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/v1/orchestrator/reply-tasks/00000000-0000-4000-8000-000000000101/cancel",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ "X-CSRF-Token": "test-csrf" }),
+      }),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(composer).toHaveValue("First draft\n line two");
+    await userEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+    expect(
+      sentBodies.filter((body) =>
+        String((body as { content?: unknown }).content).includes("First draft"),
+      ),
+    ).toHaveLength(2);
+  });
+  it("keeps following an active reply when Stop fails", async () => {
+    MockEventSource.instances = [];
+    vi.stubGlobal("EventSource", MockEventSource);
+    const serverMessages = [
+      {
+        id: "message-1",
+        conversationId: "conversation-1",
+        projectId: "project-1",
+        ordinal: 1,
+        role: "owner" as const,
+        content: "Still running",
+        classification: "internal",
+        contentSha256: "0".repeat(64),
+        createdAt: "2026-08-13T00:00:00.000Z",
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url === "/api/v1/orchestrator/conversations")
+          return new Response(
+            JSON.stringify({
+              conversationId: "conversation-1",
+              projectId: "project-1",
+              title: "Vendor invoice tracker",
+              version: 0,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        if (url.includes("/messages?"))
+          return new Response(JSON.stringify(serverMessages), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        if (url.endsWith("/messages") && init?.method === "POST")
+          return new Response(
+            JSON.stringify({
+              message: serverMessages[0],
+              replyTaskId: "00000000-0000-4000-8000-000000000202",
+            }),
+            { status: 201, headers: { "content-type": "application/json" } },
+          );
+        if (url.endsWith("/00000000-0000-4000-8000-000000000202/cancel"))
+          return new Response(JSON.stringify({ error: "still running" }), {
+            status: 500,
+            headers: { "content-type": "application/json" },
+          });
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+    render(<DashboardApp initialSnapshot={snapshot} />);
+    await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
+    await userEvent.type(
+      await screen.findByLabelText("Conversation title"),
+      "Vendor invoice tracker",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+    const composer = await screen.findByLabelText("Message");
+    await userEvent.type(composer, "Still running");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    const stop = await screen.findByRole("button", { name: "Stop" });
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    await userEvent.click(stop);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The command was not accepted.",
+    );
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(MockEventSource.instances[0]?.closed).toBe(false);
   });
   it("drafts a policy through the authenticated CSRF command boundary", async () => {
     vi.stubGlobal(

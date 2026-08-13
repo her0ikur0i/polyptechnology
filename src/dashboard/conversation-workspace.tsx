@@ -8,6 +8,7 @@ import {
   listProjectConversations,
   getReplyTaskStatus,
   subscribeReplyStream,
+  cancelReplyTask,
   uploadConversationAttachment,
   listConversationAttachments,
   draftProposal,
@@ -75,6 +76,7 @@ export function ConversationWorkspacePage({
   const [uploading, setUploading] = useState(false);
   const [awaitingReply, setAwaitingReply] = useState(false);
   const [streamingReply, setStreamingReply] = useState("");
+  const [activeReplyTaskId, setActiveReplyTaskId] = useState<string>();
   const [proposal, setProposal] = useState<ConversationProposal>();
   const [proposalBusy, setProposalBusy] = useState<
     "draft" | "approve" | "reject"
@@ -86,6 +88,8 @@ export function ConversationWorkspacePage({
   const [generationResult, setGenerationResult] = useState<string>();
   const threadEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const composerFormRef = useRef<HTMLFormElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const activeReplyStreamRef = useRef<ReplyStreamSubscription>();
   const replyReconnectTimerRef = useRef<number>();
 
@@ -99,6 +103,13 @@ export function ConversationWorkspacePage({
     },
     [],
   );
+
+  useEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    composer.style.height = "auto";
+    composer.style.height = `${Math.min(composer.scrollHeight, 260)}px`;
+  }, [composerText]);
 
   function cancelActiveReplyStream() {
     activeReplyStreamRef.current?.close();
@@ -137,6 +148,7 @@ export function ConversationWorkspacePage({
             );
           setAwaitingReply(false);
           setStreamingReply("");
+          setActiveReplyTaskId(undefined);
           return;
         }
       } catch {
@@ -147,6 +159,7 @@ export function ConversationWorkspacePage({
     }
     setAwaitingReply(false);
     setStreamingReply("");
+    setActiveReplyTaskId(undefined);
     setError(
       "Still waiting on the assistant -- refresh the page in a moment to check for a reply.",
     );
@@ -160,6 +173,7 @@ export function ConversationWorkspacePage({
     cancelActiveReplyStream();
     setAwaitingReply(true);
     setStreamingReply("");
+    setActiveReplyTaskId(taskId);
     let settled = false;
     let lastOrdinal = 0;
     let reconnects = 0;
@@ -182,6 +196,7 @@ export function ConversationWorkspacePage({
               void refreshMessages(conversationId, projectId).finally(() => {
                 setAwaitingReply(false);
                 setStreamingReply("");
+                setActiveReplyTaskId(undefined);
                 if (done.state !== "succeeded")
                   setError(
                     `The assistant could not reply (task ${done.state}). Your message is saved -- try sending another.`,
@@ -243,6 +258,7 @@ export function ConversationWorkspacePage({
       setAttachments([]);
       setAwaitingReply(false);
       setStreamingReply("");
+      setActiveReplyTaskId(undefined);
       setProposal(undefined);
       setTranslationState("idle");
       setGenerationResult(undefined);
@@ -255,20 +271,44 @@ export function ConversationWorkspacePage({
 
   async function handleSend(event: React.FormEvent) {
     event.preventDefault();
-    if (!conversation || composerText.trim().length === 0) return;
+    await sendDraft(composerText, { clearComposer: true });
+  }
+
+  async function sendDraft(draft: string, options: { clearComposer: boolean }) {
+    if (!conversation || draft.trim().length === 0 || sending || awaitingReply)
+      return;
+    const expectedVersion = messages.length;
+    const optimisticId = `optimistic-${crypto.randomUUID()}`;
+    const optimisticMessage: ConversationMessage = {
+      id: optimisticId,
+      conversationId: conversation.id,
+      projectId: conversation.projectId,
+      ordinal: expectedVersion + 1,
+      role: "owner",
+      content: draft,
+      classification: "public",
+      contentSha256: "pending",
+      createdAt: new Date().toISOString(),
+    };
     setSending(true);
     setError(undefined);
+    setMessages((current) => [...current, optimisticMessage]);
+    if (options.clearComposer) setComposerText("");
     try {
       const result = await sendConversationMessage(
         conversation.id,
         {
           projectId: conversation.projectId,
-          content: composerText,
-          expectedVersion: messages.length,
+          content: draft,
+          expectedVersion,
         },
         csrfToken,
       );
-      setComposerText("");
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === optimisticId ? result.message : message,
+        ),
+      );
       await refreshMessages(conversation.id, conversation.projectId);
       followReplyStream(
         result.replyTaskId,
@@ -276,12 +316,48 @@ export function ConversationWorkspacePage({
         conversation.projectId,
       );
     } catch (reason) {
+      setMessages((current) =>
+        current.filter((message) => message.id !== optimisticId),
+      );
+      if (options.clearComposer) setComposerText(draft);
       setError(
         reason instanceof Error ? reason.message : "Message was not sent.",
       );
     } finally {
       setSending(false);
     }
+  }
+
+  async function handleStopReply() {
+    if (!activeReplyTaskId) return;
+    setError(undefined);
+    const taskId = activeReplyTaskId;
+    try {
+      await cancelReplyTask(taskId, csrfToken);
+      cancelActiveReplyStream();
+      setAwaitingReply(false);
+      setStreamingReply("");
+      setActiveReplyTaskId(undefined);
+      if (conversation)
+        await refreshMessages(conversation.id, conversation.projectId);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Stop failed.");
+    }
+  }
+
+  function lastOwnerMessage() {
+    return [...messages].reverse().find((message) => message.role === "owner");
+  }
+
+  function editMessage(message: ConversationMessage) {
+    setComposerText(message.content);
+    composerRef.current?.focus();
+  }
+
+  async function handleRegenerate() {
+    const message = lastOwnerMessage();
+    if (!message) return;
+    await sendDraft(message.content, { clearComposer: false });
   }
 
   async function handleUpload(event: React.ChangeEvent<HTMLInputElement>) {
@@ -554,6 +630,7 @@ export function ConversationWorkspacePage({
     cancelActiveReplyStream();
     setAwaitingReply(false);
     setStreamingReply("");
+    setActiveReplyTaskId(undefined);
     try {
       await refreshMessages(item.id, item.projectId);
     } catch {
@@ -639,6 +716,15 @@ export function ConversationWorkspacePage({
                 >
                   <span className="chat-bubble__role">{message.role}</span>
                   <MessageContent content={message.content} />
+                  {message.role === "owner" && (
+                    <button
+                      type="button"
+                      className="chat-bubble__action"
+                      onClick={() => editMessage(message)}
+                    >
+                      Edit
+                    </button>
+                  )}
                 </div>
               ))}
               {awaitingReply && (
@@ -653,24 +739,50 @@ export function ConversationWorkspacePage({
               <div ref={threadEndRef} />
             </div>
             <form
-              className="settings-grid"
+              ref={composerFormRef}
+              className="composer"
               onSubmit={(event) => void handleSend(event)}
             >
               <label>
                 Message
                 <textarea
+                  ref={composerRef}
                   aria-label="Message"
                   value={composerText}
                   onChange={(event) => setComposerText(event.target.value)}
-                  rows={3}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === "Enter" &&
+                      !event.shiftKey &&
+                      !event.nativeEvent.isComposing
+                    ) {
+                      event.preventDefault();
+                      composerFormRef.current?.requestSubmit();
+                    }
+                  }}
+                  rows={1}
                   maxLength={20_000}
                   required
                 />
               </label>
               <div className="settings-actions">
+                {awaitingReply && (
+                  <button type="button" onClick={() => void handleStopReply()}>
+                    Stop
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void handleRegenerate()}
+                  disabled={sending || awaitingReply || !lastOwnerMessage()}
+                >
+                  Regenerate
+                </button>
                 <button
                   type="submit"
-                  disabled={sending || composerText.trim().length === 0}
+                  disabled={
+                    sending || awaitingReply || composerText.trim().length === 0
+                  }
                 >
                   {sending ? "Sending…" : "Send"}
                 </button>

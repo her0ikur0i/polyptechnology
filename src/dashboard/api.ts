@@ -401,6 +401,19 @@ export async function getReplyTaskStatus(
     );
   return parseReplyTaskStatus(await response.json());
 }
+export async function cancelReplyTask(
+  taskId: string,
+  csrfToken: string,
+  signal?: AbortSignal,
+): Promise<{ taskId: string; state: string }> {
+  return commandRequest(
+    `/api/v1/orchestrator/reply-tasks/${taskId}/cancel`,
+    {},
+    csrfToken,
+    parseReplyTaskStatus,
+    signal,
+  );
+}
 export interface ReplyStreamSubscription {
   close(): void;
 }

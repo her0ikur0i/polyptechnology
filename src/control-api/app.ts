@@ -48,6 +48,14 @@ const TELEGRAM_WEBHOOK_PATH = "/api/v1/telegram/webhook";
 const REPLY_STREAM_POLL_MS = 250;
 const REPLY_STREAM_MAX_MS = 300_000;
 const REPLY_STREAM_MAX_PER_TASK = 3;
+const replyTaskCancelableStates = new Set([
+  "queued",
+  "leased",
+  "running",
+  "retry_wait",
+  "needs_approval",
+  "budget_blocked",
+]);
 const replyStreamTerminalStates = new Set([
   "succeeded",
   "failed",
@@ -564,6 +572,62 @@ export function createControlApi(deps: ControlApiDeps): Express {
         res.status(404).json({
           error: error instanceof Error ? error.message : "task unavailable",
         });
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/orchestrator/reply-tasks/:taskId/cancel",
+    requireOwner,
+    requireCsrf(csrfSecret),
+    async (req, res) => {
+      const taskId = req.params.taskId;
+      if (typeof taskId !== "string" || !/^[a-f0-9-]{36}$/.test(taskId)) {
+        res.status(400).json({ error: "invalid task id" });
+        return;
+      }
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const task = await client.query<{
+          state: string;
+          attempt_count: number;
+        }>(
+          "SELECT t.state,t.attempt_count FROM tasks t JOIN operation_task_specs s ON s.task_id=t.id WHERE t.id=$1 AND s.driver='conversation_reply' FOR UPDATE OF t",
+          [taskId],
+        );
+        if (task.rowCount !== 1) {
+          await client.query("ROLLBACK");
+          res.status(404).json({ error: "reply task not found" });
+          return;
+        }
+        const row = task.rows[0]!;
+        if (!replyTaskCancelableStates.has(row.state)) {
+          await client.query("ROLLBACK");
+          res.json({ taskId, state: row.state });
+          return;
+        }
+        await client.query(
+          "UPDATE tasks SET state='cancelled',next_attempt_at=NULL WHERE id=$1",
+          [taskId],
+        );
+        await client.query("DELETE FROM task_leases WHERE task_id=$1", [
+          taskId,
+        ]);
+        if (row.attempt_count > 0)
+          await client.query(
+            "UPDATE task_attempts SET state='cancelled',failure_reason='worker',finished_at=CURRENT_TIMESTAMP WHERE task_id=$1 AND ordinal=$2 AND finished_at IS NULL",
+            [taskId, row.attempt_count],
+          );
+        await client.query("COMMIT");
+        res.json({ taskId, state: "cancelled" });
+      } catch (error) {
+        await client.query("ROLLBACK");
+        res.status(400).json({
+          error: error instanceof Error ? error.message : "task cancel failed",
+        });
+      } finally {
+        client.release();
       }
     },
   );

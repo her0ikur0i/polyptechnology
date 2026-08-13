@@ -882,6 +882,12 @@ test(
       ).json();
       assert.equal(replyStatus.state, "queued");
 
+      const noTokenCancel = await fetch(
+        `${baseUrl}/api/v1/orchestrator/reply-tasks/${sendResult.replyTaskId}/cancel`,
+        { method: "POST" },
+      );
+      assert.equal(noTokenCancel.status, 403);
+
       // Sending against the now-stale version must fail closed, not
       // silently accept a second message out of order.
       const stale = await fetch(
@@ -917,23 +923,20 @@ test(
       assert.equal(list[0].id, started.conversationId);
       assert.equal(list[0].version, 1);
 
-      // This leaves the reply task "queued" -- no supervisor consumes it
-      // in this test, and ExecutableTaskSupervisor.runOne()'s eligible-task
-      // query has no per-test scoping (same landmine already documented
-      // for the /generate route's test). Cancel it explicitly rather than
-      // leaving it for some other test's supervisor run to pick up and
-      // fail closed on (this driver map has no "conversation_reply" entry
-      // outside sequence-main.ts).
-      const cleanupPool = new pg.Pool({ connectionString: databaseUrl });
-      try {
-        await new PostgresWorkRepository(cleanupPool).controlTransition(
-          sendResult.replyTaskId,
-          "queued",
-          "cancelled",
-        );
-      } finally {
-        await cleanupPool.end();
-      }
+      const cancelled = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/reply-tasks/${sendResult.replyTaskId}/cancel`,
+          { method: "POST", headers },
+        )
+      ).json();
+      assert.equal(cancelled.state, "cancelled");
+      const cancelledAgain = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/reply-tasks/${sendResult.replyTaskId}/cancel`,
+          { method: "POST", headers },
+        )
+      ).json();
+      assert.equal(cancelledAgain.state, "cancelled");
     });
   },
 );
@@ -1107,6 +1110,84 @@ test(
         } finally {
           await cleanupPool.end();
         }
+      }
+    });
+  },
+);
+
+test(
+  "reply task cancel stops active work and invalidates stale worker fences",
+  { skip: databaseUrl === undefined },
+  async () => {
+    await withServer("disabled", async (baseUrl, csrfSecret) => {
+      const headers = {
+        "content-type": "application/json",
+        "x-csrf-token": csrfSecret,
+      };
+      const setupPool = new pg.Pool({ connectionString: databaseUrl });
+      let taskId = "";
+      let fencingToken = 0;
+      let attemptOrdinal = 0;
+      try {
+        const work = new PostgresWorkRepository(setupPool);
+        const contractId = randomUUID();
+        const milestoneId = randomUUID();
+        await setupPool.query(
+          "INSERT INTO factory_contracts(id,baseline_sha,status,max_cost_usd_micros) VALUES($1,$2,'active',$3)",
+          [contractId, "0".repeat(40), 5_000_000],
+        );
+        await setupPool.query(
+          "INSERT INTO milestones(id,contract_id,ordinal,status) VALUES($1,$2,1,'active')",
+          [milestoneId, contractId],
+        );
+        const task = await work.submit({
+          contractId,
+          milestoneId,
+          idempotencyKey: `active-cancel-${randomUUID()}`,
+          maxCostUsdMicros: 5_000_000,
+          maxAttempts: 3,
+        });
+        taskId = task.id;
+        await setupPool.query(
+          "INSERT INTO operation_task_specs(task_id,driver,input,expected_output_sha256,role) VALUES($1,'conversation_reply',$2,NULL,'conversation-interview')",
+          [taskId, { conversationId: randomUUID(), projectId: randomUUID() }],
+        );
+        await work.controlTransition(taskId, "draft", "queued");
+        const lease = await work.lease(taskId, "test-worker", 60_000);
+        fencingToken = lease.fencingToken;
+        attemptOrdinal = lease.attemptOrdinal;
+        await work.transition(taskId, fencingToken, "leased", "running");
+
+        const cancelled = await (
+          await fetch(
+            `${baseUrl}/api/v1/orchestrator/reply-tasks/${taskId}/cancel`,
+            { method: "POST", headers },
+          )
+        ).json();
+        assert.equal(cancelled.state, "cancelled");
+
+        await assert.rejects(
+          work.transition(taskId, fencingToken, "running", "verifying"),
+          /stale lease|invalid task state/,
+        );
+        const leaseRows = await setupPool.query(
+          "SELECT 1 FROM task_leases WHERE task_id=$1",
+          [taskId],
+        );
+        assert.equal(leaseRows.rowCount, 0);
+        const attemptRows = await setupPool.query<{
+          state: string;
+          failure_reason: string | null;
+          finished_at: Date | null;
+        }>(
+          "SELECT state,failure_reason,finished_at FROM task_attempts WHERE task_id=$1 AND ordinal=$2",
+          [taskId, attemptOrdinal],
+        );
+        assert.equal(attemptRows.rows[0]?.state, "cancelled");
+        assert.equal(attemptRows.rows[0]?.failure_reason, "worker");
+        assert.notEqual(attemptRows.rows[0]?.finished_at, null);
+      } finally {
+        await setupPool.end();
       }
     });
   },
