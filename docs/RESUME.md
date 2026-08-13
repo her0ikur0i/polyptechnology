@@ -68,6 +68,16 @@ syntax error), `codex:gpt-5.6-terra` (real module-resolution failure),
 own verification. No infra defect involved; every rejection was the verification
 gate correctly catching something real.
 
+One follow-up item was completed outside of contract on 2026-08-14. Commit
+`2580d0d` — "fix: /dashboard/snapshot 500 and finish M7 runs-page aggregates" —
+fixed `/api/v1/dashboard/snapshot` returning 500. Commit `d1ad072` (deepseek) had
+added `array_agg(t.id)` (a `uuid[]`) inside a `COALESCE(..., '{}'::text[])`;
+PostgreSQL rejects the mixed array types, so the snapshot endpoint — and every
+control-api test that reads it — failed. Casting to `t.id::text` and dropping a
+duplicate `c.id` from `GROUP BY` fixed it; the same commit also finished the M7
+runs-page aggregate metrics. Zero-skip suite is green again: 445 backend tests,
+55 dashboard tests, 0 skipped.
+
 ## Closed: CONTRACT-017B — truthful reporting and a real backoff
 
 **CLOSED at `7021e59`.** Inserted 2026-08-11 after the owner read a full day of
@@ -235,7 +245,7 @@ node --import tsx scripts/resume-checkpoint.ts --check  # fail if stale
 | M11       | live end-to-end dashboard drill                                         | not started                            |
 | M12       | security review, README, resume checkpoint, deploy, and close           | not started                            |
 
-- **HEAD:** `6bd0a5b CONTRACT-019: surface project generation flow`
+- **HEAD:** `2580d0d fix: /dashboard/snapshot 500 and finish M7 runs-page aggregates`
 - **Working tree:** clean
 - **Next action:** M7 — runs, attempts, evidence, and model-cost surface
 
