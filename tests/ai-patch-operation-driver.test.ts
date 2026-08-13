@@ -18,7 +18,7 @@ function validRaw() {
     messages: [{ role: "user", content: "x" }],
     maxOutputTokens: 100,
     maxCostUsdMicros: 100,
-    policyVersion: "2026-08-09.1",
+    policyVersion: "2026-08-13.1",
     route: {
       provider: "deepseek",
       requestedModelId: "deepseek-v4-flash",

@@ -366,6 +366,7 @@ export class ConversationReplyDriver implements OperationDriver {
         classification: "internal",
         contentSha256: sha256(content),
         createdAt: new Date(),
+        sourceTaskId: stored.attribution.taskId,
       },
       stored.expectedVersion,
       stored.idempotencyKey,

@@ -34,6 +34,18 @@ function routeKey(route: ModelRoute): string {
   return `${route.provider}:${route.requestedModelId}`;
 }
 
+function staticRouteFor(
+  taskClass: TaskClass,
+  provider: ModelRoute["provider"],
+  requestedModelId: string,
+): ModelRoute | undefined {
+  return modelRoutes(taskClass).find(
+    (route) =>
+      route.provider === provider &&
+      route.requestedModelId === requestedModelId,
+  );
+}
+
 function isDeepSeekRepairRetryEligible(
   artifact: {
     providerId: string;
@@ -144,11 +156,13 @@ export class PostgresPolicyRouteResolver {
     );
     if (simulated.selected === null)
       return this.nextStaticTier(taskClass, taskId, fallback, attemptOrdinal);
-    return {
-      provider: simulated.selected.provider,
-      requestedModelId: simulated.selected.requestedModelId,
-      role: "policy-selected",
-    };
+    return (
+      staticRouteFor(
+        taskClass,
+        simulated.selected.provider,
+        simulated.selected.requestedModelId,
+      ) ?? this.nextStaticTier(taskClass, taskId, fallback, attemptOrdinal)
+    );
   }
 
   // The next untried tier of the static chain, or the last one once every tier

@@ -238,16 +238,24 @@ export class PostgresRunFacts {
     // real chat reply.
     if (typeof input.probe === "string") return false;
 
-    // Generation drills and generated projects can create many phase tasks.
-    // A first-attempt success is good news only in aggregate; reporting every
-    // one turns a successful run into a notification storm. Repairs, failures
-    // and anything unfamiliar still report.
-    return !(
-      row.driver === "ai_patch_executor" &&
-      row.role === "factory-generation" &&
-      event.outcome === "succeeded" &&
-      event.attemptOrdinal <= 1
-    );
+    return true;
+  }
+
+  async milestoneFor(taskId: string): Promise<string | undefined> {
+    const row = (
+      await this.pool.query(
+        `SELECT c.id::text AS contract_id, m.ordinal, m.status AS milestone_status
+           FROM tasks t
+           JOIN milestones m ON m.id = t.milestone_id
+           JOIN factory_contracts c ON c.id = t.contract_id
+          WHERE t.id = $1`,
+        [taskId],
+      )
+    ).rows[0] as
+      | { contract_id: string; ordinal: number; milestone_status: string }
+      | undefined;
+    if (row === undefined) return undefined;
+    return `Milestone M${row.ordinal} · contract ${row.contract_id} · ${row.milestone_status}`;
   }
 
   // The assistant's answer for a finished conversation_reply task, but only
@@ -494,6 +502,16 @@ export class TelegramRunNotifier implements RunNotifier {
           icon: "contract",
           text: `after ${event.attemptOrdinal} attempts`,
         });
+
+      if (this.facts !== undefined) {
+        try {
+          const milestone = await this.facts.milestoneFor(event.taskId);
+          if (milestone !== undefined)
+            detail.push({ icon: "contract", text: milestone });
+        } catch {
+          // Losing milestone context costs that line, not the report.
+        }
+      }
 
       if (event.reason !== undefined)
         detail.push({

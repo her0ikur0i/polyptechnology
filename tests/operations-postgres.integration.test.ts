@@ -22,6 +22,18 @@ import { PostgresProjectFactory } from "../src/factory/postgres-repository.js";
 import { OwnerCommandService } from "../src/operations/owner-commands.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
+
+async function runUntilTask(
+  supervisor: ExecutableTaskSupervisor,
+  taskId: string,
+  maxRuns = 40,
+) {
+  let result = await supervisor.runOne(new AbortController().signal);
+  for (let i = 0; i < maxRuns && result?.summary.taskId !== taskId; i += 1)
+    result = await supervisor.runOne(new AbortController().signal);
+  return result;
+}
+
 test(
   "background supervisor executes queued work and operations survive reconstruction",
   { skip: databaseUrl === undefined },
@@ -65,9 +77,7 @@ test(
       // since the supervisor now sweeps due retries back into the queue, it
       // can surface stale ones too. Drive it until it reaches this test's own
       // task instead of assuming the first call does.
-      let result = await supervisor.runOne(new AbortController().signal);
-      for (let i = 0; i < 40 && result?.summary.taskId !== task.id; i += 1)
-        result = await supervisor.runOne(new AbortController().signal);
+      let result = await runUntilTask(supervisor, task.id);
 
       assert.equal(result?.summary.taskId, task.id, "never reached this task");
       assert.equal(result?.task.state, "succeeded");
@@ -145,20 +155,22 @@ test(
         "INSERT INTO operation_task_specs(task_id,driver,input,expected_output_sha256,role) VALUES($1,'deterministic_sha256',$2,$3,'deterministic-verifier')",
         [incorrect.id, { incorrect: true }, "f".repeat(64)],
       );
-      assert.equal(
-        (
-          await new ExecutableTaskSupervisor(
-            pool,
-            work,
-            new Map([
-              ["deterministic_sha256", new DeterministicSha256Driver()],
-            ]),
-            "verification-worker",
-            5_000,
-          ).runOne(new AbortController().signal)
-        )?.task.state,
-        "failed",
+      const incorrectResult = await runUntilTask(
+        new ExecutableTaskSupervisor(
+          pool,
+          work,
+          new Map([["deterministic_sha256", new DeterministicSha256Driver()]]),
+          "verification-worker",
+          5_000,
+        ),
+        incorrect.id,
       );
+      assert.equal(
+        incorrectResult?.summary.taskId,
+        incorrect.id,
+        "never reached incorrect task",
+      );
+      assert.equal(incorrectResult?.task.state, "failed");
       const stopped = await work.submit({
         contractId,
         milestoneId,

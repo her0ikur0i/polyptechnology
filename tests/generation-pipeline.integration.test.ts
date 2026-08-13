@@ -71,7 +71,7 @@ index 0000000..e69de29
 `;
     return {
       providerRequestId: randomUUID(),
-      resolvedModelId: "deepseek-v4-flash",
+      resolvedModelId: "deepseek-v4-pro",
       resolutionSource: "provider_response",
       content,
       usage: {
@@ -84,7 +84,7 @@ index 0000000..e69de29
       },
       modelUsage: [
         {
-          resolvedModelId: "deepseek-v4-flash",
+          resolvedModelId: "deepseek-v4-pro",
           inputTokens: 50,
           outputTokens: 30,
           reasoningTokens: 0,

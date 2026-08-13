@@ -1,23 +1,24 @@
 import type { ModelRoute, TaskClass } from "./types.js";
-export const MODEL_POLICY_VERSION = "2026-08-09.1";
+export const MODEL_POLICY_VERSION = "2026-08-13.1";
 // Owner-authorized role exchange (2026-08-09): Claude is strategic
 // orchestrator; Codex retains integrator/verifier/final-gate duties and is
 // now also the automatic technical-fallback tier (see
 // docs/contracts/CONTRACT-011/contract.md amendment). Programming task
-// classes escalate deepseek -> codex -> claude, cheapest viable tier first;
-// escalation past deepseek requires verified failure evidence
+// classes now start on DeepSeek Pro by owner directive (2026-08-13) for the
+// remaining contract work, with DeepSeek Flash retained as the cheaper same-
+// provider fallback. Escalation past deepseek requires verified failure evidence
 // (src/policy/execution-permission.ts), never a bare retry count.
 const routes: Record<TaskClass, ReadonlyArray<ModelRoute>> = {
   bulk_code: [
     {
       provider: "deepseek",
-      requestedModelId: "deepseek-v4-flash",
+      requestedModelId: "deepseek-v4-pro",
       role: "primary-executor",
       mode: "non-thinking",
     },
     {
       provider: "deepseek",
-      requestedModelId: "deepseek-v4-pro",
+      requestedModelId: "deepseek-v4-flash",
       role: "primary-executor-retry",
       mode: "non-thinking",
     },
@@ -37,13 +38,13 @@ const routes: Record<TaskClass, ReadonlyArray<ModelRoute>> = {
   complex_backend: [
     {
       provider: "deepseek",
-      requestedModelId: "deepseek-v4-flash",
+      requestedModelId: "deepseek-v4-pro",
       role: "primary-executor",
       mode: "non-thinking",
     },
     {
       provider: "deepseek",
-      requestedModelId: "deepseek-v4-pro",
+      requestedModelId: "deepseek-v4-flash",
       role: "primary-executor-retry",
       mode: "non-thinking",
     },
@@ -63,13 +64,13 @@ const routes: Record<TaskClass, ReadonlyArray<ModelRoute>> = {
   bounded_repair: [
     {
       provider: "deepseek",
-      requestedModelId: "deepseek-v4-flash",
+      requestedModelId: "deepseek-v4-pro",
       role: "primary-executor",
       mode: "non-thinking",
     },
     {
       provider: "deepseek",
-      requestedModelId: "deepseek-v4-pro",
+      requestedModelId: "deepseek-v4-flash",
       role: "primary-executor-retry",
       mode: "non-thinking",
     },
@@ -89,15 +90,15 @@ const routes: Record<TaskClass, ReadonlyArray<ModelRoute>> = {
   orchestration: [
     {
       provider: "deepseek",
-      requestedModelId: "deepseek-v4-flash",
+      requestedModelId: "deepseek-v4-pro",
       role: "orchestrator",
-      mode: "non-thinking",
+      mode: "thinking",
     },
     {
       provider: "deepseek",
-      requestedModelId: "deepseek-v4-pro",
+      requestedModelId: "deepseek-v4-flash",
       role: "orchestrator-retry",
-      mode: "thinking",
+      mode: "non-thinking",
     },
     {
       provider: "codex",

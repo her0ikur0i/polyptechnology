@@ -35,12 +35,12 @@ class FakeDeepSeek implements ManagedProviderAdapter {
   readonly provider = "deepseek" as const;
   constructor(private readonly content: string) {}
   async listModels() {
-    return ["deepseek-v4-flash"];
+    return ["deepseek-v4-pro"];
   }
   async invoke(): Promise<ManagedCompletion> {
     return {
       providerRequestId: "req-1",
-      resolvedModelId: "deepseek-v4-flash",
+      resolvedModelId: "deepseek-v4-pro",
       resolutionSource: "provider_response",
       content: this.content,
       usage: {
@@ -53,7 +53,7 @@ class FakeDeepSeek implements ManagedProviderAdapter {
       },
       modelUsage: [
         {
-          resolvedModelId: "deepseek-v4-flash",
+          resolvedModelId: "deepseek-v4-pro",
           inputTokens: 5,
           outputTokens: 5,
           reasoningTokens: 0,
@@ -121,7 +121,7 @@ const gatewayRequest = {
 
 const route = {
   provider: "deepseek" as const,
-  requestedModelId: "deepseek-v4-flash",
+  requestedModelId: "deepseek-v4-pro",
   role: "primary-executor",
   mode: "non-thinking" as const,
 };

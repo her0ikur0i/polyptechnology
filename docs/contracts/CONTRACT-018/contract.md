@@ -130,6 +130,7 @@ post-and-wait workspace, which keeps working throughout.
 ## File ownership
 
 - `docs/contracts/CONTRACT-018/**`
+- `docs/operations/**`
 - `docs/product/**`
 - `docs/RESUME.md`
 - `README.md`
@@ -137,6 +138,8 @@ post-and-wait workspace, which keeps working throughout.
 - `migrations/**`
 - `src/control-api/**`
 - `src/dashboard/**`
+- `src/gateway/**`
+- `src/operations/**`
 - `src/orchestrator/**`
 - `package.json`
 - `package-lock.json`

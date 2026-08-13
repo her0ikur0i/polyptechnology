@@ -260,6 +260,13 @@ export interface ConversationMessage {
   classification: string;
   contentSha256: string;
   createdAt: string;
+  sourceTaskId?: string;
+  modelAttribution?: {
+    provider: string;
+    requestedModelId: string;
+    resolvedModelId?: string;
+    costUsdMicros: number;
+  };
 }
 export interface ConversationAttachment {
   id: string;

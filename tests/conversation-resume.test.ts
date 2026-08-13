@@ -103,7 +103,7 @@ const INPUT = {
     milestoneId: "66666666-6666-4666-8666-666666666666",
     taskAttemptOrdinal: 1,
   },
-  policyVersion: "2026-08-09.1",
+  policyVersion: "2026-08-13.1",
   route: {
     provider: "claude",
     requestedModelId: "claude-sonnet-5",

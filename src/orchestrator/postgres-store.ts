@@ -38,6 +38,11 @@ const message = (row: {
   classification: Message["classification"];
   content_sha256: string;
   created_at: Date;
+  source_task_id?: string | null;
+  provider_id?: string | null;
+  requested_model_id?: string | null;
+  resolved_model_id?: string | null;
+  cost_usd_micros?: string | null;
 }): Message => ({
   id: row.id,
   conversationId: row.conversation_id,
@@ -48,6 +53,19 @@ const message = (row: {
   classification: row.classification,
   contentSha256: row.content_sha256,
   createdAt: row.created_at,
+  ...(row.source_task_id ? { sourceTaskId: row.source_task_id } : {}),
+  ...(row.provider_id && row.requested_model_id
+    ? {
+        modelAttribution: {
+          provider: row.provider_id,
+          requestedModelId: row.requested_model_id,
+          ...(row.resolved_model_id
+            ? { resolvedModelId: row.resolved_model_id }
+            : {}),
+          costUsdMicros: Number(row.cost_usd_micros ?? 0),
+        },
+      }
+    : {}),
 });
 type AttachmentRow = {
   id: string;
@@ -159,7 +177,7 @@ export class PostgresConversationStore implements ConversationStore {
       if (changed.rowCount !== 1) throw new Error("stale conversation version");
       const ordinal = Number(changed.rows[0]!.version);
       await client.query(
-        "INSERT INTO conversation_messages(id,conversation_id,project_id,ordinal,role,content,classification,content_sha256,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+        "INSERT INTO conversation_messages(id,conversation_id,project_id,ordinal,role,content,classification,content_sha256,created_at,source_task_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
         [
           value.id,
           value.conversationId,
@@ -170,6 +188,7 @@ export class PostgresConversationStore implements ConversationStore {
           value.classification,
           value.contentSha256,
           value.createdAt,
+          value.sourceTaskId ?? null,
         ],
       );
       await this.insertIdempotency(client, scope, key, intent, value.id);
@@ -233,7 +252,30 @@ export class PostgresConversationStore implements ConversationStore {
   }
   async messages(projectId: string, id: string) {
     const result = await this.pool.query(
-      "SELECT m.* FROM conversation_messages m JOIN conversations c ON c.id=m.conversation_id AND c.project_id=m.project_id WHERE m.conversation_id=$1 AND m.project_id=$2 ORDER BY ordinal",
+      `SELECT m.*,
+              ledger.provider_id,
+              ledger.requested_model_id,
+              ledger.resolved_model_id,
+              ledger.cost_usd_micros
+         FROM conversation_messages m
+         JOIN conversations c
+           ON c.id=m.conversation_id AND c.project_id=m.project_id
+         LEFT JOIN LATERAL (
+           SELECT a.provider_id,
+                  a.requested_model_id,
+                  a.resolved_model_id,
+                  COALESCE(SUM(u.cost_usd_micros), 0) AS cost_usd_micros
+             FROM ai_gateway_attempts a
+             LEFT JOIN ai_usage_events u ON u.attempt_id=a.id
+            WHERE a.attribution->>'taskId' = m.source_task_id::text
+            GROUP BY a.id
+            ORDER BY (a.outcome='succeeded') DESC,
+                     a.finalized_at DESC NULLS LAST,
+                     a.created_at DESC
+            LIMIT 1
+         ) ledger ON m.source_task_id IS NOT NULL
+        WHERE m.conversation_id=$1 AND m.project_id=$2
+        ORDER BY ordinal`,
       [id, projectId],
     );
     return result.rows.map(message);

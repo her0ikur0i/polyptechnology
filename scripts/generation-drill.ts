@@ -429,7 +429,7 @@ export async function runDrill(
 
   // --- 7. generation -------------------------------------------------------
   // The real thing: a provider writes the code. `bulk_code` routes
-  // deepseek-v4-flash -> deepseek-v4-pro -> codex -> claude, so DeepSeek is the
+  // deepseek-v4-pro -> deepseek-v4-flash -> codex -> claude, so DeepSeek is the
   // executor and the others are fallback tiers, exactly as the execution policy
   // requires. The supervisor runs it out of process; the drill waits on the
   // task and reports which provider actually produced the accepted patch.

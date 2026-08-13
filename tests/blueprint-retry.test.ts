@@ -20,7 +20,7 @@ const input = {
   },
   maxOutputTokens: 2_000,
   maxCostUsdMicros: 150_000,
-  policyVersion: "2026-08-09.1",
+  policyVersion: "2026-08-13.1",
   route: {
     provider: "deepseek" as const,
     requestedModelId: "deepseek-v4-flash",
@@ -80,8 +80,8 @@ test("blueprint retries receive a distinct durable gateway identity", async () =
     "blueprint-translation-task-1#6",
   ]);
   assert.deepEqual(routes, [
-    "deepseek:deepseek-v4-flash",
     "deepseek:deepseek-v4-pro",
+    "deepseek:deepseek-v4-flash",
     "codex:gpt-5.5",
     "codex:gpt-5.6",
     "claude:claude-sonnet-5",

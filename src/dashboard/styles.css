@@ -526,6 +526,17 @@ code {
   letter-spacing: 0.06em;
   color: var(--muted);
 }
+.chat-bubble__meta {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    monospace;
+  font-size: 0.76em;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
 .chat-bubble--owner {
   align-self: flex-end;
   background: linear-gradient(135deg, var(--cyan) 0%, transparent 140%);

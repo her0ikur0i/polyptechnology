@@ -97,7 +97,7 @@ test("non-programming task classes always use the static fallback route", async 
 // With no owner policy -- the normal state; staging has never had one -- the
 // resolver used to return the caller's fallback on every attempt forever, so
 // the static chain's tiers two through five were unreachable and a generation
-// task ran deepseek-v4-flash six times. It now walks the chain.
+// task ran the first DeepSeek tier six times. It now walks the chain.
 test("no active policy starts at the first tier of the static chain", async () => {
   const route = await resolver({}).resolve("bulk_code", "t1", fallback);
   assert.deepEqual(route, modelRoutes("bulk_code")[0]);
@@ -132,11 +132,7 @@ test("an active policy with an available first-priority route is used over the s
     active: { policy: runtimePolicy },
     availability: new Set(["deepseek:deepseek-v4-pro"]),
   }).resolve("bulk_code", "t1", fallback);
-  assert.deepEqual(route, {
-    provider: "deepseek",
-    requestedModelId: "deepseek-v4-pro",
-    role: "policy-selected",
-  });
+  assert.deepEqual(route, modelRoutes("bulk_code")[0]);
 });
 
 test("an already-attempted model is excluded so it never gets re-selected", async () => {
@@ -162,11 +158,7 @@ test("an already-attempted model is excluded so it never gets re-selected", asyn
   }).resolve("bulk_code", "t1", fallback);
   // Without exclusion, deepseek would be re-selected forever (it's always
   // permitted, per execution-permission.ts) instead of ever escalating.
-  assert.deepEqual(route, {
-    provider: "codex",
-    requestedModelId: "gpt-5.5",
-    role: "policy-selected",
-  });
+  assert.deepEqual(route, modelRoutes("bulk_code")[2]);
 });
 
 test("claude unlocks only once both deepseek and codex have verified-failed", async () => {
@@ -196,11 +188,16 @@ test("claude unlocks only once both deepseek and codex have verified-failed", as
   }).resolve("bulk_code", "t1", fallback);
   // Only deepseek verified-failed so far -- codex must be tried next, not
   // claude (execution-permission.ts requires both before claude unlocks).
-  assert.deepEqual(route, {
-    provider: "codex",
-    requestedModelId: "gpt-5.5",
-    role: "policy-selected",
-  });
+  assert.deepEqual(route, modelRoutes("bulk_code")[2]);
+});
+
+test("active policy routes keep the gateway allowlist route shape", async () => {
+  const route = await resolver({
+    active: { policy: runtimePolicy },
+    availability: new Set(["deepseek:deepseek-v4-pro"]),
+  }).resolve("bulk_code", "t1", fallback);
+  assert.equal(route.role, "primary-executor");
+  assert.equal(route.mode, "non-thinking");
 });
 
 test("policy engine finding nothing eligible falls back to the static route", async () => {

@@ -13,6 +13,7 @@ import {
 } from "../src/gateway/model-policy.js";
 import { PostgresAttemptLedger } from "../src/gateway/postgres-ledger.js";
 import { PostgresPolicyStore } from "../src/policy/postgres-policy-store.js";
+import type { RuntimePolicy } from "../src/policy/types.js";
 import type { ModelRoute, TaskClass } from "../src/gateway/types.js";
 
 const ALL_TASK_CLASSES: readonly TaskClass[] = [
@@ -34,6 +35,56 @@ function distinctRoutes(): Array<{ taskClass: TaskClass; route: ModelRoute }> {
       if (!seen.has(key)) seen.set(key, { taskClass, route });
     }
   return [...seen.values()];
+}
+
+const PROGRAMMING_TASK_CLASSES = [
+  "bulk_code",
+  "complex_backend",
+  "bounded_repair",
+] as const;
+
+function distinctDraftRoutes(
+  policy: RuntimePolicy,
+): Array<{ taskClass: TaskClass; route: ModelRoute }> {
+  const seen = new Map<string, { taskClass: TaskClass; route: ModelRoute }>();
+  for (const taskClass of PROGRAMMING_TASK_CLASSES) {
+    const routes = [...(policy.routesByTaskClass[taskClass] ?? [])].sort(
+      (a, b) => a.priority - b.priority,
+    );
+    for (const policyRoute of routes) {
+      const route = modelRoutes(taskClass).find(
+        (candidate) =>
+          candidate.provider === policyRoute.provider &&
+          candidate.requestedModelId === policyRoute.requestedModelId,
+      );
+      if (route === undefined) {
+        throw new Error(
+          `${taskClass}: ${policyRoute.provider}:${policyRoute.requestedModelId} is outside the gateway model policy`,
+        );
+      }
+      const key = `${route.provider}:${route.requestedModelId}`;
+      if (!seen.has(key)) seen.set(key, { taskClass, route });
+    }
+  }
+  return [...seen.values()];
+}
+
+async function canaryRoutes(
+  pool: pg.Pool,
+): Promise<Array<{ taskClass: TaskClass; route: ModelRoute }>> {
+  const policyId = process.env.POLICY_ID;
+  const policyVersion = process.env.POLICY_VERSION;
+  if (policyId === undefined && policyVersion === undefined)
+    return distinctRoutes();
+  if (policyId === undefined || policyVersion === undefined)
+    throw new Error("POLICY_ID and POLICY_VERSION must be provided together");
+  const loaded = await pool.query(
+    "SELECT policy FROM orchestration_policies WHERE id = $1 AND version = $2",
+    [policyId, Number(policyVersion)],
+  );
+  const row = loaded.rows[0] as { policy: RuntimePolicy } | undefined;
+  if (row === undefined) throw new Error("Policy draft not found");
+  return distinctDraftRoutes(row.policy);
 }
 
 interface CanaryResult {
@@ -70,7 +121,8 @@ async function main() {
       new CodexCliAdapter(),
       new ClaudeCliAdapter(undefined, 3),
     ]);
-    for (const { taskClass, route } of distinctRoutes()) {
+    const routes = await canaryRoutes(pool);
+    for (const { taskClass, route } of routes) {
       if (only && route.provider !== only) continue;
       try {
         const result = await gateway.execute({

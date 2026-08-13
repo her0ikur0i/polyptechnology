@@ -27,7 +27,7 @@ const attribution = {
 };
 class Fake implements ManagedProviderAdapter {
   readonly provider = "deepseek" as const;
-  constructor(private readonly resolved = "deepseek-v4-flash") {}
+  constructor(private readonly resolved = "deepseek-v4-pro") {}
   async listModels() {
     return ["deepseek-v4-flash", "deepseek-v4-pro"];
   }
@@ -141,8 +141,8 @@ test("orchestration is DeepSeek-first with the requested fallback chain", () => 
       route.requestedModelId,
     ]),
     [
-      ["deepseek", "deepseek-v4-flash"],
       ["deepseek", "deepseek-v4-pro"],
+      ["deepseek", "deepseek-v4-flash"],
       ["codex", "gpt-5.5"],
       ["codex", "gpt-5.6"],
       ["claude", "claude-sonnet-5"],
@@ -164,7 +164,7 @@ test("gateway records resolved model usage and immutable output digest", async (
     gateway = new AiGateway(ledger, [new Fake()]);
   const result = await gateway.execute(request);
   assert.equal(result.attempt.outcome, "succeeded");
-  assert.equal(result.attempt.resolvedModelId, "deepseek-v4-flash");
+  assert.equal(result.attempt.resolvedModelId, "deepseek-v4-pro");
   assert.equal(result.attempt.usage?.costUsdMicros, 3);
   assert.match(result.attempt.outputSha256!, /^[a-f0-9]{64}$/);
   assert.equal(
@@ -175,7 +175,7 @@ test("gateway records resolved model usage and immutable output digest", async (
       evidenceSha256: "a".repeat(64),
       verifiedAt: new Date(),
     }).resolvedModelId,
-    "deepseek-v4-flash",
+    "deepseek-v4-pro",
   );
 });
 test("route overrides cannot escape the versioned policy", async () => {

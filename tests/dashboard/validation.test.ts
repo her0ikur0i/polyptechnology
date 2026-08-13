@@ -238,6 +238,16 @@ describe("conversation start and message responses", () => {
     contentSha256: "a".repeat(64),
     createdAt: "2026-08-08T00:00:05Z",
   };
+  const attributedMessage = {
+    ...sampleMessage,
+    sourceTaskId: "task-1",
+    modelAttribution: {
+      provider: "deepseek",
+      requestedModelId: "deepseek-v4-pro",
+      resolvedModelId: "deepseek-v4-pro",
+      costUsdMicros: 12_345,
+    },
+  };
   it("accepts a realistic conversation-start response", () => {
     expect(
       parseConversationStartResult({
@@ -266,15 +276,33 @@ describe("conversation start and message responses", () => {
     ).toThrow();
   });
   it("accepts a realistic message list and a send-message result wrapping one", () => {
-    expect(parseConversationMessageList([sampleMessage])[0]?.role).toBe(
+    expect(parseConversationMessageList([attributedMessage])[0]?.role).toBe(
       "assistant",
     );
     expect(
       parseSendMessageResult({
-        message: sampleMessage,
+        message: attributedMessage,
         replyTaskId: "task-3",
       }).replyTaskId,
     ).toBe("task-3");
+  });
+  it("rejects malformed message attribution", () => {
+    expect(() =>
+      parseConversationMessageList([
+        {
+          ...attributedMessage,
+          modelAttribution: {
+            ...attributedMessage.modelAttribution,
+            costUsdMicros: "0.01",
+          },
+        },
+      ]),
+    ).toThrow();
+    expect(() =>
+      parseConversationMessageList([
+        { ...attributedMessage, sourceTaskId: 42 },
+      ]),
+    ).toThrow();
   });
   it("rejects a non-array message list, a second element with an unknown role, a missing field, and a wrapped message that fails its own checks", () => {
     // A response that changed shape to {items: [...]} rather than a bare

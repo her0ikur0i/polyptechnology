@@ -126,6 +126,45 @@ test("a repaired generation phase report names the phase", async () => {
   assert.ok(text.includes("deepseek-v4-pro→accepted"));
 });
 
+test("a first-attempt generation phase still reports with model and milestone context", async () => {
+  const transport = new RecordingTransport();
+  const facts = {
+    shouldNotify: async () => true,
+    usageFor: async () => ({
+      usage: {
+        provider: "deepseek",
+        model: "deepseek-v4-pro",
+        inputTokens: 1200,
+        outputTokens: 240,
+        cacheReadTokens: 0,
+        costUsdMicros: 12_000,
+      },
+    }),
+    describe: async () => ({
+      kind: "Generation phase" as const,
+      subject: "Stockflow · phase-1-of-3",
+    }),
+    milestoneFor: async () => "Milestone M1 · contract CONTRACT-018 · active",
+    tiersFor: async () => [
+      { provider: "deepseek", model: "deepseek-v4-pro", status: "accepted" },
+    ],
+  };
+  await new TelegramRunNotifier(
+    transport,
+    "chat-1",
+    facts as never,
+  ).taskFinished({
+    taskId: "phase-task",
+    attemptOrdinal: 1,
+    outcome: "succeeded",
+  });
+
+  const text = textOf(transport);
+  assert.ok(text.startsWith("✅ <b>Generation phase succeeded</b>"));
+  assert.ok(text.includes("Milestone M1 · contract CONTRACT-018 · active"));
+  assert.ok(text.includes("🤖 <code>deepseek-v4-pro</code> · deepseek"));
+});
+
 test("a failure with no provider attempt says so instead of blaming the provider", async () => {
   const transport = new RecordingTransport();
   const facts = {

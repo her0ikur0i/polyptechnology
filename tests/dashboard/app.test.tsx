@@ -228,6 +228,74 @@ describe("dashboard", () => {
       }),
     );
   });
+  it("shows assistant model attribution and ledger cost in the thread", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (url === "/api/v1/orchestrator/conversations")
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              conversationId: "conversation-1",
+              projectId: "project-1",
+              title: "Vendor invoice tracker",
+              version: 0,
+            }),
+          });
+        if (url.includes("/projects/project-1/conversations"))
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              {
+                id: "conversation-1",
+                projectId: "project-1",
+                title: "Vendor invoice tracker",
+                version: 1,
+                createdAt: "2026-08-13T00:00:00.000Z",
+              },
+            ],
+          });
+        if (url.includes("/messages?"))
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              {
+                id: "message-1",
+                conversationId: "conversation-1",
+                projectId: "project-1",
+                ordinal: 1,
+                role: "assistant",
+                content: "Ready.",
+                classification: "internal",
+                contentSha256: "0".repeat(64),
+                createdAt: "2026-08-13T00:00:00.000Z",
+                sourceTaskId: "task-1",
+                modelAttribution: {
+                  provider: "deepseek",
+                  requestedModelId: "deepseek-v4-pro",
+                  resolvedModelId: "deepseek-v4-pro",
+                  costUsdMicros: 12_345,
+                },
+              },
+            ],
+          });
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }),
+    );
+    render(<DashboardApp initialSnapshot={snapshot} />);
+    await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
+    await userEvent.type(
+      await screen.findByLabelText("Conversation title"),
+      "Vendor invoice tracker",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Vendor invoice tracker" }),
+    );
+    expect(
+      await screen.findByText("deepseek · deepseek-v4-pro · $0.012345"),
+    ).toBeInTheDocument();
+  });
   it("supports composer send semantics, stop, regenerate, edit, and draft recovery", async () => {
     MockEventSource.instances = [];
     vi.stubGlobal("EventSource", MockEventSource);

@@ -23,7 +23,7 @@ const defaultRoutesTemplate = JSON.stringify(
     bulk_code: [
       {
         provider: "deepseek",
-        requestedModelId: "deepseek-v4-flash",
+        requestedModelId: "deepseek-v4-pro",
         priority: 0,
       },
       {
@@ -43,7 +43,7 @@ const defaultRoutesTemplate = JSON.stringify(
     bounded_repair: [
       {
         provider: "deepseek",
-        requestedModelId: "deepseek-v4-flash",
+        requestedModelId: "deepseek-v4-pro",
         priority: 0,
       },
       {

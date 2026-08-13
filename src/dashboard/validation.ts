@@ -289,8 +289,26 @@ type ConversationMessagePayload = {
   classification: string;
   contentSha256: string;
   createdAt: string;
+  sourceTaskId?: string;
+  modelAttribution?: {
+    provider: string;
+    requestedModelId: string;
+    resolvedModelId?: string;
+    costUsdMicros: number;
+  };
 };
 const messageRoles = new Set(["owner", "assistant", "system"]);
+function messageAttribution(
+  value: unknown,
+): value is NonNullable<ConversationMessagePayload["modelAttribution"]> {
+  return (
+    record(value) &&
+    string(value.provider) &&
+    string(value.requestedModelId) &&
+    (value.resolvedModelId === undefined || string(value.resolvedModelId)) &&
+    finite(value.costUsdMicros)
+  );
+}
 function conversationMessage(
   value: unknown,
 ): value is ConversationMessagePayload {
@@ -304,7 +322,10 @@ function conversationMessage(
     string(value.content) &&
     string(value.classification) &&
     string(value.contentSha256) &&
-    string(value.createdAt)
+    string(value.createdAt) &&
+    (value.sourceTaskId === undefined || string(value.sourceTaskId)) &&
+    (value.modelAttribution === undefined ||
+      messageAttribution(value.modelAttribution))
   );
 }
 export function parseConversationMessageList(

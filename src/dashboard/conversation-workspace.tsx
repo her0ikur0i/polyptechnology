@@ -39,6 +39,17 @@ const terminalReplyStates = new Set([
   "budget_blocked",
 ]);
 
+function formatCost(costUsdMicros: number) {
+  return `$${(costUsdMicros / 1_000_000).toFixed(6)}`;
+}
+
+function modelLabel(message: ConversationMessage) {
+  const attribution = message.modelAttribution;
+  if (attribution === undefined) return undefined;
+  const model = attribution.resolvedModelId ?? attribution.requestedModelId;
+  return `${attribution.provider} · ${model} · ${formatCost(attribution.costUsdMicros)}`;
+}
+
 // Replaces the old bare "Generate project blueprint" form entirely
 // (confirmed decision, CONTRACT-014 scope): the interview happens through
 // a real conversation instead. A conversation can start with no project at
@@ -716,6 +727,11 @@ export function ConversationWorkspacePage({
                 >
                   <span className="chat-bubble__role">{message.role}</span>
                   <MessageContent content={message.content} />
+                  {message.role === "assistant" && modelLabel(message) && (
+                    <span className="chat-bubble__meta">
+                      {modelLabel(message)}
+                    </span>
+                  )}
                   {message.role === "owner" && (
                     <button
                       type="button"

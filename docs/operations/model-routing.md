@@ -5,9 +5,10 @@ capability, context/output limits, region policy, pricing coverage, or budget. I
 then ranks eligible models according to the selected mode and records the chosen
 model, rejected candidates, estimate, and bounded fallback chain.
 
-Before dynamic activation, manual execution uses DeepSeek V4 Flash for bounded
-bulk work, Claude `sonnet` for specialist review, Claude `opus` only as escalation,
-and Codex for orchestration/integration/final gates. Each attempt records both the
+Before dynamic activation, manual execution uses DeepSeek V4 Pro for bounded
+bulk work and orchestration, DeepSeek V4 Flash as the same-provider fallback,
+Claude `sonnet` for specialist review, Claude `opus` only as escalation, and
+Codex for integration/final gates. Each attempt records both the
 requested alias and provider-resolved model ID; aliases are not treated as stable
 model versions.
 

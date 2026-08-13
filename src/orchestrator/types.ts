@@ -17,6 +17,13 @@ export interface Message {
   classification: Classification;
   contentSha256: string;
   createdAt: Date;
+  sourceTaskId?: string;
+  modelAttribution?: {
+    provider: string;
+    requestedModelId: string;
+    resolvedModelId?: string;
+    costUsdMicros: number;
+  };
 }
 export type AttachmentState =
   | "quarantined"

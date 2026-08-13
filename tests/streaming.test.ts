@@ -253,7 +253,7 @@ class NonStreamingAdapter implements ManagedProviderAdapter {
     this.invoked += 1;
     return {
       providerRequestId: "request-1",
-      resolvedModelId: "deepseek-v4-flash",
+      resolvedModelId: "deepseek-v4-pro",
       resolutionSource: "provider_response" as const,
       content: "a buffered answer",
       usage: {
@@ -266,7 +266,7 @@ class NonStreamingAdapter implements ManagedProviderAdapter {
       },
       modelUsage: [
         {
-          resolvedModelId: "deepseek-v4-flash",
+          resolvedModelId: "deepseek-v4-pro",
           inputTokens: 10,
           outputTokens: 2,
           reasoningTokens: 0,
