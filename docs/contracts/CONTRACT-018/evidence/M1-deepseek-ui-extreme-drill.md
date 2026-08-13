@@ -78,3 +78,21 @@ The first zero-skip attempt intentionally did not get counted as acceptance
 evidence because it used the mutable tag `postgres:16-alpine` and failed the
 worker planner's digest-pin gate. The passing run used the pinned image already
 documented in `README.md` and `CLAUDE.md`.
+
+## Repair after resume
+
+The generated checkpoint had marked M1 done because this evidence file existed,
+but the actual M1 contract subject is the Control API SSE route. While
+continuing M2 on 2026-08-13, the code search found that route was still absent.
+That was treated as broken contract state and repaired before proceeding:
+
+- Added `GET /api/v1/orchestrator/reply-tasks/:taskId/stream`.
+- The route is owner-authenticated, validates task id and `after` cursor, emits
+  `chunk` SSE events from `PostgresReplyChunkStore.since(taskId, after)`, and
+  emits a terminal `done` event when the task reaches `succeeded`, `failed`,
+  `cancelled`, or `budget_blocked`.
+- The stream never reconstructs the assistant answer from fragments. Chunks
+  remain progress only; the client refreshes persisted messages on terminal
+  completion.
+- `tests/control-api.integration.test.ts` now proves resume behavior by
+  requesting `after=1` and receiving only ordinal 2 plus a terminal `done`.

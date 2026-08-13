@@ -1,6 +1,35 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { saveTelegramSettings } from "../../src/dashboard/api.js";
+import {
+  saveTelegramSettings,
+  subscribeReplyStream,
+} from "../../src/dashboard/api.js";
 afterEach(() => vi.unstubAllGlobals());
+
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+  onerror: (() => void) | null = null;
+  closed = false;
+  private readonly listeners = new Map<string, (event: MessageEvent) => void>();
+
+  constructor(readonly url: string) {
+    MockEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: (event: MessageEvent) => void) {
+    this.listeners.set(type, listener);
+  }
+
+  emit(type: string, data: unknown) {
+    this.listeners.get(type)?.({
+      data: JSON.stringify(data),
+    } as MessageEvent);
+  }
+
+  close() {
+    this.closed = true;
+  }
+}
+
 describe("dashboard commands", () => {
   it("sends only reference identities with same-origin credentials and CSRF", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
@@ -51,5 +80,33 @@ describe("dashboard commands", () => {
       ),
     ).rejects.toThrow(/invalid references/);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("subscribes to reply chunk streams and closes on terminal state", () => {
+    MockEventSource.instances = [];
+    vi.stubGlobal("EventSource", MockEventSource);
+    const chunks: string[] = [];
+    const done: string[] = [];
+    const subscription = subscribeReplyStream(
+      "00000000-0000-4000-8000-000000000001",
+      {
+        onChunk: (chunk) => chunks.push(`${chunk.ordinal}:${chunk.fragment}`),
+        onDone: (event) => done.push(event.state),
+        onError: (error) => {
+          throw error;
+        },
+      },
+      7,
+    );
+    expect(MockEventSource.instances).toHaveLength(1);
+    const source = MockEventSource.instances[0]!;
+    expect(source.url).toBe(
+      "/api/v1/orchestrator/reply-tasks/00000000-0000-4000-8000-000000000001/stream?after=7",
+    );
+    source.emit("chunk", { ordinal: 8, fragment: "hello" });
+    source.emit("done", { state: "succeeded" });
+    expect(chunks).toEqual(["8:hello"]);
+    expect(done).toEqual(["succeeded"]);
+    expect(source.closed).toBe(true);
+    subscription.close();
   });
 });

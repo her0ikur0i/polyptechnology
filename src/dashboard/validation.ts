@@ -371,6 +371,27 @@ export function parseReplyTaskStatus(value: unknown) {
   return value;
 }
 
+function replyStreamChunk(value: unknown): value is {
+  ordinal: number;
+  fragment: string;
+} {
+  return record(value) && finite(value.ordinal) && string(value.fragment);
+}
+export function parseReplyStreamChunk(value: unknown) {
+  if (!replyStreamChunk(value))
+    throw new Error("Invalid reply stream chunk payload");
+  return value;
+}
+
+function replyStreamDone(value: unknown): value is { state: string } {
+  return record(value) && string(value.state);
+}
+export function parseReplyStreamDone(value: unknown) {
+  if (!replyStreamDone(value))
+    throw new Error("Invalid reply stream completion payload");
+  return value;
+}
+
 function conversationAttachment(value: unknown): value is {
   id: string;
   conversationId: string;

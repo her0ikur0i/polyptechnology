@@ -6,6 +6,7 @@ import {
   listConversationMessages,
   listProjectConversations,
   getReplyTaskStatus,
+  subscribeReplyStream,
   uploadConversationAttachment,
   listConversationAttachments,
   draftProposal,
@@ -21,6 +22,7 @@ import type {
   ConversationSummary,
   ConversationAttachment,
   ConversationProposal,
+  ReplyStreamSubscription,
 } from "./api.js";
 import type { ProjectSummary } from "./types.js";
 
@@ -69,6 +71,7 @@ export function ConversationWorkspacePage({
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [awaitingReply, setAwaitingReply] = useState(false);
+  const [streamingReply, setStreamingReply] = useState("");
   const [proposal, setProposal] = useState<ConversationProposal>();
   const [proposalBusy, setProposalBusy] = useState<
     "draft" | "approve" | "reject"
@@ -80,10 +83,18 @@ export function ConversationWorkspacePage({
   const [generationResult, setGenerationResult] = useState<string>();
   const threadEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const activeReplyStreamRef = useRef<ReplyStreamSubscription>();
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ block: "end" });
   }, [messages, awaitingReply]);
+
+  useEffect(
+    () => () => {
+      activeReplyStreamRef.current?.close();
+    },
+    [],
+  );
 
   async function refreshMessages(conversationId: string, projectId: string) {
     const [nextMessages, nextAttachments] = await Promise.all([
@@ -112,6 +123,7 @@ export function ConversationWorkspacePage({
               `The assistant could not reply (task ${status.state}). Your message is saved -- try sending another.`,
             );
           setAwaitingReply(false);
+          setStreamingReply("");
           return;
         }
       } catch {
@@ -121,9 +133,51 @@ export function ConversationWorkspacePage({
       }
     }
     setAwaitingReply(false);
+    setStreamingReply("");
     setError(
       "Still waiting on the assistant -- refresh the page in a moment to check for a reply.",
     );
+  }
+
+  function followReplyStream(
+    taskId: string,
+    conversationId: string,
+    projectId: string,
+  ) {
+    activeReplyStreamRef.current?.close();
+    setAwaitingReply(true);
+    setStreamingReply("");
+    let settled = false;
+    let lastOrdinal = 0;
+    try {
+      activeReplyStreamRef.current = subscribeReplyStream(taskId, {
+        onChunk: (chunk) => {
+          if (settled || chunk.ordinal <= lastOrdinal) return;
+          lastOrdinal = chunk.ordinal;
+          setStreamingReply((current) => `${current}${chunk.fragment}`);
+        },
+        onDone: (done) => {
+          settled = true;
+          activeReplyStreamRef.current = undefined;
+          void refreshMessages(conversationId, projectId).finally(() => {
+            setAwaitingReply(false);
+            setStreamingReply("");
+            if (done.state !== "succeeded")
+              setError(
+                `The assistant could not reply (task ${done.state}). Your message is saved -- try sending another.`,
+              );
+          });
+        },
+        onError: () => {
+          if (settled) return;
+          settled = true;
+          activeReplyStreamRef.current = undefined;
+          void pollReply(taskId, conversationId, projectId);
+        },
+      });
+    } catch {
+      void pollReply(taskId, conversationId, projectId);
+    }
   }
 
   async function handleStart(event: React.FormEvent) {
@@ -145,6 +199,8 @@ export function ConversationWorkspacePage({
       });
       setMessages([]);
       setAttachments([]);
+      setAwaitingReply(false);
+      setStreamingReply("");
       setProposal(undefined);
       setTranslationState("idle");
       setGenerationResult(undefined);
@@ -172,8 +228,7 @@ export function ConversationWorkspacePage({
       );
       setComposerText("");
       await refreshMessages(conversation.id, conversation.projectId);
-      setAwaitingReply(true);
-      void pollReply(
+      followReplyStream(
         result.replyTaskId,
         conversation.id,
         conversation.projectId,
@@ -454,6 +509,10 @@ export function ConversationWorkspacePage({
     setProposal(undefined);
     setTranslationState("idle");
     setGenerationResult(undefined);
+    activeReplyStreamRef.current?.close();
+    activeReplyStreamRef.current = undefined;
+    setAwaitingReply(false);
+    setStreamingReply("");
     try {
       await refreshMessages(item.id, item.projectId);
     } catch {
@@ -547,7 +606,7 @@ export function ConversationWorkspacePage({
                   aria-live="polite"
                 >
                   <span className="chat-bubble__role">assistant</span>
-                  <p>Thinking…</p>
+                  <p>{streamingReply || "Thinking…"}</p>
                 </div>
               )}
               <div ref={threadEndRef} />

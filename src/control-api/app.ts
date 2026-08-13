@@ -7,6 +7,7 @@ import type { AppConfig } from "../config.js";
 import { OwnerCommandService } from "../operations/owner-commands.js";
 import { PostgresProjectFactory } from "../factory/postgres-repository.js";
 import { PostgresConversationStore } from "../orchestrator/postgres-store.js";
+import { PostgresReplyChunkStore } from "../orchestrator/reply-chunks.js";
 import { OrchestratorService } from "../orchestrator/service.js";
 import { PostgresPolicyStore } from "../policy/postgres-policy-store.js";
 import { OwnerPolicyService } from "../policy/owner-policy-service.js";
@@ -43,11 +44,23 @@ export interface ControlApiDeps {
 // Lower-case canonical form. Every comparison against it folds case first,
 // because Express's router matches paths case-insensitively by default.
 const TELEGRAM_WEBHOOK_PATH = "/api/v1/telegram/webhook";
+const REPLY_STREAM_POLL_MS = 250;
+const replyStreamTerminalStates = new Set([
+  "succeeded",
+  "failed",
+  "cancelled",
+  "budget_blocked",
+]);
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export function createControlApi(deps: ControlApiDeps): Express {
   const { pool, config } = deps;
   const csrfSecret = deps.csrfSecret ?? config.csrfSecret;
   const conversations = new PostgresConversationStore(pool);
+  const replyChunks = new PostgresReplyChunkStore(pool);
   const orchestrator = new OrchestratorService(conversations);
   const owner = new OwnerCommandService(
     new PostgresProjectFactory(pool),
@@ -74,12 +87,11 @@ export function createControlApi(deps: ControlApiDeps): Express {
   // scope, but until now nothing capped request volume, so a flood could burn
   // budget and CPU right up to that cap.
   //
-  // Deliberately generous. The dashboard's own busiest pattern is the reply
-  // poller in src/dashboard/conversation-workspace.tsx at 1.5 s intervals,
-  // roughly 40 requests a minute while an assistant reply is pending, against
-  // a 300/minute default. API_RATE_LIMIT_PER_MINUTE exists so a protection
-  // against floods can never itself become the thing that locks the owner out
-  // of their own control plane.
+  // Deliberately generous. The dashboard's busiest long-lived pattern is the
+  // reply SSE stream in src/dashboard/conversation-workspace.tsx, with status
+  // polling retained only as a fallback. API_RATE_LIMIT_PER_MINUTE exists so a
+  // protection against floods can never itself become the thing that locks the
+  // owner out of their own control plane.
   const apiLimiter = rateLimit({
     windowMs: 60_000,
     limit: config.apiRateLimitPerMinute,
@@ -526,6 +538,72 @@ export function createControlApi(deps: ControlApiDeps): Express {
         res.status(404).json({
           error: error instanceof Error ? error.message : "task unavailable",
         });
+      }
+    },
+  );
+
+  app.get(
+    "/api/v1/orchestrator/reply-tasks/:taskId/stream",
+    requireOwner,
+    async (req, res) => {
+      const taskId = req.params.taskId;
+      const after =
+        typeof req.query.after === "string" ? Number(req.query.after) : 0;
+      if (
+        typeof taskId !== "string" ||
+        !/^[a-f0-9-]{36}$/.test(taskId) ||
+        !Number.isInteger(after) ||
+        after < 0
+      ) {
+        res.status(400).json({ error: "invalid stream cursor" });
+        return;
+      }
+
+      const task = await pool.query<{ state: string }>(
+        "SELECT state FROM tasks WHERE id=$1",
+        [taskId],
+      );
+      if (task.rowCount !== 1) {
+        res.status(404).json({ error: "reply task not found" });
+        return;
+      }
+
+      let closed = false;
+      req.on("close", () => {
+        closed = true;
+      });
+      res.status(200);
+      res.set({
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+      res.flushHeaders();
+
+      let cursor = after;
+      let state = task.rows[0]!.state;
+      while (!closed) {
+        const chunks = await replyChunks.since(taskId, cursor);
+        for (const chunk of chunks) {
+          cursor = chunk.ordinal;
+          res.write(
+            `event: chunk\ndata: ${JSON.stringify(chunk)}\nid: ${chunk.ordinal}\n\n`,
+          );
+        }
+
+        const current = await pool.query<{ state: string }>(
+          "SELECT state FROM tasks WHERE id=$1",
+          [taskId],
+        );
+        state = current.rows[0]?.state ?? "cancelled";
+        if (replyStreamTerminalStates.has(state)) {
+          res.write(`event: done\ndata: ${JSON.stringify({ state })}\n\n`);
+          res.end();
+          return;
+        }
+        if (chunks.length === 0) res.write(": keep-alive\n\n");
+        await sleep(REPLY_STREAM_POLL_MS);
       }
     },
   );

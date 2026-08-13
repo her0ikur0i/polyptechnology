@@ -8,6 +8,7 @@ import pg from "pg";
 import type { AddressInfo } from "node:net";
 import { createControlApi } from "../src/control-api/app.js";
 import { loadConfig } from "../src/config.js";
+import { PostgresReplyChunkStore } from "../src/orchestrator/reply-chunks.js";
 import { PostgresWorkRepository } from "../src/work/postgres-repository.js";
 import { PostgresPolicyStore } from "../src/policy/postgres-policy-store.js";
 import type { RuntimePolicy } from "../src/policy/types.js";
@@ -157,6 +158,9 @@ test(
         },
         {
           path: "/api/v1/orchestrator/proposals/00000000-0000-4000-8000-000000000000",
+        },
+        {
+          path: "/api/v1/orchestrator/reply-tasks/00000000-0000-4000-8000-000000000000/stream",
         },
       ];
       // A valid CSRF token alone must never substitute for owner
@@ -930,6 +934,105 @@ test(
       } finally {
         await cleanupPool.end();
       }
+    });
+  },
+);
+
+test(
+  "reply task SSE stream resumes after the requested chunk ordinal",
+  { skip: databaseUrl === undefined },
+  async () => {
+    await withServer("disabled", async (baseUrl, csrfSecret) => {
+      const headers = {
+        "content-type": "application/json",
+        "x-csrf-token": csrfSecret,
+      };
+      const started = await (
+        await fetch(`${baseUrl}/api/v1/orchestrator/conversations`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            title: "Streaming interview",
+            idempotencyKey: randomUUID(),
+            occurredAt: new Date().toISOString(),
+          }),
+        })
+      ).json();
+      const sendResult = await (
+        await fetch(
+          `${baseUrl}/api/v1/orchestrator/conversations/${started.conversationId}/messages`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              projectId: started.projectId,
+              content: "Stream this reply.",
+              expectedVersion: 0,
+              idempotencyKey: randomUUID(),
+              occurredAt: new Date().toISOString(),
+            }),
+          },
+        )
+      ).json();
+
+      const streamPool = new pg.Pool({ connectionString: databaseUrl });
+      try {
+        const chunks = new PostgresReplyChunkStore(streamPool);
+        await chunks.append({
+          taskId: sendResult.replyTaskId,
+          conversationId: started.conversationId,
+          ordinal: 1,
+          fragment: "alpha ",
+        });
+        await chunks.append({
+          taskId: sendResult.replyTaskId,
+          conversationId: started.conversationId,
+          ordinal: 2,
+          fragment: "beta",
+        });
+        const work = new PostgresWorkRepository(streamPool);
+        const lease = await work.lease(
+          sendResult.replyTaskId,
+          "reply-stream-test",
+          30_000,
+        );
+        await work.transition(
+          sendResult.replyTaskId,
+          lease.fencingToken,
+          "leased",
+          "running",
+        );
+        await work.transition(
+          sendResult.replyTaskId,
+          lease.fencingToken,
+          "running",
+          "verifying",
+        );
+        await work.transition(
+          sendResult.replyTaskId,
+          lease.fencingToken,
+          "verifying",
+          "succeeded",
+        );
+      } finally {
+        await streamPool.end();
+      }
+
+      const response = await fetch(
+        `${baseUrl}/api/v1/orchestrator/reply-tasks/${sendResult.replyTaskId}/stream?after=1`,
+      );
+      assert.equal(response.status, 200);
+      assert.match(
+        response.headers.get("content-type") ?? "",
+        /text\/event-stream/,
+      );
+      const body = await response.text();
+      assert.doesNotMatch(body, /alpha/);
+      assert.match(body, /event: chunk/);
+      assert.match(body, /"ordinal":2/);
+      assert.match(body, /beta/);
+      assert.match(body, /event: done/);
+      assert.match(body, /"state":"succeeded"/);
     });
   },
 );

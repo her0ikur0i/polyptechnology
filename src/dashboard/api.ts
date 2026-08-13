@@ -20,6 +20,8 @@ import {
   parseProposalApprovalResult,
   parseProposalCreationResult,
   parseProposalDraftResult,
+  parseReplyStreamChunk,
+  parseReplyStreamDone,
   parseReplyTaskStatus,
   parseSendMessageResult,
   parseTelegramSettings,
@@ -398,6 +400,56 @@ export async function getReplyTaskStatus(
       "Reply status is unavailable.",
     );
   return parseReplyTaskStatus(await response.json());
+}
+export interface ReplyStreamSubscription {
+  close(): void;
+}
+export function subscribeReplyStream(
+  taskId: string,
+  callbacks: {
+    onChunk(chunk: { ordinal: number; fragment: string }): void;
+    onDone(done: { state: string }): void;
+    onError(error: Error): void;
+  },
+  afterOrdinal = 0,
+): ReplyStreamSubscription {
+  if (
+    !/^[a-f0-9-]{36}$/.test(taskId) ||
+    !Number.isInteger(afterOrdinal) ||
+    afterOrdinal < 0
+  )
+    throw new Error("Invalid reply stream cursor.");
+  if (typeof EventSource === "undefined")
+    throw new Error("Reply streaming is unavailable in this browser.");
+  const source = new EventSource(
+    `/api/v1/orchestrator/reply-tasks/${taskId}/stream?after=${afterOrdinal}`,
+  );
+  source.addEventListener("chunk", (event) => {
+    try {
+      callbacks.onChunk(parseReplyStreamChunk(JSON.parse(event.data)));
+    } catch (error) {
+      source.close();
+      callbacks.onError(
+        error instanceof Error ? error : new Error("Invalid reply stream."),
+      );
+    }
+  });
+  source.addEventListener("done", (event) => {
+    try {
+      callbacks.onDone(parseReplyStreamDone(JSON.parse(event.data)));
+    } catch (error) {
+      callbacks.onError(
+        error instanceof Error ? error : new Error("Invalid reply stream."),
+      );
+    } finally {
+      source.close();
+    }
+  });
+  source.onerror = () => {
+    source.close();
+    callbacks.onError(new Error("Reply stream disconnected."));
+  };
+  return { close: () => source.close() };
 }
 export async function uploadConversationAttachment(
   conversationId: string,
