@@ -238,6 +238,14 @@ export class PostgresRunFacts {
     // real chat reply.
     if (typeof input.probe === "string") return false;
 
+    // Deterministic hash verification is internal plumbing. A success says
+    // only that the work engine compared two hashes, and the owner saw it as a
+    // stream of identical "Verification succeeded" messages with UUID
+    // contracts and no human subject. Keep failures visible: a broken verifier
+    // is actionable, a passing one is not.
+    if (row.driver === "deterministic_sha256" && event.outcome === "succeeded")
+      return false;
+
     return true;
   }
 
@@ -255,6 +263,7 @@ export class PostgresRunFacts {
       | { contract_id: string; ordinal: number; milestone_status: string }
       | undefined;
     if (row === undefined) return undefined;
+    if (UUID_RE.test(row.contract_id)) return undefined;
     return `Milestone M${row.ordinal} · contract ${row.contract_id} · ${row.milestone_status}`;
   }
 
@@ -328,6 +337,9 @@ export const SILENT_OUTCOMES = new Set(["retry_wait"]);
 // How much of a caught error a report will carry. Enough to identify the
 // failure, far short of Telegram's 4096-character ceiling.
 export const DETAIL_LIMIT = 600;
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // Failure reasons the work engine produces, phrased as something a person
 // woken by their phone can act on rather than as an enum value.

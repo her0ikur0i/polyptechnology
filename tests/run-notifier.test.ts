@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { TelegramRunNotifier } from "../src/operations/run-notifier.js";
+import {
+  PostgresRunFacts,
+  TelegramRunNotifier,
+} from "../src/operations/run-notifier.js";
 import type { TelegramTransport } from "../src/telegram/gateway.js";
 
 class RecordingTransport implements TelegramTransport {
@@ -88,6 +91,69 @@ test("facts may suppress diagnostic or low-signal task notifications", async () 
   });
 
   assert.equal(transport.sent.length, 0);
+});
+
+test("successful deterministic verification tasks are silent", async () => {
+  const facts = new PostgresRunFacts({
+    query: async () => ({
+      rows: [
+        {
+          driver: "deterministic_sha256",
+          role: "deterministic-verifier",
+          input: { value: "ok" },
+        },
+      ],
+    }),
+  } as never);
+
+  assert.equal(
+    await facts.shouldNotify({
+      taskId: "verification-task",
+      attemptOrdinal: 2,
+      outcome: "succeeded",
+    }),
+    false,
+  );
+});
+
+test("failed deterministic verification tasks still notify", async () => {
+  const facts = new PostgresRunFacts({
+    query: async () => ({
+      rows: [
+        {
+          driver: "deterministic_sha256",
+          role: "deterministic-verifier",
+          input: { value: "bad" },
+        },
+      ],
+    }),
+  } as never);
+
+  assert.equal(
+    await facts.shouldNotify({
+      taskId: "verification-task",
+      attemptOrdinal: 2,
+      outcome: "failed",
+      reason: "verification",
+    }),
+    true,
+  );
+});
+
+test("database milestone context does not leak raw contract UUIDs", async () => {
+  const facts = new PostgresRunFacts({
+    query: async () => ({
+      rows: [
+        {
+          contract_id: "8d848ff9-9d96-4f96-830d-7702e00b397d",
+          ordinal: 1,
+          milestone_status: "active",
+        },
+      ],
+    }),
+  } as never);
+
+  assert.equal(await facts.milestoneFor("task-1"), undefined);
 });
 
 test("a repaired generation phase report names the phase", async () => {
