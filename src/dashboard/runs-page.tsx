@@ -178,3 +178,5 @@ export function RunsPage({ snapshot }: { snapshot: DashboardSnapshot }) {
     </div>
   );
 }
+
+export default RunsPage;
