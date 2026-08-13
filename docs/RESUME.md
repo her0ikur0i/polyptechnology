@@ -230,9 +230,8 @@ node --import tsx scripts/resume-checkpoint.ts --check  # fail if stale
 | M6        | virtualized thread rendering                                            | done — `M6-virtualized-thread-rendering.md` |
 | M7        | live drill in the real dashboard, README, security review, close        | **next**                                    |
 
-- **HEAD:** `85868f2 CONTRACT-018 M5: show reply model attribution`
-- **Working tree:** 4 changed path(s) — expected while a contract is in flight, since this repository commits once per contract
-- **Last touched:** `docs/contracts/CONTRACT-018/evidence/M6-virtualized-thread-rendering.md` at 2026-08-13T12:41Z — if a session ended abruptly, work was here
+- **HEAD:** `5d1f325 fix: make dashboard route tests deterministic`
+- **Working tree:** clean
 - **Next action:** M7 — live drill in the real dashboard, README, security review, close
 
 <!-- resume:auto:end -->

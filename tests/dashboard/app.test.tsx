@@ -68,11 +68,13 @@ const snapshot: DashboardSnapshot = {
   }),
   commandPolicy: { csrfToken: "test-csrf", canConfigureTelegram: true },
 };
+const renderDashboard = (value: DashboardSnapshot = snapshot) =>
+  render(<DashboardApp initialSnapshot={value} router="memory" />);
 describe("dashboard", () => {
   beforeEach(() => window.history.replaceState({}, "", "/"));
   afterEach(() => vi.unstubAllGlobals());
   it("renders real empty and sequence states without invented metrics", () => {
-    render(<DashboardApp initialSnapshot={snapshot} />);
+    renderDashboard();
     expect(
       screen.getByRole("heading", { name: "Factory overview" }),
     ).toBeInTheDocument();
@@ -82,7 +84,7 @@ describe("dashboard", () => {
     expect(screen.getAllByText("CONTRACT-007 · M3").length).toBeGreaterThan(0);
   });
   it("shows concrete model tracking and reference-only Telegram configuration", async () => {
-    render(<DashboardApp initialSnapshot={snapshot} />);
+    renderDashboard();
     await userEvent.click(
       screen.getByRole("link", { name: /Providers & Models/ }),
     );
@@ -104,7 +106,7 @@ describe("dashboard", () => {
     const stale = structuredClone(snapshot);
     stale.attention.freshness = "stale";
     stale.attention.issues = ["Event stream delayed."];
-    render(<DashboardApp initialSnapshot={stale} />);
+    renderDashboard(stale);
     expect(screen.getByRole("status")).toHaveTextContent("Stale data observed");
     const result = await axe.run(document.body, {
       rules: { "color-contrast": { enabled: false } },
@@ -116,7 +118,7 @@ describe("dashboard", () => {
       "fetch",
       vi.fn().mockRejectedValue(new Error("no policy active in this test")),
     );
-    render(<DashboardApp initialSnapshot={snapshot} />);
+    renderDashboard();
     await userEvent.click(screen.getByRole("link", { name: /Policy/ }));
     await screen.findByRole("heading", { name: "Orchestration Policy" });
     const result = await axe.run(document.body, {
@@ -141,7 +143,7 @@ describe("dashboard", () => {
         return Promise.resolve({ ok: true, json: async () => [] });
       }),
     );
-    render(<DashboardApp initialSnapshot={snapshot} />);
+    renderDashboard();
     await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
     // findBy, not getBy: the workspace is a code-split chunk (CONTRACT-015 M6),
     // so navigating to it now crosses a Suspense boundary the owner also waits
@@ -178,7 +180,7 @@ describe("dashboard", () => {
       removeListener: vi.fn(),
       dispatchEvent: vi.fn(),
     }));
-    render(<DashboardApp initialSnapshot={snapshot} />);
+    renderDashboard();
     const aside = document.getElementById("primary-sidebar");
     expect(aside).toHaveAttribute("inert");
     const menu = document.querySelector<HTMLButtonElement>(".menu");
@@ -208,7 +210,7 @@ describe("dashboard", () => {
         return Promise.resolve({ ok: true, json: async () => [] });
       }),
     );
-    render(<DashboardApp initialSnapshot={snapshot} />);
+    renderDashboard();
     await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
     // findBy, not getBy: the workspace is a code-split chunk (CONTRACT-015 M6),
     // so navigating to it now crosses a Suspense boundary the owner also waits
@@ -282,7 +284,7 @@ describe("dashboard", () => {
         return Promise.resolve({ ok: true, json: async () => [] });
       }),
     );
-    render(<DashboardApp initialSnapshot={snapshot} />);
+    renderDashboard();
     await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
     await userEvent.type(
       await screen.findByLabelText("Conversation title"),
@@ -366,7 +368,7 @@ describe("dashboard", () => {
         return Promise.resolve({ ok: true, json: async () => [] });
       }),
     );
-    render(<DashboardApp initialSnapshot={snapshot} />);
+    renderDashboard();
     await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
     await userEvent.type(
       await screen.findByLabelText("Conversation title"),
@@ -462,7 +464,7 @@ describe("dashboard", () => {
         });
       }),
     );
-    render(<DashboardApp initialSnapshot={snapshot} />);
+    renderDashboard();
     await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
     await userEvent.type(
       await screen.findByLabelText("Conversation title"),
@@ -560,7 +562,7 @@ describe("dashboard", () => {
         });
       }),
     );
-    render(<DashboardApp initialSnapshot={snapshot} />);
+    renderDashboard();
     await userEvent.click(screen.getByRole("link", { name: /Orchestrator/ }));
     await userEvent.type(
       await screen.findByLabelText("Conversation title"),
@@ -596,7 +598,7 @@ describe("dashboard", () => {
         });
       }),
     );
-    render(<DashboardApp initialSnapshot={snapshot} />);
+    renderDashboard();
     await userEvent.click(screen.getByRole("link", { name: /Policy/ }));
     await userEvent.click(
       await screen.findByRole("button", { name: "Create draft" }),

@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import {
   BrowserRouter,
+  MemoryRouter,
   NavLink,
   Navigate,
   Route,
@@ -764,8 +765,10 @@ function PageHeader({ title, detail }: { title: string; detail: string }) {
 }
 export function DashboardApp({
   initialSnapshot,
+  router = "browser",
 }: {
   initialSnapshot?: DashboardSnapshot;
+  router?: "browser" | "memory";
 }) {
   const state = useSnapshot(initialSnapshot);
   if (state.kind !== "ready")
@@ -774,6 +777,12 @@ export function DashboardApp({
         kind={state.kind}
         message={state.kind === "error" ? state.message : undefined}
       />
+    );
+  if (router === "memory")
+    return (
+      <MemoryRouter>
+        <Shell snapshot={state.value} />
+      </MemoryRouter>
     );
   return (
     <BrowserRouter>

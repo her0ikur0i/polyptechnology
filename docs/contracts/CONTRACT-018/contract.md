@@ -141,6 +141,7 @@ post-and-wait workspace, which keeps working throughout.
 - `src/gateway/**`
 - `src/operations/**`
 - `src/orchestrator/**`
+- `.gitignore`
 - `package.json`
 - `package-lock.json`
 - `vite.config.ts`
