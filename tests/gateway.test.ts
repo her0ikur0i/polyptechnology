@@ -16,7 +16,10 @@ import type {
   ManagedProviderAdapter,
   ModelRoute,
 } from "../src/gateway/types.js";
-import { STRANDED_ATTEMPT_CODE } from "../src/gateway/types.js";
+import {
+  ManagedInvocationError,
+  STRANDED_ATTEMPT_CODE,
+} from "../src/gateway/types.js";
 const attribution = {
   projectId: "p",
   contractId: "CONTRACT-005",
@@ -342,4 +345,35 @@ test("a stranded dispatched attempt is settled as unknown, and a live one is not
   // A horizon short enough to catch attempts that are merely slow is refused
   // outright rather than trusted to a caller's arithmetic.
   await assert.rejects(ledger.reclaimStranded(5_000), /horizon/);
+});
+test("a model_absent failure removes the provider from availability so the chain skips it", async () => {
+  const claudeRoute = modelRoutes("bulk_code").find(
+    (route) => route.provider === "claude",
+  );
+  assert.ok(claudeRoute, "bulk_code has a Claude fallback tier");
+  class AbsentClaude implements ManagedProviderAdapter {
+    readonly provider = "claude" as const;
+    async listModels() {
+      return ["claude-sonnet-4-6", "claude-sonnet-5"];
+    }
+    async invoke(): Promise<never> {
+      throw new ManagedInvocationError("model_absent", false);
+    }
+  }
+  const gateway = new AiGateway(new MemoryAttemptLedger(), [
+    new Fake(),
+    new AbsentClaude(),
+  ]);
+  const before = await gateway.availableModelKeys();
+  assert.ok([...before].some((key) => key.startsWith("claude:")));
+
+  await assert.rejects(
+    () => gateway.execute({ ...request, routeOverride: claudeRoute }),
+    GatewayInvocationError,
+  );
+
+  // Once a provider reports an absent model, its keys are gone, so the route
+  // resolver's availability check skips the tier instead of retrying it.
+  const after = await gateway.availableModelKeys();
+  assert.ok(![...after].some((key) => key.startsWith("claude:")));
 });

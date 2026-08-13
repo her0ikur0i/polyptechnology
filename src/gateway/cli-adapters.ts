@@ -457,6 +457,14 @@ export class ClaudeCliAdapter implements ManagedProviderAdapter {
       throw new Error(
         `invalid Claude CLI envelope:${Object.keys(body).sort().join(",")}`,
       );
+    // An empty modelUsage is not a per-model mismatch: the CLI produced no model
+    // accounting at all, which is what a usage-limited or otherwise unavailable
+    // provider looks like (it never billed a model). Surface it as a distinct,
+    // known, non-unknown failure so the gateway can mark the provider
+    // unavailable and the escalation chain can skip the tier instead of
+    // retrying a dead one.
+    if (models.length === 0)
+      throw new ManagedInvocationError("model_absent", false);
     if (!models.includes(route.requestedModelId))
       throw new Error(
         `requested Claude model absent:${models.sort().join(",")}`,

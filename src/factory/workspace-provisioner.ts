@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { BlueprintDocument } from "./types.js";
@@ -37,6 +37,16 @@ export class NodeWorkspaceProvisioner {
     const repoPath = join(this.workspacesRoot, projectId, "repo");
     if (existsSync(join(repoPath, ".git"))) return { repoPath };
 
+    // The workspace tree is shared by two service users: the sequence supervisor
+    // runs as root with an empty CapabilityBoundingSet (no CAP_DAC_OVERRIDE),
+    // while the Control API runs as polyp-factory. A workspaces root that is
+    // 0750 and owned by one of them leaves the other's DAC check as "others"
+    // with no execute bit, so every `git apply` fails with "spawn git EACCES".
+    // 0755 lets both traverse; the per-project directories are still created
+    // with the creator's own umask, so neither user's work is exposed to the
+    // other's writes. Idempotent: once the root exists, chmod only reasserts it.
+    await mkdir(this.workspacesRoot, { recursive: true });
+    await chmod(this.workspacesRoot, 0o755);
     await mkdir(repoPath, { recursive: true });
     await writeFile(
       join(repoPath, "package.json"),

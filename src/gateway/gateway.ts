@@ -5,6 +5,7 @@ import type {
   GatewayAttempt,
   GatewayRequest,
   GatewayResult,
+  ManagedProvider,
   ManagedProviderAdapter,
   ModelRoute,
 } from "./types.js";
@@ -37,6 +38,11 @@ export class GatewayInvocationError extends Error {
 }
 export class AiGateway {
   private readonly adapters = new Map<string, ManagedProviderAdapter>();
+  // Providers whose CLI reported "model absent" (empty modelUsage) during an
+  // attempt. A usage-limited CLI does not recover within one run, so once seen
+  // it is excluded from availableModelKeys() -- which is how the escalation
+  // chain skips the tier instead of retrying a dead one.
+  private readonly absentProviders = new Set<ManagedProvider>();
   constructor(
     private readonly ledger: AttemptLedger,
     adapters: ReadonlyArray<ManagedProviderAdapter>,
@@ -218,6 +224,11 @@ export class AiGateway {
           ? [error.providerRequestId]
           : []),
       );
+      if (
+        error instanceof ManagedInvocationError &&
+        error.code === "model_absent"
+      )
+        this.absentProviders.add(route.provider);
       throw new GatewayInvocationError(
         error instanceof Error ? error.message : "provider failure",
         failed,
@@ -229,9 +240,11 @@ export class AiGateway {
   // expects for its availability set (src/policy/simulate-route.ts).
   async availableModelKeys(): Promise<ReadonlySet<string>> {
     const keys = new Set<string>();
-    for (const [provider, adapter] of this.adapters)
+    for (const [provider, adapter] of this.adapters) {
+      if (this.absentProviders.has(provider as ManagedProvider)) continue;
       for (const modelId of await adapter.listModels())
         keys.add(`${provider}:${modelId}`);
+    }
     return keys;
   }
   private async resolve(
