@@ -362,8 +362,5 @@ test("DeepSeek patch attempts receive a strict diff-only output contract", async
     finalMessage?.content ?? "",
     /first non-whitespace bytes.*`diff --git `/s,
   );
-  assert.match(
-    finalMessage?.content ?? "",
-    /patch has no diff --git headers/,
-  );
+  assert.match(finalMessage?.content ?? "", /patch has no diff --git headers/);
 });

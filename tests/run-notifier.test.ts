@@ -116,6 +116,11 @@ test("a repaired generation phase report names the phase", async () => {
 
   const text = textOf(transport);
   assert.ok(text.startsWith("✅ <b>Generation phase succeeded</b>"));
+  assert.ok(
+    text.includes(
+      "Summary: generation phase finished after repair; no owner action needed.",
+    ),
+  );
   assert.ok(text.includes("Stockflow · phase-4-of-9"));
   assert.ok(text.includes("deepseek-v4-flash→rejected"));
   assert.ok(text.includes("deepseek-v4-pro→accepted"));

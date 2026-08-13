@@ -1,11 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import type { Pool } from "pg";
 import { PostgresWorkRepository } from "../work/postgres-repository.js";
 import { modelRoutes, MODEL_POLICY_VERSION } from "../gateway/model-policy.js";
 import { verificationCommandFor } from "../operations/verification-image-policy.js";
 import type { BlueprintDocument, GeneratedProject } from "./types.js";
+
+const run = promisify(execFile);
 
 export interface GenerationTaskResult {
   taskId: string;
@@ -122,6 +126,102 @@ async function describeRepository(repoPath: string): Promise<string> {
   return sections.join("\n");
 }
 
+function needsUiReferenceContract(
+  requirements: ReadonlyArray<string>,
+): boolean {
+  return requirements.some(
+    (requirement) =>
+      requirement.includes("renderPolypFactoryConsole") ||
+      requirement.includes("bioluminescent") ||
+      requirement.includes("Refero"),
+  );
+}
+
+function uiReferenceContractTest(
+  phaseTestImportPath: string,
+  phaseLabel: string,
+): string {
+  return [
+    'import test from "node:test";',
+    'import assert from "node:assert/strict";',
+    `import { renderPolypFactoryConsole } from ${JSON.stringify(
+      phaseTestImportPath,
+    )};`,
+    "",
+    `test(${JSON.stringify(`${phaseLabel} renders the Refero/Auros UI contract`)}, () => {`,
+    "  const html = renderPolypFactoryConsole();",
+    "  assert.match(html, /^<!doctype html>/);",
+    "  assert.equal((html.match(/<style\\b/g) ?? []).length, 1);",
+    "  assert.match(html, /<nav\\b/);",
+    "  assert.match(html, /<main\\b/);",
+    "  assert.match(html, /DeepSeek/);",
+    "  assert.match(html, /blueprint translation/i);",
+    "  assert.match(html, /verifier/i);",
+    "  assert.match(html, /publication/i);",
+    "  assert.match(html, /deployment/i);",
+    "  assert.match(html, /Telegram/i);",
+    "  assert.match(html, /budget/i);",
+    "  assert.match(html, /route policy|fallback chain|model routing/i);",
+    "  assert.match(html, /phase-4-of-9/);",
+    "  assert.match(html, /phase-9-of-9/);",
+    "  assert.match(html, /bioluminescent/i);",
+    "  assert.match(html, /data-orb|particle-field|telemetry orb/i);",
+    "  assert.match(html, /attempt/i);",
+    "  assert.match(html, /changed lines/i);",
+    "  assert.match(html, /repair|failure/i);",
+    "  assert.match(html, /#011d1c/i);",
+    "  assert.match(html, /#012624/i);",
+    "  assert.match(html, /#003734/i);",
+    "  assert.match(html, /#fde9ff/i);",
+    "  assert.match(html, /#edfffe/i);",
+    "  assert.doesNotMatch(html, /#0b1020|#5ab8ff/i);",
+    "  assert.doesNotMatch(html, /culture tank|biomass|nutrient|sterile|airlock|growth protocol/i);",
+    "  assert.doesNotMatch(html, /<script\\b|<link\\b[^>]*href=|@import|url\\(http/i);",
+    "  assert.ok(html.length > 15000, 'UI is too small to satisfy the dense operator-console contract');",
+    "});",
+    "",
+  ].join("\n");
+}
+
+async function installUiReferenceContract(
+  repoPath: string,
+  phaseLabel: string,
+  phaseTestImportPath: string,
+): Promise<string | null> {
+  const contractTest = uiReferenceContractTest(phaseTestImportPath, phaseLabel);
+  const contractPath = join(
+    repoPath,
+    "tests",
+    "generated",
+    `${phaseLabel}-reference-contract.test.ts`,
+  );
+  try {
+    const existing = await readFile(contractPath, "utf8");
+    if (existing === contractTest) return contractTest;
+  } catch {
+    // Missing is expected on the first generation task for this phase.
+  }
+
+  await mkdir(dirname(contractPath), { recursive: true });
+  await writeFile(contractPath, contractTest);
+  await run(
+    "npx",
+    ["prettier", "--write", "--log-level", "warn", contractPath],
+    {
+      cwd: repoPath,
+    },
+  );
+  await run("git", ["add", "tests/generated"], { cwd: repoPath });
+  const diff = await run("git", ["diff", "--cached", "--quiet"], {
+    cwd: repoPath,
+  }).catch((error: unknown) => error as { code?: number });
+  if ("code" in diff && diff.code === 1)
+    await run("git", ["commit", "-q", "-m", `Add ${phaseLabel} UI contract`], {
+      cwd: repoPath,
+    });
+  return contractTest;
+}
+
 export async function createGenerationTask(
   pool: Pool,
   project: GeneratedProject,
@@ -129,7 +229,6 @@ export async function createGenerationTask(
   repoPath: string,
   options: GenerationTaskOptions = {},
 ): Promise<GenerationTaskResult> {
-  const repoListing = await describeRepository(repoPath);
   const work = new PostgresWorkRepository(pool);
   const contractId = randomUUID(),
     milestoneId = randomUUID();
@@ -177,6 +276,15 @@ export async function createGenerationTask(
   const phaseSourcePath = `src/generated/${phaseSlug}.ts`;
   const phaseTestPath = `tests/generated/${phaseSlug}.test.ts`;
   const phaseTestImportPath = `../../src/generated/${phaseSlug}.ts`;
+  const phaseRequirements = options.requirements ?? blueprint.requirements;
+  const immutableContract = needsUiReferenceContract(phaseRequirements)
+    ? await installUiReferenceContract(
+        repoPath,
+        phaseLabel,
+        phaseTestImportPath,
+      )
+    : null;
+  const repoListing = await describeRepository(repoPath);
   const task = await work.submit({
     contractId,
     milestoneId,
@@ -262,9 +370,19 @@ export async function createGenerationTask(
           )}.`,
           "",
           "Phase requirements:",
-          ...(options.requirements ?? blueprint.requirements).map(
-            (r) => `- ${r}`,
-          ),
+          ...phaseRequirements.map((r) => `- ${r}`),
+          ...(immutableContract === null
+            ? []
+            : [
+                "",
+                "Immutable verifier contract:",
+                "The repository already contains a generated contract test",
+                "outside your owned paths. It will be run by npm test and you",
+                "must satisfy it, but you must not edit it.",
+                "```ts",
+                immutableContract,
+                "```",
+              ]),
           "",
           "The repository currently contains exactly these files, in full.",
           "Your diff must apply to them as they are written here.",

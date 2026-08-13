@@ -57,7 +57,7 @@ export class NodeWorkspaceProvisioner {
             // they cover. Quoted, so Node expands the glob rather than the
             // shell: an unquoted glob that matches nothing is passed through
             // literally and fails confusingly.
-            test: "node --test 'tests/*.test.ts'",
+            test: "node --test 'tests/**/*.test.ts'",
           },
           devDependencies: {
             typescript: "^5.9.0",

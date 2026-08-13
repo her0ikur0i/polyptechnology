@@ -37,9 +37,20 @@ Review file:
 
 `review.html`
 
+Refero/domain-hardened review artifact in this repository:
+
+`docs/contracts/CONTRACT-018/review/deepseek-refero-ui-domain.html`
+
+The follow-up artifact applies the owner-provided Refero/Auros target:
+near-black teal surface stack (`#011d1c`, `#012624`, `#003734`),
+lavender-phosphor statistics (`#fde9ff`), instrument labels, a
+CSS-only data-orb/particle-field centerpiece, and explicit AI DevOps factory
+vocabulary. A domain guard removed biology/cultivation metaphors from the
+artifact; `bioluminescent` remains only as a visual treatment.
+
 Local review URL while the preview server is running:
 
-`http://127.0.0.1:8765/review.html`
+`http://127.0.0.1:8765/deepseek-refero-ui-domain.html`
 
 Cloudflare quick tunnel was attempted twice. Both hostnames were created, but
 returned Cloudflare-side 404 before requests reached the local preview server,
@@ -52,3 +63,18 @@ The drill runner now allows at least 60 minutes for `extreme` and `ui-extreme`
 generation tasks. The old 15-minute cap was too small for heavy UI work and
 could terminate a valid long-running provider attempt before it produced useful
 evidence.
+
+## Validation
+
+- `npm run typecheck` — passed.
+- `npm run format:check` — passed.
+- `npm test` — passed with 400 tests, 359 pass, 41 environment-gated skips.
+- Zero-skip suite with the live sequence service stopped and the documented
+  digest-pinned worker image:
+  `TEST_DATABASE_URL=... TEST_WORKER_IMAGE=postgres@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193 TEST_SCAFFOLD_GATES=enabled npm test`
+  — passed with 433 tests, 433 pass, 0 fail, 0 skipped.
+
+The first zero-skip attempt intentionally did not get counted as acceptance
+evidence because it used the mutable tag `postgres:16-alpine` and failed the
+worker planner's digest-pin gate. The passing run used the pinned image already
+documented in `README.md` and `CLAUDE.md`.

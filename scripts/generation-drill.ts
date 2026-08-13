@@ -111,7 +111,8 @@ export async function runDrill(
     | "landing"
     | "complex"
     | "extreme"
-    | "ui-extreme" = "simple",
+    | "ui-extreme"
+    | "ui-deep-extreme" = "simple",
 ): Promise<DrillReport> {
   const brief =
     depth === "deep"
@@ -122,9 +123,9 @@ export async function runDrill(
           ? COMPLEX_BRIEF
           : depth === "extreme"
             ? EXTREME_BRIEF
-            : depth === "ui-extreme"
+            : depth === "ui-extreme" || depth === "ui-deep-extreme"
               ? UI_EXTREME_BRIEF
-            : SIMPLE_BRIEF;
+              : SIMPLE_BRIEF;
   const identity = runIdentity(runLabel);
   const stages: StageReport[] = [];
   const conversations = new PostgresConversationStore(pool);
@@ -178,7 +179,10 @@ export async function runDrill(
   } catch (error) {
     projectId = deterministicProjectId(identity.conversationKey);
     conversationId = deterministicConversationId(identity.conversationKey);
-    const existing = await conversations.conversation(projectId, conversationId);
+    const existing = await conversations.conversation(
+      projectId,
+      conversationId,
+    );
     if (existing === undefined) {
       record({ name: "conversation", state: "failed", detail: message(error) });
       remaining(1, "conversation did not start");
@@ -224,7 +228,9 @@ export async function runDrill(
     record({
       name: "brief",
       state: "passed",
-      ...(existingBrief === undefined ? {} : { detail: "resumed existing brief" }),
+      ...(existingBrief === undefined
+        ? {}
+        : { detail: "resumed existing brief" }),
       facts: { ordinal: String(sent.ordinal) },
     });
   } catch (error) {
@@ -361,8 +367,8 @@ export async function runDrill(
         alreadyTranslated && existing.rows[0] === undefined
           ? "resumed after translation"
           : existing.rows[0] === undefined
-          ? "queued; execution is the supervisor's"
-          : "resumed existing translation task",
+            ? "queued; execution is the supervisor's"
+            : "resumed existing translation task",
       facts: { taskId: queued.taskId, projectState: project.state },
     });
   } catch (error) {
@@ -437,7 +443,7 @@ export async function runDrill(
     const blueprint = parseBlueprint(versionRow.rows[0]!.document);
     const repoPath = join(workspacesRoot, projectId, "repo");
 
-    const phases = generationPhases(blueprint.requirements);
+    const phases = generationPhases(blueprint.requirements, depth);
     const taskIds: string[] = [];
     const walkedByPhase: string[] = [];
     const existingTasks = await pool.query<{ task_id: string }>(
@@ -586,11 +592,23 @@ async function gitOutput(
 
 function generationPhases(
   requirements: ReadonlyArray<string>,
+  depth:
+    | "simple"
+    | "deep"
+    | "landing"
+    | "complex"
+    | "extreme"
+    | "ui-extreme"
+    | "ui-deep-extreme",
 ): ReadonlyArray<ReadonlyArray<string>> {
   if (requirements.length === 0)
     return [["Keep the generated scaffold green."]];
-  if (requirements.some((requirement) => requirement === "single-phase-ui-review"))
-    return [requirements.filter((requirement) => requirement !== "single-phase-ui-review")];
+  if (depth === "ui-extreme" || depth === "ui-deep-extreme")
+    return [
+      requirements.filter(
+        (requirement) => requirement !== "single-phase-ui-review",
+      ),
+    ];
   return requirements.map((requirement) => [requirement]);
 }
 
@@ -598,10 +616,21 @@ const STANDARD_GENERATION_TIMEOUT_MS = 900_000;
 const EXTREME_GENERATION_TIMEOUT_MS = 3_600_000;
 
 function generationTimeoutMs(
-  depth: "simple" | "deep" | "landing" | "complex" | "extreme" | "ui-extreme",
+  depth:
+    | "simple"
+    | "deep"
+    | "landing"
+    | "complex"
+    | "extreme"
+    | "ui-extreme"
+    | "ui-deep-extreme",
   phaseCount: number,
 ): number {
-  if (depth === "extreme" || depth === "ui-extreme")
+  if (
+    depth === "extreme" ||
+    depth === "ui-extreme" ||
+    depth === "ui-deep-extreme"
+  )
     return Math.max(EXTREME_GENERATION_TIMEOUT_MS, phaseCount * 600_000);
   return STANDARD_GENERATION_TIMEOUT_MS;
 }
@@ -883,12 +912,50 @@ const EXTREME_BRIEF = [
 
 const UI_EXTREME_BRIEF = [
   "Build a Node/TypeScript module called `polyp-factory-console-ui` that",
-  "renders a reviewable operator console for Polyp AI Factory. The product",
-  "reference is the existing factory workflow: an approved conversation",
-  "becomes a blueprint, then phased code generation, verification, publication,",
-  "deployment, and Telegram reporting.",
+  "renders a reviewable operator console for Polyp AI Factory. This is a",
+  "visual-quality drill, not a scaffold drill: the output must look like a",
+  "designed product screen, not AI-generated dashboard filler.",
   "",
   "single-phase-ui-review",
+  "",
+  "Product context:",
+  "- Audience: owner/operators supervising an AI DevOps factory at night,",
+  "  reading quickly under pressure.",
+  "- Workflow: an approved conversation becomes a blueprint, then phased code",
+  "  generation, verification, publication, deployment, and Telegram reporting.",
+  "- Register: product console. Design serves operational scanning; no",
+  "  marketing hero, no feature brochure, no tutorial copy.",
+  "",
+  "Style reference:",
+  "- Use the Auros Refero style reference as the concrete visual target:",
+  "  https://styles.refero.design/style/21cfe0c1-778d-4613-9f47-a5718eb929b3",
+  "- Also account for the second owner-provided Refero reference:",
+  "  https://styles.refero.design/style/e5f5f8cf-e68d-4ed1-bbf5-6b67569af648",
+  "- Apply Impeccable anti-slop discipline: clear product context, strong",
+  "  hierarchy, restrained color, no generic SaaS gradients, no nested cards,",
+  "  no icon tiles above headings, no lorem ipsum, no decorative blobs, no",
+  "  mushy 'AI productivity' copy.",
+  "",
+  "Auros-derived visual system:",
+  "- Canvas: near-black teal, using a strict surface stack of `#011d1c`,",
+  "  `#012624`, and `#003734`. Do not introduce blue/slate/gray surfaces.",
+  "- Text: cool off-white `#edfffe` and white for headings; muted silver",
+  "  `#bbc7c6` for secondary copy. Use `#fde9ff` only for large statistics or",
+  "  exceptional emphasis.",
+  "- Accent: a bioluminescent teal-to-mist-to-lavender gradient, reserved for",
+  "  one primary action, thin progress accents, and small instrument marks.",
+  "- Typography: one geometric sans family stack such as `Inter`, `DM Sans`,",
+  "  `Satoshi`, `system-ui`; headings at weight 500, body at 400. Use uppercase",
+  "  tracked labels for instrumentation. Do not use bold-heavy SaaS headings.",
+  "- Shape: 16px radius for major surface panels, 6px for controls and small",
+  "  instrument chips. No drop shadows; hierarchy comes from surface color and",
+  "  layout density.",
+  "- Visual asset: create a CSS-only bioluminescent data-orb / particle-field",
+  "  centerpiece inside the console. It must feel like live factory telemetry,",
+  "  not a random background decoration.",
+  "- Domain guard: Polyp is an AI DevOps/software factory. Do not use biology,",
+  "  cultivation, laboratory, nutrient, biomass, airlock, or growth-protocol",
+  "  metaphors. `bioluminescent` describes the visual treatment only.",
   "",
   "Requirements:",
   "- Export exactly `renderPolypFactoryConsole(): string` from the generated",
@@ -896,10 +963,10 @@ const UI_EXTREME_BRIEF = [
   "  string and starts with `<!doctype html>`.",
   "- Use one embedded `<style>` block in the `<head>`. Do not use external",
   "  scripts, fonts, stylesheets, images, SVG files, or runtime dependencies.",
-  "- The first viewport is the actual operator console, not a marketing hero.",
-  "  It must show a left rail, a compact top status bar, an active project",
-  "  header, model routing, budget state, current run state, and deployment",
-  "  state without hiding the main workflow below the fold.",
+  "- The first viewport is the actual operator console, not a marketing hero:",
+  "  collapsed left rail, compact top status bar, active project command strip,",
+  "  model routing, budget state, current run state, and deployment state all",
+  "  visible without burying the main workflow.",
   "- Include a generation phase timeline with at least 9 phases. Each phase",
   "  row or tile shows phase id, status, selected model, attempt count, changed",
   "  lines, and a short repair/failure note. Include the real diagnostic case",
@@ -910,9 +977,13 @@ const UI_EXTREME_BRIEF = [
   "  drill system: blueprint translation, generation phase, verifier,",
   "  publication, commit, changed lines, route policy, fallback chain, and",
   "  notification suppression.",
-  "- Design for dense operational scanning: restrained colors, clear hierarchy,",
-  "  no nested cards, no decorative gradient blobs, no oversized hero section,",
-  "  no explanatory feature text about how to use the UI.",
+  "- Include a mini design-system strip in the UI: swatches, type labels,",
+  "  surface levels, and route-state chips. It should prove the screen is",
+  "  governed by tokens rather than improvised decoration.",
+  "- Design for dense operational scanning with cinematic craft: restrained",
+  "  color, clear hierarchy, strong alignment, calibrated spacing, instrument",
+  "  labels, and enough custom visual detail that it cannot be mistaken for a",
+  "  default AI dashboard.",
   "- Make it responsive down to 375px using CSS grid/flexbox and relative",
   "  units. The layout must not rely on fixed outer widths, and text must not",
   "  overlap controls or panels.",
@@ -922,7 +993,8 @@ const UI_EXTREME_BRIEF = [
   "- Cover this with node:test tests. Assert the returned string starts with",
   "  `<!doctype html>`, contains exactly one `<style` block, contains",
   "  `DeepSeek`, `phase-4-of-9`, `focus-visible`, `approval`, `verifier`,",
-  "  and semantic landmarks such as `<main` and `<nav`.",
+  "  `bioluminescent`, `#012624`, `#fde9ff`, and semantic landmarks such as",
+  "  `<main` and `<nav`.",
   "",
   "Stack: node runtime, no framework, no database. No dependencies.",
 ].join("\n");
@@ -956,7 +1028,9 @@ if (invoked) {
             ? "extreme"
             : process.argv[3] === "ui-extreme"
               ? "ui-extreme"
-            : "simple";
+              : process.argv[3] === "ui-deep-extreme"
+                ? "ui-deep-extreme"
+                : "simple";
   if (databaseUrl === undefined) {
     console.error("DATABASE_URL is required");
     process.exitCode = 1;

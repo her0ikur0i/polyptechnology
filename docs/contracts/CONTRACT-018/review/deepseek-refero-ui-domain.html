@@ -1,0 +1,826 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Polyp Factory Console</title>
+    <style>
+      :root {
+        --bg: #011d1c;
+        --panel: #012624;
+        --panel2: #003734;
+        --accent: #fde9ff;
+        --accent2: #edfffe;
+        --muted: rgba(237, 255, 254, 0.72);
+        --line: rgba(237, 255, 254, 0.18);
+        --red: #ff6b6b;
+        --amber: #ffd166;
+        --green: #06d6a0;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg);
+        color: var(--accent2);
+        font:
+          14px/1.45 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Consolas,
+          monospace;
+      }
+      a,
+      button {
+        color: inherit;
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+        background: var(--panel2);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 0.4em 0.6em;
+      }
+      button:hover {
+        border-color: var(--accent);
+      }
+      button:focus-visible,
+      a:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .console {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        min-height: 100vh;
+      }
+      .topbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem 1rem;
+        padding: 0.55rem 1.2rem;
+        border-bottom: 1px solid var(--line);
+        background: rgba(1, 29, 28, 0.92);
+        position: sticky;
+        top: 0;
+        z-index: 10;
+      }
+      .topbar .title {
+        font-weight: 700;
+        font-size: 1.1rem;
+        letter-spacing: 0.04em;
+        color: var(--accent);
+      }
+      .status-pill {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 0.18em 0.6em;
+        color: var(--muted);
+      }
+      .status-pill.live {
+        color: #8effe1;
+        border-color: var(--green);
+      }
+      .status-pill.warn {
+        color: var(--amber);
+      }
+      .clock {
+        margin-left: auto;
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+      .grid {
+        display: grid;
+        gap: 0.75rem;
+        padding: 1rem 1.2rem 2rem;
+        grid-template-columns: repeat(12, 1fr);
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0.7rem 0.8rem;
+        min-width: 0;
+      }
+      .panel h2,
+      .panel h3 {
+        margin: 0 0 0.5rem;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--accent);
+      }
+      .rail {
+        grid-column: span 12;
+        display: flex;
+        gap: 0.4rem;
+        flex-wrap: wrap;
+        align-items: center;
+        background: rgba(0, 38, 36, 0.6);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 0.4rem;
+      }
+      .rail span {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+      }
+      .rail button {
+        font-size: 0.72rem;
+      }
+      .rail .collapse {
+        margin-left: auto;
+        border: none;
+        background: transparent;
+        padding: 0.2rem 0.4rem;
+        color: var(--muted);
+      }
+      .strip {
+        grid-column: span 12;
+      }
+      .strip .command {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        align-items: center;
+        padding: 0.2rem 0;
+      }
+      .strip input {
+        flex: 1 1 220px;
+        min-width: 0;
+        background: var(--panel2);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        color: var(--accent2);
+        padding: 0.4em 0.6em;
+        font: inherit;
+      }
+      .strip input:focus-visible {
+        outline: 2px solid var(--accent);
+      }
+      .route {
+        grid-column: span 12;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .route .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+      .route .chips li {
+        font-size: 0.7rem;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 0.2em 0.6em;
+        background: var(--panel2);
+        color: var(--accent2);
+      }
+      .route .chips li.rejected {
+        color: var(--red);
+        border-color: var(--red);
+      }
+      .route .chips li.accepted {
+        color: #8effe1;
+        border-color: var(--green);
+      }
+      .route .route-note {
+        font-size: 0.78rem;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .split {
+        grid-column: span 12;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+      .split .panel {
+        flex: 1 1 280px;
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+        gap: 0.4rem;
+      }
+      .metric {
+        background: var(--panel2);
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        padding: 0.4rem 0.5rem;
+      }
+      .metric b {
+        display: block;
+        font-size: 0.66rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }
+      .metric span {
+        font-size: 1.05rem;
+        color: var(--accent2);
+      }
+      .bar {
+        height: 6px;
+        background: var(--panel2);
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      .bar i {
+        display: block;
+        height: 100%;
+        background: var(--green);
+      }
+      .timeline {
+        grid-column: span 12;
+        display: flex;
+        flex-direction: column;
+        gap: 0.55rem;
+      }
+      .phase {
+        display: flex;
+        gap: 0.5rem;
+        align-items: flex-start;
+        border-left: 2px solid var(--line);
+        padding-left: 0.6rem;
+      }
+      .phase .num {
+        color: var(--accent);
+        font-size: 0.75rem;
+        white-space: nowrap;
+      }
+      .phase .detail {
+        font-size: 0.78rem;
+        color: var(--muted);
+        line-height: 1.45;
+      }
+      .phase .detail b {
+        color: var(--accent2);
+      }
+      .phase .verdict {
+        font-size: 0.68rem;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 0.14em 0.45em;
+        white-space: nowrap;
+      }
+      .verdict.accepted {
+        color: #8effe1;
+        border-color: var(--green);
+      }
+      .verdict.rejected {
+        color: var(--red);
+        border-color: var(--red);
+      }
+      .verdict.warn {
+        color: var(--amber);
+        border-color: var(--amber);
+      }
+      .approvals,
+      .evidence,
+      .artifact,
+      .telemetry,
+      .telegram,
+      .designsystem {
+        grid-column: span 12;
+      }
+      .approval-item,
+      .evidence-item,
+      .artifact-item,
+      .telemetry-item,
+      .telegram-item {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.5rem;
+        align-items: center;
+        padding: 0.45rem 0;
+        border-bottom: 1px solid var(--line);
+        font-size: 0.78rem;
+      }
+      .approval-item:last-child,
+      .evidence-item:last-child,
+      .artifact-item:last-child,
+      .telemetry-item:last-child,
+      .telegram-item:last-child {
+        border-bottom: none;
+      }
+      .approval-item .who {
+        color: var(--accent2);
+      }
+      .approval-item .role {
+        color: var(--muted);
+        font-size: 0.7rem;
+      }
+      .approval-item .stamp {
+        font-size: 0.68rem;
+        padding: 0.15em 0.5em;
+        border-radius: 4px;
+      }
+      .stamp.ok {
+        color: #8effe1;
+        border: 1px solid var(--green);
+      }
+      .stamp.pending {
+        color: var(--amber);
+        border: 1px solid var(--amber);
+      }
+      .evidence-item .label {
+        color: var(--muted);
+      }
+      .evidence-item .value {
+        color: var(--accent2);
+      }
+      .artifact-item {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .artifact-item .meta {
+        display: flex;
+        gap: 0.5rem;
+        color: var(--muted);
+        font-size: 0.68rem;
+      }
+      .artifact-item .file {
+        color: var(--accent2);
+      }
+      .artifact-item .preview {
+        width: 100%;
+        background: var(--panel2);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 0.4rem 0.6rem;
+        font-size: 0.68rem;
+        color: var(--muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .telemetry-item .reading {
+        color: var(--accent2);
+      }
+      .telegram-item .sig {
+        font-size: 0.68rem;
+        color: var(--muted);
+      }
+      .telegram-item .drill {
+        color: #8effe1;
+      }
+      .swatches {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      .swatch {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.68rem;
+        color: var(--muted);
+      }
+      .swatch i {
+        width: 1.1em;
+        height: 1.1em;
+        border-radius: 3px;
+        border: 1px solid var(--line);
+      }
+      .type-labels span,
+      .surfaces label {
+        display: inline-block;
+        font-size: 0.68rem;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 0.2em 0.5em;
+        margin: 0.2em 0.3em 0 0;
+        background: var(--panel2);
+        color: var(--accent2);
+      }
+      .route-chips {
+        display: flex;
+        gap: 0.4rem;
+        flex-wrap: wrap;
+        list-style: none;
+        padding: 0;
+        margin: 0.4rem 0 0;
+      }
+      .route-chips li {
+        font-size: 0.68rem;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 0.2em 0.6em;
+      }
+      .route-chips li.primary {
+        border-color: var(--green);
+        color: #8effe1;
+      }
+      .route-chips li.fallback {
+        border-color: var(--amber);
+        color: var(--amber);
+      }
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+        border: 0;
+      }
+      @media (min-width: 600px) {
+        .approvals,
+        .evidence {
+          grid-column: span 6;
+        }
+        .artifact {
+          grid-column: span 12;
+        }
+        .telemetry,
+        .telegram {
+          grid-column: span 6;
+        }
+        .designsystem {
+          grid-column: span 12;
+        }
+        .manifest {
+          grid-column: span 12;
+        }
+      }
+      @media (min-width: 1100px) {
+        .approvals,
+        .evidence,
+        .artifact {
+          grid-column: span 4;
+        }
+        .telemetry {
+          grid-column: span 6;
+        }
+        .telegram {
+          grid-column: span 6;
+        }
+        .manifest {
+          grid-column: span 12;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="console">
+      <header class="topbar">
+        <div class="title">POLYP FACTORY</div>
+        <span class="status-pill live">RUN LIVE</span>
+        <span class="status-pill warn">REVIEW PENDING</span>
+        <span class="status-pill">9 PHASES</span>
+        <button type="button" aria-label="Open run menu">RUN▾</button>
+        <span class="clock">UTC 02:14:36</span>
+      </header>
+
+      <nav aria-label="Collapsed left rail" class="rail">
+        <button type="button">MODELS</button>
+        <button type="button">ROUTES</button>
+        <button type="button">BUDGET</button>
+        <button type="button">LOGS</button>
+        <button type="button">APPROVALS</button>
+        <button type="button">SETTINGS</button>
+        <span>RAIL COLLAPSED</span>
+        <button type="button" class="collapse" aria-label="Expand rail">
+          ▸
+        </button>
+      </nav>
+
+      <main class="grid">
+        <section aria-labelledby="cmd-strip-heading" class="panel strip">
+          <h2 id="cmd-strip-heading">Command strip</h2>
+          <div class="command">
+            <label for="cmd-input" class="visually-hidden">Command input</label>
+            <input
+              id="cmd-input"
+              type="text"
+              placeholder="run /inspect /approve ..."
+              aria-describedby="cmd-hint"
+            />
+            <button type="button">RUN</button>
+            <button type="button">APPROVE</button>
+            <button type="button">PAUSE</button>
+            <span id="cmd-hint" class="visually-hidden"
+              >Enter a command then run it</span
+            >
+          </div>
+        </section>
+
+        <section aria-labelledby="route-heading" class="panel route">
+          <h2 id="route-heading">Model routing &amp; fallback chain</h2>
+          <ul class="chips">
+            <li>deepseek-v4-flash <b>rejected</b></li>
+            <li>deepseek-v4-flash <b>rejected</b></li>
+            <li class="accepted">deepseek-v4-pro <b>accepted</b></li>
+            <li>gpt-4.1-lite</li>
+            <li>claude-3.7-sonnet</li>
+            <li>qwen-max</li>
+          </ul>
+          <div class="route-note">
+            <b>Route policy:</b> fallback chain: deepseek-v4-flash →
+            deepseek-v4-flash → deepseek-v4-pro (accepted). Attempt 1 and
+            attempt 2 rejected for blueprint translation drift; Pro accepted at
+            attempt 3.
+          </div>
+          <div class="metrics">
+            <div class="metric">
+              <b>Token budget</b><span>62,400 / 100k</span>
+            </div>
+            <div class="metric"><b>Cost</b><span>$1.84</span></div>
+            <div class="metric"><b>Error budget</b><span>38%</span></div>
+            <div class="metric"><b>Fallbacks used</b><span>2</span></div>
+          </div>
+          <div class="bar" aria-hidden="true"><i style="width: 62.4%"></i></div>
+          <p class="visually-hidden">Budget utilization 62.4 percent</p>
+        </section>
+
+        <section aria-labelledby="run-heading" class="panel split">
+          <div class="panel">
+            <h3 id="run-heading">Run state</h3>
+            <div class="metrics">
+              <div class="metric"><b>Status</b><span>ACTIVE</span></div>
+              <div class="metric"><b>Attempts</b><span>3</span></div>
+              <div class="metric"><b>Changed lines</b><span>+286</span></div>
+              <div class="metric"><b>Queue</b><span>4</span></div>
+            </div>
+          </div>
+          <div class="panel">
+            <h3 id="deploy-heading">Deployment state</h3>
+            <div class="metrics">
+              <div class="metric"><b>Revision</b><span>r-042</span></div>
+              <div class="metric"><b>Target</b><span>edge-a</span></div>
+              <div class="metric"><b>Health</b><span>98.2%</span></div>
+              <div class="metric"><b>Status</b><span>DRY</span></div>
+            </div>
+          </div>
+        </section>
+
+        <section aria-labelledby="timeline-heading" class="panel timeline">
+          <h2 id="timeline-heading">Phase timeline</h2>
+          <div class="phase">
+            <span class="num">phase-1-of-9</span
+            ><span class="verdict accepted">accepted</span>
+            <div class="detail">
+              <b>Blueprint translation</b> — accepted; verifier contract
+              matched.
+            </div>
+          </div>
+          <div class="phase">
+            <span class="num">phase-2-of-9</span
+            ><span class="verdict accepted">accepted</span>
+            <div class="detail">
+              <b>Scaffold wiring</b> — node:test runner green; strict types
+              green.
+            </div>
+          </div>
+          <div class="phase">
+            <span class="num">phase-3-of-9</span
+            ><span class="verdict warn">partial</span>
+            <div class="detail">
+              <b>Layout audit</b> — responsive grid; 375px pass; labels pending.
+            </div>
+          </div>
+          <div class="phase">
+            <span class="num">phase-4-of-9</span
+            ><span class="verdict rejected">rejected ×2</span>
+            <div class="detail">
+              <b>DeepSeek V4 Flash</b> — rejected twice (attempt 1, attempt
+              2)<br />
+              <span class="verdict rejected">attempt</span>
+              <span class="verdict rejected">attempt</span>
+              <b>Pro accepted</b> —
+              <span class="verdict accepted">accepted</span> at attempt 3.<br />
+              Reading: <b>changed lines</b> +286; failure: route drift; repair
+              accepted by Pro.
+            </div>
+          </div>
+          <div class="phase">
+            <span class="num">phase-5-of-9</span
+            ><span class="verdict accepted">accepted</span>
+            <div class="detail">
+              <b>Approvals wiring</b> — four sign-off gates green.
+            </div>
+          </div>
+          <div class="phase">
+            <span class="num">phase-6-of-9</span
+            ><span class="verdict accepted">accepted</span>
+            <div class="detail">
+              <b>Evidence bundles</b> — checksums verified, proofs stamped.
+            </div>
+          </div>
+          <div class="phase">
+            <span class="num">phase-7-of-9</span
+            ><span class="verdict accepted">accepted</span>
+            <div class="detail">
+              <b>Artifact preview</b> — preview pane hydrated; no bloat.
+            </div>
+          </div>
+          <div class="phase">
+            <span class="num">phase-8-of-9</span
+            ><span class="verdict warn">pending</span>
+            <div class="detail">
+              <b>Telemetry</b> — orb streams; sample latency 0.9ms.
+            </div>
+          </div>
+          <div class="phase">
+            <span class="num">phase-9-of-9</span
+            ><span class="verdict accepted">accepted</span>
+            <div class="detail">
+              <b>Publication signal</b> — Telegram sent; delivery confirmed.
+            </div>
+          </div>
+        </section>
+
+        <section aria-labelledby="approvals-heading" class="panel approvals">
+          <h2 id="approvals-heading">Approvals</h2>
+          <div class="approval-item">
+            <span class="who">marin.cui</span
+            ><span class="role">route owner</span
+            ><span class="stamp ok">APPROVED</span>
+          </div>
+          <div class="approval-item">
+            <span class="who">alan.rin</span><span class="role">verifier</span
+            ><span class="stamp ok">APPROVED</span>
+          </div>
+          <div class="approval-item">
+            <span class="who">jae.lee</span><span class="role">finance</span
+            ><span class="stamp pending">PENDING</span>
+          </div>
+          <div class="approval-item">
+            <span class="who">nova.sys</span><span class="role">automation</span
+            ><span class="stamp ok">APPROVED</span>
+          </div>
+          <button type="button">Open approval drill</button>
+        </section>
+
+        <section aria-labelledby="evidence-heading" class="panel evidence">
+          <h2 id="evidence-heading">Evidence</h2>
+          <div class="evidence-item">
+            <span class="label">Verifier contract</span
+            ><span class="value">pass</span>
+          </div>
+          <div class="evidence-item">
+            <span class="label">Typecheck</span
+            ><span class="value">pass (strict)</span>
+          </div>
+          <div class="evidence-item">
+            <span class="label">Format:check</span
+            ><span class="value">pass</span>
+          </div>
+          <div class="evidence-item">
+            <span class="label">Test count</span
+            ><span class="value">10/10</span>
+          </div>
+          <div class="evidence-item">
+            <span class="label">Changed lines</span
+            ><span class="value">+286</span>
+          </div>
+          <button type="button">Open evidence drill</button>
+        </section>
+
+        <section aria-labelledby="artifact-heading" class="panel artifact">
+          <h2 id="artifact-heading">Artifact preview</h2>
+          <div class="artifact-item">
+            <span class="file">route-chain.json</span>
+            <span class="meta">revision r-042 · 18.4 KB · checksum 9f2a</span>
+            <span class="preview"
+              >{"chain":["deepseek-v4-flash","deepseek-v4-pro"],"accepted":"pro","attempts":3}</span
+            >
+          </div>
+          <div class="artifact-item">
+            <span class="file">layout.css</span>
+            <span class="meta">revision r-043 · 6.1 KB · checksum c31e</span>
+            <span class="preview"
+              >grid-template-columns: repeat(12, 1fr); min-height: 100vh</span
+            >
+          </div>
+          <button type="button">Open artifact drill</button>
+        </section>
+
+        <section aria-labelledby="telemetry-heading" class="panel telemetry">
+          <h2 id="telemetry-heading">Telemetry</h2>
+          <div class="telemetry-item">
+            <span class="label">data-orb</span>
+            <span class="reading">stream 0.9ms</span>
+          </div>
+          <div class="telemetry-item">
+            <span class="label">particle-field</span>
+            <span class="reading">212 nodes</span>
+          </div>
+          <div class="telemetry-item">
+            <span class="label">telemetry orb</span>
+            <span class="reading">latency 3.1ms</span>
+          </div>
+          <div class="telemetry-item">
+            <span class="label">Egress</span>
+            <span class="reading">1.9 MB/s</span>
+          </div>
+          <div class="telemetry-item">
+            <span class="label">Cache hit</span>
+            <span class="reading">88.0%</span>
+          </div>
+          <button type="button">Open telemetry drill</button>
+        </section>
+
+        <section aria-labelledby="telegram-heading" class="panel telegram">
+          <h2 id="telegram-heading">Telegram signal</h2>
+          <div class="telegram-item">
+            <span class="label">Channel</span
+            ><span class="sig">#polyp-deploy</span>
+          </div>
+          <div class="telegram-item">
+            <span class="label">Signal</span
+            ><span class="drill">DEPLOY-CONFIRM-042</span>
+          </div>
+          <div class="telegram-item">
+            <span class="label">Verifier</span
+            ><span class="sig">sent + ack</span>
+          </div>
+          <div class="telegram-item">
+            <span class="label">Published</span
+            ><span class="sig">02:14:31 UTC</span>
+          </div>
+          <button type="button">Open Telegram drill</button>
+        </section>
+
+        <section aria-labelledby="ds-heading" class="panel designsystem">
+          <h2 id="ds-heading">Design-system strip</h2>
+          <div class="swatches">
+            <span class="swatch"
+              ><i style="background: #011d1c"></i> #011d1c</span
+            >
+            <span class="swatch"
+              ><i style="background: #012624"></i> #012624</span
+            >
+            <span class="swatch"
+              ><i style="background: #003734"></i> #003734</span
+            >
+            <span class="swatch"
+              ><i style="background: #fde9ff"></i> #fde9ff</span
+            >
+            <span class="swatch"
+              ><i style="background: #edfffe"></i> #edfffe</span
+            >
+          </div>
+          <div class="type-labels">
+            <span>caption 0.66rem</span>
+            <span>body 0.78rem</span>
+            <span>display 1.1rem</span>
+            <span>mono</span>
+          </div>
+          <div class="surfaces">
+            <label>panel /* #012624 */</label>
+            <label>panel2 /* #003734 */</label>
+            <label>bg /* #011d1c */</label>
+          </div>
+          <ul class="route-chips">
+            <li class="primary">deepseek-v4-pro</li>
+            <li class="fallback">deepseek-v4-flash</li>
+            <li>gpt-4.1-lite</li>
+            <li>claude-3.7-sonnet</li>
+          </ul>
+        </section>
+
+        <section aria-labelledby="manifest-heading" class="panel manifest">
+          <h2 id="manifest-heading">Bioluminescent console manifest</h2>
+          <div
+            style="font-size: 0.78rem; color: var(--muted); line-height: 1.6"
+          >
+            <p>
+              Theme: bioluminescent terminal. Surfaces: #011d1c, #012624,
+              #003734. Accents: #fde9ff, #edfffe. Route chip for DeepSeek V4
+              Flash rejected twice, Pro accepted once. Verifier agreement,
+              publication and deployment state published to Telegram channel
+              #polyp-deploy. Run state ACTIVE, changed lines +286, repair marked
+              failure→fixed, budget 62.4%.
+            </p>
+          </div>
+        </section>
+      </main>
+
+      <footer aria-label="Console status">
+        <p class="visually-hidden">
+          Polyp Factory console. Repair: route drift resolved; publication
+          confirmed.
+        </p>
+      </footer>
+    </div>
+  </body>
+</html>

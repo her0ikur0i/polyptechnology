@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -98,6 +98,53 @@ test(
         `expected exactly one scaffold test to run:\n${output}`,
       );
       assert.match(output, /# fail 0\b/, `scaffold tests failed:\n${output}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "scaffold test script runs generated phase tests",
+  { skip: !enabled },
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), "scaffold-gates-generated-"));
+    try {
+      const provisioner = new NodeWorkspaceProvisioner(root);
+      const { repoPath } = await provisioner.provision(
+        "8f14e45f-ceea-4167-a5d1-8ee1c0e0a0a2",
+        blueprint,
+      );
+
+      mkdirSync(join(repoPath, "tests", "generated"), { recursive: true });
+      writeFileSync(
+        join(repoPath, "tests", "generated", "phase-contract.test.ts"),
+        [
+          'import test from "node:test";',
+          'import assert from "node:assert/strict";',
+          "",
+          'test("generated phase contract is executed", () => {',
+          "  assert.equal(1 + 1, 2);",
+          "});",
+          "",
+        ].join("\n"),
+      );
+
+      const testRun = await run("npm", ["test"], {
+        cwd: repoPath,
+        env: childEnv(),
+      });
+      const output = `${testRun.stdout}${testRun.stderr}`;
+      assert.match(
+        output,
+        /# pass 2\b/,
+        `expected scaffold and generated phase tests to run:\n${output}`,
+      );
+      assert.match(
+        output,
+        /# fail 0\b/,
+        `generated phase tests failed:\n${output}`,
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

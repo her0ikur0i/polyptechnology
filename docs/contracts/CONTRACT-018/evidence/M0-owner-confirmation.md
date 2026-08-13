@@ -63,6 +63,13 @@ Redrawn as the whole application on the confirmed palette: chat with the rail
 collapsed, the rail opened, the multi-provider model picker with routing modes
 and a stated fallback chain, Factory Live, Usage, and the System monitor.
 
+Reference links retained for implementation review:
+
+- Codex as orchestrator:
+  `https://polyp-ui-review.heroikuroi.chatgpt.site/#deployment`
+- Claude as orchestrator:
+  `https://claude.ai/code/artifact/386ec810-0571-44ea-9fe8-68c47a880ac9`
+
 **Consequence for scope, recorded rather than absorbed quietly:** three of
 these surfaces already have owners on the roadmap — 018 chat, 019 Factory Live,
 020 the shell and design system — and **three do not**: Providers & Models,

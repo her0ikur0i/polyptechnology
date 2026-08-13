@@ -1,257 +1,665 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Ledger — Review Surface</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      --void: #07101d;
-      --deep: #0d1928;
-      --surface: #122238;
-      --line: #263b54;
-      --mist: #e8eef7;
-      --silver: #8fa3ba;
-      --quiet: #71859d;
-      --iris: #9a8cff;
-      --cyan: #53d5ff;
-      --green: #45d49a;
-      --amber: #f4b95f;
-      --danger: #ff6f7f;
-      --font: "Arial Nova", "Helvetica Neue", Arial, sans-serif;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-width: 320px;
-      min-height: 100vh;
-      background: var(--void);
-      color: var(--mist);
-      font-family: var(--font);
-      font-size: 15px;
-      line-height: 1.5;
-    }
-    button, input, select { font: inherit; line-height: 1.4; }
-    button { cursor: pointer; }
-    button:focus-visible, input:focus-visible, select:focus-visible {
-      outline: 2px solid var(--cyan);
-      outline-offset: 3px;
-    }
-    .shell { min-height: 100vh; display: grid; grid-template-columns: 72px 1fr; }
-    .rail {
-      position: sticky; top: 0; height: 100vh;
-      border-right: 1px solid #17201e;
-      display: flex; flex-direction: column; align-items: center;
-      padding: 22px 0; gap: 12px;
-    }
-    .mark {
-      width: 34px; height: 34px; border-radius: 50%;
-      display: grid; place-items: center; color: #050706;
-      background: var(--cyan);
-      font-weight: 700; margin-bottom: 24px;
-    }
-    .rail button {
-      width: 40px; height: 40px; border: 0; border-radius: 6px;
-      background: transparent; color: var(--quiet); font-size: 17px;
-    }
-    .rail button.active { background: var(--surface); color: var(--mist); }
-    .rail .placeholder { width: 40px; height: 40px; display: grid; place-items: center; color: var(--quiet); font-size: 17px; }
-    .rail .bottom { margin-top: auto; }
-    main { padding: 28px clamp(24px, 5vw, 80px) 72px; max-width: 1500px; width: 100%; margin: auto; }
-    .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 72px; }
-    .eyebrow { color: var(--silver); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; }
-    .status { display: flex; gap: 9px; align-items: center; color: var(--silver); font-size: 13px; }
-    .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
-    .hero { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(250px, .7fr); gap: 64px; align-items: end; }
-    h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp(56px, 8vw, 118px); line-height: .9; letter-spacing: -.035em; font-weight: 400; }
-    .hero-copy { color: var(--silver); max-width: 470px; margin: 0 0 8px; font-size: 18px; font-weight: 300; }
-    .summary { margin-top: 70px; display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-    .metric { padding: 28px 24px 30px 0; }
-    .metric + .metric { border-left: 1px solid var(--line); padding-left: 24px; }
-    .metric strong { display: block; font-size: clamp(28px, 3vw, 44px); font-weight: 400; letter-spacing: -.04em; }
-    .metric span { color: var(--quiet); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
-    .workspace { margin-top: 76px; display: grid; grid-template-columns: minmax(300px, .82fr) minmax(420px, 1.5fr); gap: 64px; }
-    h2 { margin: 0 0 10px; font-size: 31px; line-height: 1.3; font-weight: 400; letter-spacing: -.035em; }
-    .section-intro { color: var(--silver); margin: 0 0 30px; max-width: 530px; line-height: 1.55; }
-    form { display: grid; gap: 18px; }
-    label { display: grid; gap: 7px; color: var(--silver); font-size: 12px; }
-    input, select {
-      width: 100%; border: 1px solid var(--line); border-radius: 6px;
-      background: var(--deep); color: var(--mist); padding: 13px 14px;
-    }
-    .posting { display: grid; grid-template-columns: 1.6fr 1fr 1fr 34px; gap: 8px; align-items: end; }
-    .remove { border: 0; background: transparent; color: var(--quiet); height: 44px; font-size: 20px; }
-    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
-    .primary, .secondary { border-radius: 6px; padding: 12px 18px; border: 1px solid transparent; }
-    .primary { background: var(--cyan); color: var(--void); font-weight: 700; }
-    .secondary { border-color: var(--line); background: transparent; color: var(--mist); }
-    .error { color: var(--danger); min-height: 23px; margin: 2px 0 0; }
-    .table-wrap { overflow-x: auto; border-top: 1px solid var(--line); padding-top: 8px; }
-    table { width: 100%; border-collapse: collapse; min-width: 560px; }
-    th { color: var(--quiet); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; font-weight: 400; text-align: left; padding: 13px 8px; }
-    td { border-top: 1px solid #172b28; padding: 18px 8px; }
-    td.amount { text-align: right; font-variant-numeric: tabular-nums; }
-    .type { color: var(--silver); text-transform: capitalize; }
-    .positive { color: var(--cyan); }
-    .entry-stream { margin-top: 55px; }
-    .entry { display: grid; grid-template-columns: 110px 1fr auto; gap: 22px; padding: 18px 0; border-top: 1px solid #172b28; align-items: baseline; }
-    .entry time, .entry .detail { color: var(--silver); }
-    .entry .value { font-variant-numeric: tabular-nums; }
-    .empty { padding: 28px 0; color: var(--quiet); border-top: 1px solid #172b28; }
-    footer { margin-top: 84px; padding-top: 22px; border-top: 1px solid var(--line); color: var(--quiet); display: flex; justify-content: space-between; gap: 20px; font-size: 12px; line-height: 1.5; }
-    @media (max-width: 920px) {
-      .hero, .workspace { grid-template-columns: 1fr; }
-      .topbar { margin-bottom: 45px; }
-      .summary { grid-template-columns: repeat(2, 1fr); }
-      .metric:nth-child(3) { border-left: 0; }
-      .workspace { gap: 58px; }
-    }
-    @media (max-width: 580px) {
-      .shell { grid-template-columns: 1fr; }
-      .rail { position: static; width: 100%; height: 58px; flex-direction: row; padding: 8px 14px; border-right: 0; border-bottom: 1px solid #17201e; }
-      .mark { margin: 0 auto 0 0; }
-      .rail .bottom { margin: 0 0 0 auto; }
-      main { padding: 25px 18px 50px; }
-      .hero { gap: 30px; }
-      .summary { margin-top: 44px; }
-      .posting { grid-template-columns: 1fr 1fr 34px; }
-      .posting label:first-child { grid-column: 1 / -1; }
-      .entry { grid-template-columns: 1fr auto; }
-      .entry .detail { grid-column: 1 / -1; }
-      footer { flex-direction: column; }
-    }
-  </style>
-</head>
-<body>
-  <div class="shell">
-    <nav class="rail" aria-label="Primary">
-      <div class="mark" aria-label="Polyp">P</div>
-      <button class="active" aria-label="Ledger" title="Ledger">⌁</button>
-      <span class="placeholder" aria-hidden="true" title="Reports — not part of this review">◫</span>
-      <span class="placeholder" aria-hidden="true" title="Accounts — not part of this review">◎</span>
-      <span class="placeholder bottom" aria-hidden="true" title="Settings — not part of this review">⚙</span>
-    </nav>
-    <main>
-      <header class="topbar">
-        <div class="eyebrow">Polyp / Finance Operations</div>
-        <div class="status">Ledger balanced</div>
-      </header>
-      <section class="hero">
-        <h1>Every movement,<br>accounted for.</h1>
-        <p class="hero-copy">A working surface over the final factory drill: accounts feed the journal, the journal updates immutable balances, and reports derive the signed trial balance.</p>
-      </section>
-      <section class="summary" aria-label="Ledger summary">
-        <div class="metric"><strong id="assets">$0.00</strong><span>Assets</span></div>
-        <div class="metric"><strong id="liabilities">$0.00</strong><span>Liabilities</span></div>
-        <div class="metric"><strong id="equity">$0.00</strong><span>Equity + revenue</span></div>
-        <div class="metric"><strong id="entries">0</strong><span>Journal entries</span></div>
-      </section>
-      <section class="workspace">
-        <div>
-          <h2>Record a movement</h2>
-          <p class="section-intro">Amounts use integer cents. Debit and credit totals must agree before the ledger accepts the entry.</p>
-          <form id="entry-form">
-            <label>Date<input id="date" type="date" required></label>
-            <div id="postings"></div>
-            <div class="actions">
-              <button class="secondary" id="add-posting" type="button">Add posting</button>
-              <button class="primary" type="submit">Post entry</button>
-            </div>
-            <p class="error" id="error" role="alert"></p>
-          </form>
-        </div>
-        <div>
-          <h2>Trial balance</h2>
-          <p class="section-intro">Signed balances follow account type: debit-positive for assets and expenses; credit-positive for liabilities, equity, and revenue.</p>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Account</th><th>Type</th><th style="text-align:right">Balance</th></tr></thead>
-              <tbody id="trial-balance"></tbody>
-            </table>
-          </div>
-          <div class="entry-stream">
-            <div class="eyebrow">Journal</div>
-            <div id="entry-list"></div>
-          </div>
-        </div>
-      </section>
-      <footer><span>Review artifact · derived from the verified 20:50 correlated-system drill</span><span>No framework · no database · local session only</span></footer>
-    </main>
-  </div>
-  <script>
-    const accountTypes = new Set(["asset", "liability", "equity", "revenue", "expense"]);
-    const createAccount = (id, name, type) => {
-      const cleaned = name.trim();
-      if (!cleaned) throw new Error("Account name cannot be empty.");
-      if (!accountTypes.has(type)) throw new Error("Unknown account type.");
-      return Object.freeze({ id, name: cleaned, type });
-    };
-    const accounts = [
-      createAccount("cash", "Cash", "asset"),
-      createAccount("receivable", "Accounts receivable", "asset"),
-      createAccount("payable", "Accounts payable", "liability"),
-      createAccount("capital", "Owner capital", "equity"),
-      createAccount("revenue", "Service revenue", "revenue"),
-      createAccount("expense", "Operating expense", "expense")
-    ];
-    let ledger = Object.freeze({ entries: Object.freeze([]), balances: Object.freeze({}) });
-    function postEntry(current, entry) {
-      if (!(entry.date instanceof Date) || Number.isNaN(entry.date.valueOf())) throw new Error("Choose a valid date.");
-      if (!Array.isArray(entry.postings) || entry.postings.length < 2) throw new Error("An entry needs at least two postings.");
-      let debit = 0, credit = 0;
-      for (const posting of entry.postings) {
-        if (!Number.isSafeInteger(posting.debit) || !Number.isSafeInteger(posting.credit) || posting.debit < 0 || posting.credit < 0) throw new Error("Amounts must be non-negative whole cents.");
-        if ((posting.debit === 0) === (posting.credit === 0)) throw new Error("Each posting needs either a debit or a credit.");
-        debit += posting.debit; credit += posting.credit;
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ledger — Review Surface</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --void: #07101d;
+        --deep: #0d1928;
+        --surface: #122238;
+        --line: #263b54;
+        --mist: #e8eef7;
+        --silver: #8fa3ba;
+        --quiet: #71859d;
+        --iris: #9a8cff;
+        --cyan: #53d5ff;
+        --green: #45d49a;
+        --amber: #f4b95f;
+        --danger: #ff6f7f;
+        --font: "Arial Nova", "Helvetica Neue", Arial, sans-serif;
       }
-      if (!Number.isSafeInteger(debit) || !Number.isSafeInteger(credit)) throw new Error("Entry totals exceed the safe range.");
-      if (debit !== credit) throw new Error(`Debits and credits differ by ${money(Math.abs(debit - credit))}.`);
-      const balances = { ...current.balances };
-      for (const p of entry.postings) balances[p.account.id] = (balances[p.account.id] ?? 0) + p.debit - p.credit;
-      const frozenEntry = Object.freeze({ date: new Date(entry.date), postings: Object.freeze(entry.postings.map(Object.freeze)) });
-      return Object.freeze({ entries: Object.freeze([...current.entries, frozenEntry]), balances: Object.freeze(balances) });
-    }
-    function trialBalance() {
-      return accounts.map(account => ({ account, balance: ["asset", "expense"].includes(account.type) ? (ledger.balances[account.id] ?? 0) : -(ledger.balances[account.id] ?? 0) }));
-    }
-    const money = cents => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
-    const esc = value => String(value).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
-    function postingRow() {
-      const div = document.createElement("div"); div.className = "posting";
-      div.innerHTML = `<label>Account<select class="account">${accounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join("")}</select></label><label>Debit<input class="debit" inputmode="decimal" placeholder="0.00"></label><label>Credit<input class="credit" inputmode="decimal" placeholder="0.00"></label><button class="remove" type="button" aria-label="Remove posting">×</button>`;
-      div.querySelector(".remove").onclick = () => { if (document.querySelectorAll(".posting").length > 2) div.remove(); };
-      return div;
-    }
-    function cents(value) {
-      if (!value.trim()) return 0;
-      if (!/^\d+(\.\d{1,2})?$/.test(value.trim())) throw new Error("Use monetary values with at most two decimals.");
-      return Math.round(Number(value) * 100);
-    }
-    function render() {
-      const rows = trialBalance();
-      document.querySelector("#trial-balance").innerHTML = rows.map(({account, balance}) => `<tr><td>${esc(account.name)}</td><td class="type">${account.type}</td><td class="amount ${balance > 0 ? "positive" : ""}">${money(balance)}</td></tr>`).join("");
-      const sum = types => rows.filter(r => types.includes(r.account.type)).reduce((n, r) => n + r.balance, 0);
-      document.querySelector("#assets").textContent = money(sum(["asset"]));
-      document.querySelector("#liabilities").textContent = money(sum(["liability"]));
-      document.querySelector("#equity").textContent = money(sum(["equity", "revenue"]));
-      document.querySelector("#entries").textContent = ledger.entries.length;
-      const list = document.querySelector("#entry-list");
-      list.innerHTML = ledger.entries.length ? [...ledger.entries].reverse().map((entry, i) => { const debit = entry.postings.reduce((n,p) => n+p.debit,0); return `<div class="entry"><time>${entry.date.toLocaleDateString()}</time><div class="detail">${entry.postings.map(p => esc(p.account.name)).join(" ↔ ")}</div><div class="value">${money(debit)}</div></div>`; }).join("") : `<div class="empty">No movements recorded yet.</div>`;
-    }
-    const postings = document.querySelector("#postings"); postings.append(postingRow(), postingRow());
-    document.querySelector("#date").valueAsDate = new Date();
-    document.querySelector("#add-posting").onclick = () => postings.append(postingRow());
-    document.querySelector("#entry-form").onsubmit = event => {
-      event.preventDefault(); const error = document.querySelector("#error"); error.textContent = "";
-      try {
-        const rows = [...document.querySelectorAll(".posting")];
-        const entry = { date: new Date(`${document.querySelector("#date").value}T12:00:00`), postings: rows.map(row => ({ account: accounts.find(a => a.id === row.querySelector(".account").value), debit: cents(row.querySelector(".debit").value), credit: cents(row.querySelector(".credit").value) })) };
-        ledger = postEntry(ledger, entry); render();
-        rows.forEach(row => { row.querySelector(".debit").value = ""; row.querySelector(".credit").value = ""; });
-      } catch (e) { error.textContent = e instanceof Error ? e.message : "Could not post entry."; }
-    };
-    render();
-  </script>
-</body>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-width: 320px;
+        min-height: 100vh;
+        background: var(--void);
+        color: var(--mist);
+        font-family: var(--font);
+        font-size: 15px;
+        line-height: 1.5;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+        line-height: 1.4;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible {
+        outline: 2px solid var(--cyan);
+        outline-offset: 3px;
+      }
+      .shell {
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: 72px 1fr;
+      }
+      .rail {
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        border-right: 1px solid #17201e;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 22px 0;
+        gap: 12px;
+      }
+      .mark {
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        color: #050706;
+        background: var(--cyan);
+        font-weight: 700;
+        margin-bottom: 24px;
+      }
+      .rail button {
+        width: 40px;
+        height: 40px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--quiet);
+        font-size: 17px;
+      }
+      .rail button.active {
+        background: var(--surface);
+        color: var(--mist);
+      }
+      .rail .placeholder {
+        width: 40px;
+        height: 40px;
+        display: grid;
+        place-items: center;
+        color: var(--quiet);
+        font-size: 17px;
+      }
+      .rail .bottom {
+        margin-top: auto;
+      }
+      main {
+        padding: 28px clamp(24px, 5vw, 80px) 72px;
+        max-width: 1500px;
+        width: 100%;
+        margin: auto;
+      }
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 72px;
+      }
+      .eyebrow {
+        color: var(--silver);
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      .status {
+        display: flex;
+        gap: 9px;
+        align-items: center;
+        color: var(--silver);
+        font-size: 13px;
+      }
+      .status::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--green);
+      }
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.5fr) minmax(250px, 0.7fr);
+        gap: 64px;
+        align-items: end;
+      }
+      h1 {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: clamp(56px, 8vw, 118px);
+        line-height: 0.9;
+        letter-spacing: -0.035em;
+        font-weight: 400;
+      }
+      .hero-copy {
+        color: var(--silver);
+        max-width: 470px;
+        margin: 0 0 8px;
+        font-size: 18px;
+        font-weight: 300;
+      }
+      .summary {
+        margin-top: 70px;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+      }
+      .metric {
+        padding: 28px 24px 30px 0;
+      }
+      .metric + .metric {
+        border-left: 1px solid var(--line);
+        padding-left: 24px;
+      }
+      .metric strong {
+        display: block;
+        font-size: clamp(28px, 3vw, 44px);
+        font-weight: 400;
+        letter-spacing: -0.04em;
+      }
+      .metric span {
+        color: var(--quiet);
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      .workspace {
+        margin-top: 76px;
+        display: grid;
+        grid-template-columns: minmax(300px, 0.82fr) minmax(420px, 1.5fr);
+        gap: 64px;
+      }
+      h2 {
+        margin: 0 0 10px;
+        font-size: 31px;
+        line-height: 1.3;
+        font-weight: 400;
+        letter-spacing: -0.035em;
+      }
+      .section-intro {
+        color: var(--silver);
+        margin: 0 0 30px;
+        max-width: 530px;
+        line-height: 1.55;
+      }
+      form {
+        display: grid;
+        gap: 18px;
+      }
+      label {
+        display: grid;
+        gap: 7px;
+        color: var(--silver);
+        font-size: 12px;
+      }
+      input,
+      select {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--deep);
+        color: var(--mist);
+        padding: 13px 14px;
+      }
+      .posting {
+        display: grid;
+        grid-template-columns: 1.6fr 1fr 1fr 34px;
+        gap: 8px;
+        align-items: end;
+      }
+      .remove {
+        border: 0;
+        background: transparent;
+        color: var(--quiet);
+        height: 44px;
+        font-size: 20px;
+      }
+      .actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 4px;
+      }
+      .primary,
+      .secondary {
+        border-radius: 6px;
+        padding: 12px 18px;
+        border: 1px solid transparent;
+      }
+      .primary {
+        background: var(--cyan);
+        color: var(--void);
+        font-weight: 700;
+      }
+      .secondary {
+        border-color: var(--line);
+        background: transparent;
+        color: var(--mist);
+      }
+      .error {
+        color: var(--danger);
+        min-height: 23px;
+        margin: 2px 0 0;
+      }
+      .table-wrap {
+        overflow-x: auto;
+        border-top: 1px solid var(--line);
+        padding-top: 8px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 560px;
+      }
+      th {
+        color: var(--quiet);
+        font-size: 11px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        font-weight: 400;
+        text-align: left;
+        padding: 13px 8px;
+      }
+      td {
+        border-top: 1px solid #172b28;
+        padding: 18px 8px;
+      }
+      td.amount {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .type {
+        color: var(--silver);
+        text-transform: capitalize;
+      }
+      .positive {
+        color: var(--cyan);
+      }
+      .entry-stream {
+        margin-top: 55px;
+      }
+      .entry {
+        display: grid;
+        grid-template-columns: 110px 1fr auto;
+        gap: 22px;
+        padding: 18px 0;
+        border-top: 1px solid #172b28;
+        align-items: baseline;
+      }
+      .entry time,
+      .entry .detail {
+        color: var(--silver);
+      }
+      .entry .value {
+        font-variant-numeric: tabular-nums;
+      }
+      .empty {
+        padding: 28px 0;
+        color: var(--quiet);
+        border-top: 1px solid #172b28;
+      }
+      footer {
+        margin-top: 84px;
+        padding-top: 22px;
+        border-top: 1px solid var(--line);
+        color: var(--quiet);
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      @media (max-width: 920px) {
+        .hero,
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+        .topbar {
+          margin-bottom: 45px;
+        }
+        .summary {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .metric:nth-child(3) {
+          border-left: 0;
+        }
+        .workspace {
+          gap: 58px;
+        }
+      }
+      @media (max-width: 580px) {
+        .shell {
+          grid-template-columns: 1fr;
+        }
+        .rail {
+          position: static;
+          width: 100%;
+          height: 58px;
+          flex-direction: row;
+          padding: 8px 14px;
+          border-right: 0;
+          border-bottom: 1px solid #17201e;
+        }
+        .mark {
+          margin: 0 auto 0 0;
+        }
+        .rail .bottom {
+          margin: 0 0 0 auto;
+        }
+        main {
+          padding: 25px 18px 50px;
+        }
+        .hero {
+          gap: 30px;
+        }
+        .summary {
+          margin-top: 44px;
+        }
+        .posting {
+          grid-template-columns: 1fr 1fr 34px;
+        }
+        .posting label:first-child {
+          grid-column: 1 / -1;
+        }
+        .entry {
+          grid-template-columns: 1fr auto;
+        }
+        .entry .detail {
+          grid-column: 1 / -1;
+        }
+        footer {
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <nav class="rail" aria-label="Primary">
+        <div class="mark" aria-label="Polyp">P</div>
+        <button class="active" aria-label="Ledger" title="Ledger">⌁</button>
+        <span
+          class="placeholder"
+          aria-hidden="true"
+          title="Reports — not part of this review"
+          >◫</span
+        >
+        <span
+          class="placeholder"
+          aria-hidden="true"
+          title="Accounts — not part of this review"
+          >◎</span
+        >
+        <span
+          class="placeholder bottom"
+          aria-hidden="true"
+          title="Settings — not part of this review"
+          >⚙</span
+        >
+      </nav>
+      <main>
+        <header class="topbar">
+          <div class="eyebrow">Polyp / Finance Operations</div>
+          <div class="status">Ledger balanced</div>
+        </header>
+        <section class="hero">
+          <h1>Every movement,<br />accounted for.</h1>
+          <p class="hero-copy">
+            A working surface over the final factory drill: accounts feed the
+            journal, the journal updates immutable balances, and reports derive
+            the signed trial balance.
+          </p>
+        </section>
+        <section class="summary" aria-label="Ledger summary">
+          <div class="metric">
+            <strong id="assets">$0.00</strong><span>Assets</span>
+          </div>
+          <div class="metric">
+            <strong id="liabilities">$0.00</strong><span>Liabilities</span>
+          </div>
+          <div class="metric">
+            <strong id="equity">$0.00</strong><span>Equity + revenue</span>
+          </div>
+          <div class="metric">
+            <strong id="entries">0</strong><span>Journal entries</span>
+          </div>
+        </section>
+        <section class="workspace">
+          <div>
+            <h2>Record a movement</h2>
+            <p class="section-intro">
+              Amounts use integer cents. Debit and credit totals must agree
+              before the ledger accepts the entry.
+            </p>
+            <form id="entry-form">
+              <label>Date<input id="date" type="date" required /></label>
+              <div id="postings"></div>
+              <div class="actions">
+                <button class="secondary" id="add-posting" type="button">
+                  Add posting
+                </button>
+                <button class="primary" type="submit">Post entry</button>
+              </div>
+              <p class="error" id="error" role="alert"></p>
+            </form>
+          </div>
+          <div>
+            <h2>Trial balance</h2>
+            <p class="section-intro">
+              Signed balances follow account type: debit-positive for assets and
+              expenses; credit-positive for liabilities, equity, and revenue.
+            </p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Account</th>
+                    <th>Type</th>
+                    <th style="text-align: right">Balance</th>
+                  </tr>
+                </thead>
+                <tbody id="trial-balance"></tbody>
+              </table>
+            </div>
+            <div class="entry-stream">
+              <div class="eyebrow">Journal</div>
+              <div id="entry-list"></div>
+            </div>
+          </div>
+        </section>
+        <footer>
+          <span
+            >Review artifact · derived from the verified 20:50 correlated-system
+            drill</span
+          ><span>No framework · no database · local session only</span>
+        </footer>
+      </main>
+    </div>
+    <script>
+      const accountTypes = new Set([
+        "asset",
+        "liability",
+        "equity",
+        "revenue",
+        "expense",
+      ]);
+      const createAccount = (id, name, type) => {
+        const cleaned = name.trim();
+        if (!cleaned) throw new Error("Account name cannot be empty.");
+        if (!accountTypes.has(type)) throw new Error("Unknown account type.");
+        return Object.freeze({ id, name: cleaned, type });
+      };
+      const accounts = [
+        createAccount("cash", "Cash", "asset"),
+        createAccount("receivable", "Accounts receivable", "asset"),
+        createAccount("payable", "Accounts payable", "liability"),
+        createAccount("capital", "Owner capital", "equity"),
+        createAccount("revenue", "Service revenue", "revenue"),
+        createAccount("expense", "Operating expense", "expense"),
+      ];
+      let ledger = Object.freeze({
+        entries: Object.freeze([]),
+        balances: Object.freeze({}),
+      });
+      function postEntry(current, entry) {
+        if (!(entry.date instanceof Date) || Number.isNaN(entry.date.valueOf()))
+          throw new Error("Choose a valid date.");
+        if (!Array.isArray(entry.postings) || entry.postings.length < 2)
+          throw new Error("An entry needs at least two postings.");
+        let debit = 0,
+          credit = 0;
+        for (const posting of entry.postings) {
+          if (
+            !Number.isSafeInteger(posting.debit) ||
+            !Number.isSafeInteger(posting.credit) ||
+            posting.debit < 0 ||
+            posting.credit < 0
+          )
+            throw new Error("Amounts must be non-negative whole cents.");
+          if ((posting.debit === 0) === (posting.credit === 0))
+            throw new Error("Each posting needs either a debit or a credit.");
+          debit += posting.debit;
+          credit += posting.credit;
+        }
+        if (!Number.isSafeInteger(debit) || !Number.isSafeInteger(credit))
+          throw new Error("Entry totals exceed the safe range.");
+        if (debit !== credit)
+          throw new Error(
+            `Debits and credits differ by ${money(Math.abs(debit - credit))}.`,
+          );
+        const balances = { ...current.balances };
+        for (const p of entry.postings)
+          balances[p.account.id] =
+            (balances[p.account.id] ?? 0) + p.debit - p.credit;
+        const frozenEntry = Object.freeze({
+          date: new Date(entry.date),
+          postings: Object.freeze(entry.postings.map(Object.freeze)),
+        });
+        return Object.freeze({
+          entries: Object.freeze([...current.entries, frozenEntry]),
+          balances: Object.freeze(balances),
+        });
+      }
+      function trialBalance() {
+        return accounts.map((account) => ({
+          account,
+          balance: ["asset", "expense"].includes(account.type)
+            ? (ledger.balances[account.id] ?? 0)
+            : -(ledger.balances[account.id] ?? 0),
+        }));
+      }
+      const money = (cents) =>
+        new Intl.NumberFormat("en-US", {
+          style: "currency",
+          currency: "USD",
+        }).format(cents / 100);
+      const esc = (value) =>
+        String(value).replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[c],
+        );
+      function postingRow() {
+        const div = document.createElement("div");
+        div.className = "posting";
+        div.innerHTML = `<label>Account<select class="account">${accounts.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join("")}</select></label><label>Debit<input class="debit" inputmode="decimal" placeholder="0.00"></label><label>Credit<input class="credit" inputmode="decimal" placeholder="0.00"></label><button class="remove" type="button" aria-label="Remove posting">×</button>`;
+        div.querySelector(".remove").onclick = () => {
+          if (document.querySelectorAll(".posting").length > 2) div.remove();
+        };
+        return div;
+      }
+      function cents(value) {
+        if (!value.trim()) return 0;
+        if (!/^\d+(\.\d{1,2})?$/.test(value.trim()))
+          throw new Error("Use monetary values with at most two decimals.");
+        return Math.round(Number(value) * 100);
+      }
+      function render() {
+        const rows = trialBalance();
+        document.querySelector("#trial-balance").innerHTML = rows
+          .map(
+            ({ account, balance }) =>
+              `<tr><td>${esc(account.name)}</td><td class="type">${account.type}</td><td class="amount ${balance > 0 ? "positive" : ""}">${money(balance)}</td></tr>`,
+          )
+          .join("");
+        const sum = (types) =>
+          rows
+            .filter((r) => types.includes(r.account.type))
+            .reduce((n, r) => n + r.balance, 0);
+        document.querySelector("#assets").textContent = money(sum(["asset"]));
+        document.querySelector("#liabilities").textContent = money(
+          sum(["liability"]),
+        );
+        document.querySelector("#equity").textContent = money(
+          sum(["equity", "revenue"]),
+        );
+        document.querySelector("#entries").textContent = ledger.entries.length;
+        const list = document.querySelector("#entry-list");
+        list.innerHTML = ledger.entries.length
+          ? [...ledger.entries]
+              .reverse()
+              .map((entry, i) => {
+                const debit = entry.postings.reduce((n, p) => n + p.debit, 0);
+                return `<div class="entry"><time>${entry.date.toLocaleDateString()}</time><div class="detail">${entry.postings.map((p) => esc(p.account.name)).join(" ↔ ")}</div><div class="value">${money(debit)}</div></div>`;
+              })
+              .join("")
+          : `<div class="empty">No movements recorded yet.</div>`;
+      }
+      const postings = document.querySelector("#postings");
+      postings.append(postingRow(), postingRow());
+      document.querySelector("#date").valueAsDate = new Date();
+      document.querySelector("#add-posting").onclick = () =>
+        postings.append(postingRow());
+      document.querySelector("#entry-form").onsubmit = (event) => {
+        event.preventDefault();
+        const error = document.querySelector("#error");
+        error.textContent = "";
+        try {
+          const rows = [...document.querySelectorAll(".posting")];
+          const entry = {
+            date: new Date(`${document.querySelector("#date").value}T12:00:00`),
+            postings: rows.map((row) => ({
+              account: accounts.find(
+                (a) => a.id === row.querySelector(".account").value,
+              ),
+              debit: cents(row.querySelector(".debit").value),
+              credit: cents(row.querySelector(".credit").value),
+            })),
+          };
+          ledger = postEntry(ledger, entry);
+          render();
+          rows.forEach((row) => {
+            row.querySelector(".debit").value = "";
+            row.querySelector(".credit").value = "";
+          });
+        } catch (e) {
+          error.textContent =
+            e instanceof Error ? e.message : "Could not post entry.";
+        }
+      };
+      render();
+    </script>
+  </body>
 </html>

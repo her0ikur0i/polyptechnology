@@ -192,8 +192,7 @@ export class AiPatchExecutorDriver {
       // failure was 90k-118k reasoning characters and zero patch content. Use
       // the buffered completion path so patch generation behaves like Codex
       // and Claude: one final answer, then the same verifier.
-      ...(input.route.provider === "deepseek" &&
-      input.route.mode === "thinking"
+      ...(input.route.provider === "deepseek" && input.route.mode === "thinking"
         ? { onDelta: () => {} }
         : {}),
     });

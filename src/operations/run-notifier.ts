@@ -203,7 +203,10 @@ export class PostgresRunFacts {
       const name = (project.rows[0] as { display_name: string } | undefined)
         ?.display_name;
       if (name !== undefined) {
-        if (row.driver === "ai_patch_executor" && row.role === "factory-generation")
+        if (
+          row.driver === "ai_patch_executor" &&
+          row.role === "factory-generation"
+        )
           return {
             kind: "Generation phase",
             subject: phase === undefined ? name : `${name} · ${phase}`,
@@ -223,8 +226,7 @@ export class PostgresRunFacts {
       [event.taskId],
     );
     const row = spec.rows[0] as
-      | { driver: string; role: string | null; input: unknown }
-      | undefined;
+      { driver: string; role: string | null; input: unknown } | undefined;
     if (row === undefined) return true;
     const input =
       typeof row.input === "object" && row.input !== null
@@ -347,6 +349,35 @@ const REASON_TEXT: Record<string, string> = {
   empty_provider_response: "the model returned an empty answer",
 };
 
+function humanSummary(
+  description: TaskDescription,
+  event: TaskFinished,
+  category: ReportCategory,
+): string {
+  const name = description.kind.toLowerCase();
+  if (category === "success") {
+    if (description.kind === "Generation phase")
+      return event.attemptOrdinal > 1
+        ? "Summary: generation phase finished after repair; no owner action needed."
+        : "Summary: generation phase accepted on the first attempt; no owner action needed.";
+    if (description.kind === "Patch")
+      return event.attemptOrdinal > 1
+        ? "Summary: patch landed after repair and passed verification."
+        : "Summary: patch landed and passed verification.";
+    return `Summary: ${name} finished successfully.`;
+  }
+  if (category === "failure") {
+    if (description.kind === "Generation phase")
+      return "Summary: generation phase failed; inspect the rejection detail before fallback hides the cause.";
+    if (event.reason === "policy")
+      return `Summary: ${name} was blocked by routing policy before execution.`;
+    return `Summary: ${name} failed; the detail below is the source of truth.`;
+  }
+  if (category === "stopped")
+    return `Summary: ${name} stopped before completion.`;
+  return `Summary: ${name} needs attention.`;
+}
+
 export class TelegramRunNotifier implements RunNotifier {
   constructor(
     private readonly transport: TelegramTransport,
@@ -450,6 +481,10 @@ export class TelegramRunNotifier implements RunNotifier {
       }
 
       const detail: Array<{ icon?: ReportCategory; text: string }> = [];
+      detail.push({
+        icon: category,
+        text: humanSummary(description, event, category),
+      });
 
       // Attempts are worth reporting only when there was more than one. "1 of
       // 3" on every successful task is a line that has never once told the
