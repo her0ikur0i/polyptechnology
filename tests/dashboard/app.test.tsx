@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,13 +8,20 @@ import type { DashboardSnapshot } from "../../src/dashboard/types.js";
 class MockEventSource {
   static instances: MockEventSource[] = [];
   closed = false;
+  private readonly listeners = new Map<string, (event: MessageEvent) => void>();
 
   constructor(readonly url: string) {
     MockEventSource.instances.push(this);
   }
 
-  addEventListener() {
-    // The composer test keeps the stream open until Stop is clicked.
+  addEventListener(type: string, listener: (event: MessageEvent) => void) {
+    this.listeners.set(type, listener);
+  }
+
+  emit(type: string, data: unknown) {
+    this.listeners.get(type)?.({
+      data: JSON.stringify(data),
+    } as MessageEvent);
   }
 
   close() {
@@ -413,6 +420,154 @@ describe("dashboard", () => {
     expect(sentBodies[0]?.content).toContain("Need an internal CRM");
     expect(sentBodies[0]).not.toHaveProperty("model");
     expect(sentBodies[0]).not.toHaveProperty("mode");
+  });
+  it("surfaces the project generation flow from proposal through queued generation", async () => {
+    MockEventSource.instances = [];
+    vi.stubGlobal("EventSource", MockEventSource);
+    const projectId = "00000000-0000-4000-8000-000000000606";
+    const serverMessages: Array<{
+      id: string;
+      conversationId: string;
+      projectId: string;
+      ordinal: number;
+      role: "owner" | "assistant" | "system";
+      content: string;
+      classification: string;
+      contentSha256: string;
+      createdAt: string;
+    }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (url === "/api/v1/orchestrator/conversations")
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              conversationId: "conversation-1",
+              projectId,
+              title: "Vendor invoice tracker",
+              version: 0,
+            }),
+          });
+        if (url.includes("/messages?"))
+          return Promise.resolve({
+            ok: true,
+            json: async () => serverMessages,
+          });
+        if (url.endsWith("/messages") && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as { content: string };
+          const message = {
+            id: "message-1",
+            conversationId: "conversation-1",
+            projectId,
+            ordinal: 1,
+            role: "owner" as const,
+            content: body.content,
+            classification: "internal",
+            contentSha256: "0".repeat(64),
+            createdAt: "2026-08-13T00:00:00.000Z",
+          };
+          serverMessages.push(message);
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              message,
+              replyTaskId: "00000000-0000-4000-8000-000000000505",
+            }),
+          });
+        }
+        if (url.endsWith("/conversations/conversation-1/proposals"))
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              proposalId: "proposal-1",
+              conversationId: "conversation-1",
+              state: "owner_review",
+              version: 1,
+              contractCandidate: "# Contract\n\n## Objective\n\nBuild it.",
+            }),
+          });
+        if (url.endsWith("/proposals/proposal-1/approve"))
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              proposalId: "proposal-1",
+              projectId,
+              conversationId: "conversation-1",
+              approvalId: "approval-1",
+              contractCandidate: "# Contract\n\n## Objective\n\nBuild it.",
+              candidateSha256: "b".repeat(64),
+            }),
+          });
+        if (url.endsWith("/proposals/proposal-1/translate"))
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              taskId: "translation-task-1",
+            }),
+          });
+        if (url.endsWith("/reply-tasks/translation-task-1"))
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              taskId: "translation-task-1",
+              state: "succeeded",
+            }),
+          });
+        if (url.endsWith(`/factory/projects/${projectId}/generate`))
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              taskId: "generation-task-1",
+              contractId: "generation-contract-1",
+              milestoneId: "generation-milestone-1",
+            }),
+          });
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }),
+    );
+    renderDashboard();
+    await userEvent.click(screen.getByRole("link", { name: /Chat/ }));
+    await userEvent.type(
+      await screen.findByLabelText("Conversation title"),
+      "Vendor invoice tracker",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+    await userEvent.type(
+      await screen.findByLabelText("Message"),
+      "Build an invoice tracker",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Draft a proposal" }),
+      ).toBeEnabled(),
+    );
+    MockEventSource.instances[0]?.["emit"]?.("done", { state: "succeeded" });
+    await waitFor(() =>
+      expect(screen.getByText("1 saved turn")).toBeInTheDocument(),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Draft a proposal" }),
+    );
+    expect(await screen.findByText("proposal-1")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(await screen.findByText("approval-1")).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Translate to blueprint" }),
+    );
+    expect(await screen.findByText("translation-task-1")).toBeInTheDocument();
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("button", { name: "Start code generation" }),
+        ).toBeEnabled(),
+      { timeout: 2500 },
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Start code generation" }),
+    );
+    expect(await screen.findByText("generation-task-1")).toBeInTheDocument();
   });
   it("virtualizes long conversation threads while keeping the newest turns visible", async () => {
     MockEventSource.instances = [];

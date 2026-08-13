@@ -103,6 +103,39 @@ function applyConversationMode(draft: string, mode: ConversationMode) {
   return `${prefix}${trimmed}`.trim();
 }
 
+function generationStepState(
+  step: "conversation" | "proposal" | "approval" | "blueprint" | "generation",
+  input: {
+    messageCount: number;
+    proposal?: ConversationProposal;
+    translationState: "idle" | "translating" | "succeeded" | "failed";
+    generationTaskId?: string;
+  },
+) {
+  if (step === "conversation")
+    return input.messageCount > 0 ? "complete" : "current";
+  if (step === "proposal") {
+    if (input.proposal === undefined) return "pending";
+    return input.proposal.state === "owner_review" ? "current" : "complete";
+  }
+  if (step === "approval") {
+    if (input.proposal?.state === "handed_off") return "complete";
+    if (input.proposal?.state === "owner_review") return "current";
+    return "pending";
+  }
+  if (step === "blueprint") {
+    if (input.translationState === "succeeded") return "complete";
+    if (
+      input.proposal?.state === "handed_off" &&
+      input.translationState !== "succeeded"
+    )
+      return "current";
+    return "pending";
+  }
+  if (input.generationTaskId !== undefined) return "complete";
+  return input.translationState === "succeeded" ? "current" : "pending";
+}
+
 // Replaces the old bare "Generate project blueprint" form entirely
 // (confirmed decision, CONTRACT-014 scope): the interview happens through
 // a real conversation instead. A conversation can start with no project at
@@ -150,8 +183,9 @@ export function ConversationWorkspacePage({
   const [translationState, setTranslationState] = useState<
     "idle" | "translating" | "succeeded" | "failed"
   >("idle");
+  const [translationTaskId, setTranslationTaskId] = useState<string>();
   const [generating, setGenerating] = useState(false);
-  const [generationResult, setGenerationResult] = useState<string>();
+  const [generationTaskId, setGenerationTaskId] = useState<string>();
   const [virtualWindow, setVirtualWindow] = useState({ start: 0, end: 0 });
   const threadRef = useRef<HTMLDivElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
@@ -400,7 +434,8 @@ export function ConversationWorkspacePage({
       setActiveReplyTaskId(undefined);
       setProposal(undefined);
       setTranslationState("idle");
-      setGenerationResult(undefined);
+      setTranslationTaskId(undefined);
+      setGenerationTaskId(undefined);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not start.");
     } finally {
@@ -623,6 +658,7 @@ export function ConversationWorkspacePage({
         { projectId: conversation.projectId },
         csrfToken,
       );
+      setTranslationTaskId(result.taskId);
       void pollTranslation(result.taskId);
     } catch (reason) {
       setTranslationState("idle");
@@ -640,7 +676,7 @@ export function ConversationWorkspacePage({
     setError(undefined);
     try {
       const result = await generateProject(conversation.projectId, csrfToken);
-      setGenerationResult(`queued · task ${result.taskId}`);
+      setGenerationTaskId(result.taskId);
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -767,7 +803,8 @@ export function ConversationWorkspacePage({
     threadStickToBottomRef.current = true;
     setProposal(undefined);
     setTranslationState("idle");
-    setGenerationResult(undefined);
+    setTranslationTaskId(undefined);
+    setGenerationTaskId(undefined);
     cancelActiveReplyStream();
     setAwaitingReply(false);
     setStreamingReply("");
@@ -1006,6 +1043,66 @@ export function ConversationWorkspacePage({
               Nothing executes until you approve it here -- approving hands it
               off as the frozen basis for generation.
             </p>
+            <ol
+              className="generation-flow"
+              aria-label="Project generation flow"
+            >
+              {[
+                {
+                  key: "conversation",
+                  label: "Conversation",
+                  detail:
+                    messages.length > 0
+                      ? `${messages.length} saved turn${messages.length === 1 ? "" : "s"}`
+                      : "Waiting for the first message",
+                },
+                {
+                  key: "proposal",
+                  label: "Proposal",
+                  detail: proposal?.id ?? "Not drafted",
+                },
+                {
+                  key: "approval",
+                  label: "Owner approval",
+                  detail: proposal?.approvalId ?? proposal?.state ?? "Pending",
+                },
+                {
+                  key: "blueprint",
+                  label: "Blueprint translation",
+                  detail:
+                    translationTaskId ??
+                    (translationState === "idle"
+                      ? "Not queued"
+                      : translationState),
+                },
+                {
+                  key: "generation",
+                  label: "Code generation",
+                  detail: generationTaskId ?? "Not queued",
+                },
+              ].map((step) => (
+                <li
+                  key={step.key}
+                  className={`generation-flow__step generation-flow__step--${generationStepState(
+                    step.key as
+                      | "conversation"
+                      | "proposal"
+                      | "approval"
+                      | "blueprint"
+                      | "generation",
+                    {
+                      messageCount: messages.length,
+                      proposal,
+                      translationState,
+                      generationTaskId,
+                    },
+                  )}`}
+                >
+                  <span>{step.label}</span>
+                  <small>{step.detail}</small>
+                </li>
+              ))}
+            </ol>
             {!proposal ? (
               <div className="settings-actions">
                 <button
@@ -1062,13 +1159,13 @@ export function ConversationWorkspacePage({
                         <button
                           type="button"
                           disabled={
-                            generating || generationResult !== undefined
+                            generating || generationTaskId !== undefined
                           }
                           onClick={() => void handleGenerate()}
                         >
                           {generating
                             ? "Queuing…"
-                            : generationResult
+                            : generationTaskId
                               ? "Generation queued"
                               : "Start code generation"}
                         </button>
@@ -1082,8 +1179,15 @@ export function ConversationWorkspacePage({
                         </small>
                       </p>
                     )}
-                    {generationResult && (
-                      <output aria-live="polite">{generationResult}</output>
+                    {translationTaskId && (
+                      <output aria-live="polite">
+                        Translation task · {translationTaskId}
+                      </output>
+                    )}
+                    {generationTaskId && (
+                      <output aria-live="polite">
+                        Generation queued · task {generationTaskId}
+                      </output>
                     )}
                   </>
                 )}
