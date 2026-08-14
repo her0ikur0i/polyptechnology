@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { deterministicUuid } from "../deterministic-id.js";
 import type { OwnerCommandService } from "../operations/owner-commands.js";
 import type { ConversationStore } from "../orchestrator/types.js";
-import type { TelegramRequester } from "./gateway.js";
+import { acceptAttachmentUpload } from "../control-api/attachment-upload.js";
+import type { TelegramFileDownloader, TelegramRequester } from "./gateway.js";
 import type { TelegramUpdateHandler, UpdateOrigin } from "./poller.js";
 
 // Every Telegram message lands in one long-running conversation per chat rather
@@ -34,6 +37,10 @@ export interface TelegramConversationDeps {
   conversations: ConversationStore;
   requester: TelegramRequester;
   csrfSecret: string;
+  // File upload support. Both optional so the handler keeps working where
+  // neither is configured, degrading to a text-only surface.
+  downloader?: TelegramFileDownloader;
+  attachmentStorageRoot?: string;
 }
 
 // Turns a Telegram message into a real conversation turn.
@@ -62,12 +69,14 @@ export class TelegramConversationHandler implements TelegramUpdateHandler {
   constructor(private readonly deps: TelegramConversationDeps) {}
 
   async handle(update: unknown, origin: UpdateOrigin): Promise<void> {
+    if (origin.chatId === undefined) return;
     const text = messageTextOf(update);
-    if (text === undefined || origin.chatId === undefined) return;
+    const file = fileOf(update);
+    if (text === undefined && file === undefined) return;
 
     // Commands belong to M6's closed set. Handing "/status" to the interviewer
     // as conversation would be a confusing non-answer.
-    if (text.startsWith("/")) return;
+    if (text !== undefined && text.startsWith("/")) return;
 
     const context = {
       authenticated: true as const,
@@ -112,25 +121,90 @@ export class TelegramConversationHandler implements TelegramUpdateHandler {
 
     const started = { projectId, conversationId };
 
-    await this.deps.owner.sendMessage(context, {
-      conversationId: started.conversationId,
-      projectId: started.projectId,
-      content: text,
-      idempotencyKey: randomUUID(),
-      occurredAt: new Date().toISOString(),
-      expectedVersion: conversation.version,
-    });
+    // A file arrives as a project reference: download it, store it as a
+    // conversation attachment, and note it. The caption, if any, is still
+    // stored as an ordinary message.
+    if (file !== undefined) await this.ingestFile(origin.chatId, started, file);
+    if (text !== undefined)
+      await this.deps.owner.sendMessage(context, {
+        conversationId: started.conversationId,
+        projectId: started.projectId,
+        content: text,
+        idempotencyKey: randomUUID(),
+        occurredAt: new Date().toISOString(),
+        expectedVersion: conversation.version,
+      });
 
     // The reply is a background task and will not be immediate. Saying so beats
     // leaving the owner watching an empty chat wondering whether it arrived.
     await this.acknowledge(origin.chatId);
   }
 
+  private async ingestFile(
+    chatId: string,
+    started: { projectId: string; conversationId: string },
+    file: IncomingFile,
+  ) {
+    const { downloader, attachmentStorageRoot } = this.deps;
+    if (downloader === undefined || attachmentStorageRoot === undefined) {
+      await this.note(
+        chatId,
+        "File diterima, tapi upload file belum aktif di server ini.",
+      );
+      return;
+    }
+    try {
+      const info = (await this.deps.requester.call("getFile", {
+        file_id: file.fileId,
+      })) as { result?: { file_path?: string } };
+      const filePath = info?.result?.file_path;
+      if (filePath === undefined) throw new Error("getFile missing file_path");
+      const bytes = await downloader.downloadFile(filePath);
+      await mkdir(attachmentStorageRoot, { recursive: true });
+      const storedFilename = randomUUID();
+      const storedPath = join(attachmentStorageRoot, storedFilename);
+      await writeFile(storedPath, bytes);
+      await acceptAttachmentUpload(this.deps.conversations, {
+        conversationId: started.conversationId,
+        projectId: started.projectId,
+        storedPath,
+        storedFilename,
+        displayName: file.displayName,
+        mediaType: file.mediaType,
+        sizeBytes: file.sizeBytes > 0 ? file.sizeBytes : bytes.length,
+      });
+      await this.note(chatId, `File diterima: ${file.displayName}`);
+    } catch (error) {
+      // The owner sent a real file; failing to store it must not crash the
+      // poller. Logged, and the owner is told rather than left guessing.
+      console.error(
+        JSON.stringify({
+          event: "telegram.file.failed",
+          detail: error instanceof Error ? error.message : "unknown",
+        }),
+      );
+      await this.note(chatId, "File gagal diproses, coba lagi ya Bos.");
+    }
+  }
+
+  private async note(chatId: string, text: string) {
+    try {
+      await this.deps.requester.call("sendMessage", { chat_id: chatId, text });
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          event: "telegram.note.failed",
+          detail: error instanceof Error ? error.message : "unknown",
+        }),
+      );
+    }
+  }
+
   private async acknowledge(chatId: string) {
     try {
       await this.deps.requester.call("sendMessage", {
         chat_id: chatId,
-        text: "⏳ Working on it…",
+        text: "⏳ Siap Bos, diproses dulu…",
       });
     } catch (error) {
       // The message is already stored and the reply already queued. Failing to
@@ -160,4 +234,50 @@ function messageTextOf(update: unknown): string | undefined {
   // an oversized message is refused here with a clear reason rather than
   // throwing out of the command service.
   return trimmed.length > 0 && trimmed.length <= 20_000 ? trimmed : undefined;
+}
+
+interface IncomingFile {
+  fileId: string;
+  displayName: string;
+  mediaType: string;
+  sizeBytes: number;
+}
+
+// Extracts a document or photo the owner sent, for storage as a project
+// reference. A photo resolves to its largest resolution, which Telegram lists
+// last in the array.
+function fileOf(update: unknown): IncomingFile | undefined {
+  if (typeof update !== "object" || update === null) return undefined;
+  const message = (update as Record<string, unknown>).message as
+    Record<string, unknown> | undefined;
+  const document = message?.document as Record<string, unknown> | undefined;
+  if (document !== undefined && typeof document.file_id === "string") {
+    return {
+      fileId: document.file_id,
+      displayName:
+        typeof document.file_name === "string"
+          ? document.file_name
+          : "document",
+      mediaType:
+        typeof document.mime_type === "string"
+          ? document.mime_type
+          : "application/octet-stream",
+      sizeBytes:
+        typeof document.file_size === "number" ? document.file_size : 0,
+    };
+  }
+  const photo = message?.photo;
+  if (Array.isArray(photo) && photo.length > 0) {
+    const largest = photo[photo.length - 1] as Record<string, unknown>;
+    if (largest !== undefined && typeof largest.file_id === "string") {
+      return {
+        fileId: largest.file_id,
+        displayName: "photo.jpg",
+        mediaType: "image/jpeg",
+        sizeBytes:
+          typeof largest.file_size === "number" ? largest.file_size : 0,
+      };
+    }
+  }
+  return undefined;
 }

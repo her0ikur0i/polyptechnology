@@ -170,6 +170,13 @@ const ttlMs = 30_000,
               conversations: telegramConversations,
               requester: new TelegramHttpTransport(telegramBotToken),
               csrfSecret: telegramCommandSecret,
+              // Same transport class provides the file download; a second
+              // instance keeps the dependency object-shaped rather than a
+              // shared mutable client.
+              downloader: new TelegramHttpTransport(telegramBotToken),
+              attachmentStorageRoot:
+                process.env.ATTACHMENT_STORAGE_ROOT ??
+                "/var/lib/polyp/attachments",
             }),
             // Last in the chain, and it only answers slash messages. The
             // conversation handler ignores those, so exactly one of the two

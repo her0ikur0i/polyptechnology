@@ -12,6 +12,12 @@ export interface TelegramRequester {
   call(method: string, body: unknown): Promise<unknown>;
 }
 
+// The file-download half of the transport, kept separate from TelegramRequester
+// so existing callers and test fakes don't gain a method they never use.
+export interface TelegramFileDownloader {
+  downloadFile(filePath: string): Promise<Buffer>;
+}
+
 export class TelegramHttpTransport
   implements TelegramTransport, TelegramRequester
 {
@@ -40,6 +46,21 @@ export class TelegramHttpTransport
     if (!response.ok)
       throw new Error(`Telegram ${method} failed with HTTP ${response.status}`);
     return response.json();
+  }
+
+  // Downloads a file's bytes (a document or photo the owner sent). Separate
+  // from call(), which parses JSON -- Telegram serves file bytes from a
+  // different endpoint with no JSON envelope.
+  async downloadFile(filePath: string): Promise<Buffer> {
+    const response = await this.fetcher(
+      `https://api.telegram.org/file/bot${this.botToken}/${filePath}`,
+      { method: "GET", signal: AbortSignal.timeout(this.timeoutMs) },
+    );
+    if (!response.ok)
+      throw new Error(
+        `Telegram file download failed with HTTP ${response.status}`,
+      );
+    return Buffer.from(await response.arrayBuffer());
   }
 }
 

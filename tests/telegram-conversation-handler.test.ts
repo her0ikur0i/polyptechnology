@@ -180,6 +180,6 @@ test("the prompt states its own precedence over a replayed transcript", () => {
   // This is the sentence that stops the model believing its own stale
   // transcript over its current instructions -- the failure where it answered
   // "17 contracts" and denied being able to read files nine seconds later.
-  assert.match(SYSTEM_PROMPT, /take precedence/);
-  assert.match(SYSTEM_PROMPT, /out of date/);
+  assert.match(SYSTEM_PROMPT, /lebih utama/);
+  assert.match(SYSTEM_PROMPT, /udah basi/);
 });
