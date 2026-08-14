@@ -41,7 +41,10 @@ import {
   TelegramRunNotifier,
 } from "../operations/run-notifier.js";
 import { TelegramHttpTransport } from "../telegram/gateway.js";
-import { TelegramSpinner } from "../telegram/spinner.js";
+import {
+  DEFAULT_SPINNER_ANIMATION_URL,
+  TelegramSpinner,
+} from "../telegram/spinner.js";
 import { TelegramPickHandler } from "../telegram/pick-handler.js";
 import {
   PostgresUpdateOffsetStore,
@@ -98,7 +101,10 @@ const ttlMs = 30_000,
         ),
   telegramSpinner =
     telegramBotToken !== undefined
-      ? new TelegramSpinner(new TelegramHttpTransport(telegramBotToken))
+      ? new TelegramSpinner(
+          new TelegramHttpTransport(telegramBotToken),
+          process.env.SPINNER_ANIMATION_URL ?? DEFAULT_SPINNER_ANIMATION_URL,
+        )
       : undefined,
   runNotifier =
     telegramBotToken !== undefined && telegramChatId !== undefined
