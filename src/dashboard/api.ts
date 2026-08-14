@@ -155,6 +155,49 @@ export async function generateProject(
     signal,
   );
 }
+export async function pushProject(
+  projectId: string,
+  command: { remoteUrl: string; branch: string },
+  csrfToken: string,
+  signal?: AbortSignal,
+): Promise<{ pushedSha: string; remoteRef: string }> {
+  if (!/^[a-f0-9-]{36}$/.test(projectId))
+    throw new Error("Invalid project id.");
+  return commandRequest(
+    `/api/v1/factory/projects/${projectId}/push`,
+    command,
+    csrfToken,
+    (value) => {
+      const record = value as { pushedSha?: unknown; remoteRef?: unknown };
+      return {
+        pushedSha: typeof record.pushedSha === "string" ? record.pushedSha : "",
+        remoteRef: typeof record.remoteRef === "string" ? record.remoteRef : "",
+      };
+    },
+    signal,
+  );
+}
+export async function exportProject(
+  projectId: string,
+  csrfToken: string,
+  signal?: AbortSignal,
+): Promise<{ id: string; state: string }> {
+  if (!/^[a-f0-9-]{36}$/.test(projectId))
+    throw new Error("Invalid project id.");
+  return commandRequest(
+    `/api/v1/factory/projects/${projectId}/export`,
+    {},
+    csrfToken,
+    (value) => {
+      const record = value as { id?: unknown; state?: unknown };
+      return {
+        id: typeof record.id === "string" ? record.id : projectId,
+        state: typeof record.state === "string" ? record.state : "exported",
+      };
+    },
+    signal,
+  );
+}
 export async function createConversationProposal(
   command: { projectId: string; title: string; objective: string },
   csrfToken: string,

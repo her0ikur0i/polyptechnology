@@ -25,6 +25,7 @@ const sha256 = (value: string) =>
 export interface ProjectLifecycleAdvancer {
   provisioned(projectId: string, workspaceRef: string): Promise<void>;
   developed(projectId: string, taskId: string): Promise<void>;
+  exported(projectId: string): Promise<void>;
 }
 
 export class FactoryLifecycleAdvancer implements ProjectLifecycleAdvancer {
@@ -40,6 +41,12 @@ export class FactoryLifecycleAdvancer implements ProjectLifecycleAdvancer {
   // format:check and test inside the isolated sandbox.
   async developed(projectId: string, taskId: string): Promise<void> {
     await this.advance(projectId, "development", `generated:${taskId}`);
+  }
+
+  // Called once the owner has pushed the project out of the factory (goal 5,
+  // detach): the factory stops treating it as in-progress work.
+  async exported(projectId: string): Promise<void> {
+    await this.advance(projectId, "exported", `exported:${projectId}`);
   }
 
   // Idempotent by design, in two directions.

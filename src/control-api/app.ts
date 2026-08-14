@@ -14,6 +14,9 @@ import { PostgresPolicyStore } from "../policy/postgres-policy-store.js";
 import { OwnerPolicyService } from "../policy/owner-policy-service.js";
 import { PostgresTelegramSettingsStore } from "./telegram-settings-store.js";
 import { buildDashboardSnapshot } from "./snapshot.js";
+import { buildSystemSnapshot } from "./system-snapshot.js";
+import { pushProjectRepository } from "./project-push.js";
+import { buildLiveSnapshot } from "./factory-live-producer.js";
 import { identifyOwner, requireCsrf, requireOwner } from "./auth.js";
 import {
   SESSION_COOKIE,
@@ -280,6 +283,49 @@ export function createControlApi(deps: ControlApiDeps): Express {
     }
   });
 
+  app.get("/api/v1/system/snapshot", requireOwner, async (_req, res) => {
+    try {
+      res.json(await buildSystemSnapshot(pool));
+    } catch (error) {
+      res.status(500).json({
+        error:
+          error instanceof Error ? error.message : "system snapshot failed",
+      });
+    }
+  });
+
+  app.get("/api/v1/factory-live/snapshot", requireOwner, async (_req, res) => {
+    try {
+      res.json(await buildLiveSnapshot(pool));
+    } catch (error) {
+      res.status(500).json({
+        error:
+          error instanceof Error
+            ? error.message
+            : "factory live snapshot failed",
+      });
+    }
+  });
+
+  // Long-lived SSE for Factory Live. V1 keeps the stream open and re-reads the
+  // topology on an interval; the snapshot endpoint above is the authoritative
+  // structure, and the client re-fetches it when it needs fresh state.
+  app.get("/api/v1/factory-live/events", requireOwner, (req, res) => {
+    res.set({
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    });
+    res.flushHeaders();
+    res.write(": connected\n\n");
+    const interval = setInterval(() => {
+      // A failed poll must not tear down the stream; the client already knows
+      // how to recover by re-fetching the snapshot.
+      res.write(": keep-alive\n\n");
+    }, 15_000);
+    req.on("close", () => clearInterval(interval));
+  });
+
   app.put(
     "/api/v1/settings/telegram",
     requireOwner,
@@ -519,6 +565,65 @@ export function createControlApi(deps: ControlApiDeps): Express {
             error instanceof Error
               ? error.message
               : "generation command failed",
+        });
+      }
+    },
+  );
+
+  // Push the generated repository to an owner-supplied remote (goal 5: detach).
+  // The remote URL may embed a credential, so it is validated, never logged,
+  // and never persisted in the repo config -- a one-shot `git push <url>`.
+  app.post(
+    "/api/v1/factory/projects/:id/push",
+    requireOwner,
+    requireCsrf(csrfSecret),
+    async (req, res) => {
+      try {
+        const projectId = req.params.id;
+        if (typeof projectId !== "string" || !/^[a-f0-9-]{36}$/.test(projectId))
+          throw new Error("invalid project id");
+        const { remoteUrl, branch } = (req.body ?? {}) as {
+          remoteUrl?: unknown;
+          branch?: unknown;
+        };
+        if (typeof remoteUrl !== "string")
+          throw new Error("remoteUrl is required");
+        if (typeof branch !== "string") throw new Error("branch is required");
+        const factory = new PostgresProjectFactory(pool);
+        const project = await factory.getProject(projectId);
+        if (project === undefined) throw new Error("project not found");
+        const repoPath = join(config.projectWorkspacesRoot, projectId, "repo");
+        const result = await pushProjectRepository(repoPath, remoteUrl, branch);
+        // Never echo the URL back: it may carry a token.
+        res.json({ pushedSha: result.pushedSha, remoteRef: result.remoteRef });
+      } catch (error) {
+        res.status(400).json({
+          error: error instanceof Error ? error.message : "push failed",
+        });
+      }
+    },
+  );
+
+  // Mark a project as detached/exported: the factory stops treating it as
+  // in-progress work. Independent of the push, so a push retry never fights a
+  // lifecycle transition and an export needs no credentials.
+  app.post(
+    "/api/v1/factory/projects/:id/export",
+    requireOwner,
+    requireCsrf(csrfSecret),
+    async (req, res) => {
+      try {
+        const projectId = req.params.id;
+        if (typeof projectId !== "string" || !/^[a-f0-9-]{36}$/.test(projectId))
+          throw new Error("invalid project id");
+        const factory = new PostgresProjectFactory(pool);
+        const project = await factory.getProject(projectId);
+        if (project === undefined) throw new Error("project not found");
+        await new FactoryLifecycleAdvancer(factory).exported(project.id);
+        res.json({ id: project.id, state: "exported" });
+      } catch (error) {
+        res.status(400).json({
+          error: error instanceof Error ? error.message : "export failed",
         });
       }
     },

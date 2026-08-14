@@ -39,6 +39,7 @@ import { useSnapshot } from "./use-snapshot.js";
 import { saveTelegramSettings, testTelegram } from "./api.js";
 import "./styles.css";
 import RunsPage from "./runs-page.js";
+import { SystemPage } from "./system-page.js";
 // The three real page modules are code-split; everything else routed below is
 // defined inline in this file, so lazy-loading it would move nothing. These
 // three are where the weight actually is -- factory-live alone pulls in the
@@ -62,8 +63,8 @@ const PolicyControlPage = lazy(() =>
   })),
 );
 const nav = [
-  { to: "/", label: "Overview", icon: Factory },
   { to: "/orchestrator", label: "Chat", icon: MessageSquare },
+  { to: "/overview", label: "Overview", icon: Factory },
   { to: "/projects", label: "Projects", icon: FolderKanban },
   { to: "/runs", label: "Runs", icon: GitPullRequestArrow },
   { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
@@ -207,7 +208,14 @@ function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
               the owner rather than introducing a second vocabulary. */}
           <Suspense fallback={<StatePage kind="loading" />}>
             <Routes>
-              <Route path="/" element={<Overview snapshot={snapshot} />} />
+              <Route
+                path="/"
+                element={<Navigate to="/orchestrator" replace />}
+              />
+              <Route
+                path="/overview"
+                element={<Overview snapshot={snapshot} />}
+              />
               <Route path="/factory-live" element={<FactoryLivePage />} />
               <Route
                 path="/providers"
@@ -297,15 +305,7 @@ function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
                   />
                 }
               />
-              <Route
-                path="/system"
-                element={
-                  <Placeholder
-                    title="System"
-                    detail="Host, container, service, database, budget and backup observations."
-                  />
-                }
-              />
+              <Route path="/system" element={<SystemPage />} />
               <Route
                 path="/infrastructure"
                 element={

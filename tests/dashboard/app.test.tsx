@@ -90,7 +90,7 @@ describe("dashboard", () => {
   beforeEach(() => window.history.replaceState({}, "", "/"));
   afterEach(() => vi.unstubAllGlobals());
   it("renders real empty and sequence states without invented metrics", () => {
-    renderDashboard();
+    renderDashboard(snapshot, "/overview");
     expect(
       screen.getByRole("heading", { name: "Factory overview" }),
     ).toBeInTheDocument();
@@ -148,7 +148,7 @@ describe("dashboard", () => {
     const stale = structuredClone(snapshot);
     stale.attention.freshness = "stale";
     stale.attention.issues = ["Event stream delayed."];
-    renderDashboard(stale);
+    renderDashboard(stale, "/overview");
     expect(screen.getByRole("status")).toHaveTextContent("Stale data observed");
     const result = await axe.run(document.body, {
       rules: { "color-contrast": { enabled: false } },
@@ -168,7 +168,35 @@ describe("dashboard", () => {
     expect(result.violations.map((item) => item.id)).toEqual([]);
   });
   it("exposes the owner-facing M3 rail destinations", async () => {
-    renderDashboard();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            host: {
+              uptimeSeconds: 1,
+              loadavg: [0, 0, 0],
+              totalMemBytes: 1000,
+              freeMemBytes: 500,
+              cpuCount: 2,
+              platform: "linux",
+              arch: "x64",
+            },
+            process: { pid: 1, nodeVersion: "v22", rssBytes: 1000 },
+            database: {
+              connectionCount: 1,
+              sizeBytes: 1000,
+              tasksByState: {},
+              attemptCount: 0,
+            },
+            budget: [],
+            collectedAt: "2026-08-14T00:00:00.000Z",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    renderDashboard(snapshot, "/overview");
     await userEvent.click(screen.getByRole("link", { name: /Runs/ }));
     expect(
       await screen.findByRole("heading", { name: "Runs" }),
@@ -176,7 +204,7 @@ describe("dashboard", () => {
 
     await userEvent.click(screen.getByRole("link", { name: /System/ }));
     expect(
-      await screen.findByRole("heading", { name: "System" }),
+      await screen.findByRole("heading", { name: "System monitor" }),
     ).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("link", { name: /Settings/ }));

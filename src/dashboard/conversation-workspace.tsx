@@ -16,6 +16,8 @@ import {
   rejectProposal,
   translateProposal,
   generateProject,
+  pushProject,
+  exportProject,
   renameConversation,
   setConversationArchived,
 } from "./api.js";
@@ -186,6 +188,15 @@ export function ConversationWorkspacePage({
   const [translationTaskId, setTranslationTaskId] = useState<string>();
   const [generating, setGenerating] = useState(false);
   const [generationTaskId, setGenerationTaskId] = useState<string>();
+  const [pushUrl, setPushUrl] = useState("");
+  const [pushBranch, setPushBranch] = useState("main");
+  const [pushState, setPushState] = useState<
+    "idle" | "pushing" | "done" | "error"
+  >("idle");
+  const [pushMessage, setPushMessage] = useState("");
+  const [exportState, setExportState] = useState<
+    "idle" | "exporting" | "done" | "error"
+  >("idle");
   const [virtualWindow, setVirtualWindow] = useState({ start: 0, end: 0 });
   const threadRef = useRef<HTMLDivElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
@@ -685,6 +696,41 @@ export function ConversationWorkspacePage({
       );
     } finally {
       setGenerating(false);
+    }
+  }
+
+  async function handlePush(event: React.FormEvent) {
+    event.preventDefault();
+    if (!conversation) return;
+    setPushState("pushing");
+    setPushMessage("");
+    setError(undefined);
+    try {
+      const result = await pushProject(
+        conversation.projectId,
+        { remoteUrl: pushUrl, branch: pushBranch },
+        csrfToken,
+      );
+      setPushState("done");
+      setPushMessage(
+        `Pushed ${result.remoteRef}${result.pushedSha ? ` · ${result.pushedSha.slice(0, 8)}` : ""}.`,
+      );
+    } catch (reason) {
+      setPushState("error");
+      setPushMessage(reason instanceof Error ? reason.message : "Push failed.");
+    }
+  }
+
+  async function handleExport() {
+    if (!conversation) return;
+    setExportState("exporting");
+    setError(undefined);
+    try {
+      await exportProject(conversation.projectId, csrfToken);
+      setExportState("done");
+    } catch (reason) {
+      setExportState("error");
+      setError(reason instanceof Error ? reason.message : "Export failed.");
     }
   }
 
@@ -1282,6 +1328,61 @@ export function ConversationWorkspacePage({
                 ))}
               </ul>
             )}
+          </Panel>
+          <Panel title="Ship & detach" eyebrow="EXPORT">
+            <p>
+              Push this project's repository to a remote you own, or mark it as
+              exported (detached from the factory).
+            </p>
+            <form
+              className="settings-grid"
+              onSubmit={(event) => void handlePush(event)}
+            >
+              <label>
+                Remote URL
+                <input
+                  aria-label="Remote URL"
+                  value={pushUrl}
+                  onChange={(event) => setPushUrl(event.target.value)}
+                  placeholder="https://github.com/you/repo.git"
+                  required
+                />
+              </label>
+              <label>
+                Branch
+                <input
+                  aria-label="Branch"
+                  value={pushBranch}
+                  onChange={(event) => setPushBranch(event.target.value)}
+                  placeholder="main"
+                  required
+                />
+              </label>
+              <div className="settings-actions">
+                <button
+                  type="submit"
+                  disabled={
+                    pushState === "pushing" || pushUrl.trim().length === 0
+                  }
+                >
+                  {pushState === "pushing" ? "Pushing…" : "Push to remote"}
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    exportState === "exporting" || exportState === "done"
+                  }
+                  onClick={() => void handleExport()}
+                >
+                  {exportState === "exporting"
+                    ? "Exporting…"
+                    : exportState === "done"
+                      ? "Exported"
+                      : "Detach (export)"}
+                </button>
+              </div>
+              <span role="status">{pushMessage}</span>
+            </form>
           </Panel>
         </div>
       )}
