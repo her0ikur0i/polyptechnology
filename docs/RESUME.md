@@ -428,29 +428,26 @@ Host: 2 vCPU, 7.8 GB RAM, 80 GB free. Run heavy verification serially.
 
 ## Known issues — do not silently resolve
 
-- **`polyptech-dashboard.service` is still active** on the host, serving
-  `dash.surachmancenter.com` → `127.0.0.1:4173` through the live Cloudflare
-  Tunnel, from a process whose files were deleted with
-  `/opt/master-orchestrator`. It is a pre-CONTRACT-007 architecture that no
-  longer exists in this repository. **Do not stop, restart, or modify it**
-  without fresh explicit owner approval.
-- **Private staging only.** `/opt/polyp-ai-factory/current`, the `polyp-factory`
-  system user, and `polyp-control-api.service` are real (CONTRACT-013 M9,
-  redeployed by CONTRACT-014 M10) but loopback-bound on port 4180 with
-  `ACCESS_AUTH_MODE=disabled`, no Telegram, and no background task-execution
-  supervisor running. This is **not** the public production cutover. The
-  remaining CONTRACT-010 Owner Action Bundle items — DNS/Cloudflare cutover,
-  external backups, production promotion — all still need fresh approval.
-  **The Telegram live probe is done** (owner-authorised 2026-08-10, see
+- **Public cutover done 2026-08-14.** `dash.surachmancenter.com` now routes
+  through the Cloudflare tunnel to the integrated control API/dashboard on
+  `127.0.0.1:4180`, gated by app-level owner login (`ACCESS_AUTH_MODE=password`,
+  see `docs/operations/owner-authentication.md`). The legacy
+  `polyptech-dashboard.service` (`127.0.0.1:4173`, a deleted pre-CONTRACT-007
+  codebase) was disabled and stopped. Staging still runs `NODE_ENV=development`
+  with no Telegram configuration on this instance (the webhook route stays
+  unregistered); the background task-execution supervisor is still not running
+  under the control API. **The Telegram live probe is done**
+  (owner-authorised 2026-08-10, see
   `docs/contracts/CONTRACT-016/evidence/telegram-live-probe.md`): the stored
   token is valid, the bot is `@PolypTech_bot`, and a report was delivered to the
   owner through the repository's own `TelegramHttpTransport`. Credentials live
-  in `/root/.config/polyp/provider-secrets.env`. Staging itself still has **no**
-  Telegram configuration, so the webhook route is still unregistered there.
-- **Cloudflare Access JWT verification is not implemented.** CONTRACT-013 M8
-  left a loopback-bind enforcement in `src/config.ts` as an interim
-  network-level guarantee. CONTRACT-020 owns closing it, since that is the
-  contract that contemplates public traffic.
+  in `/root/.config/polyp/provider-secrets.env`.
+- **Cloudflare Access JWT verification is not implemented.** Owner login is
+  app-level (`ACCESS_AUTH_MODE=password`), not Cloudflare Access, and the app
+  does not verify a Cloudflare Access JWT. CONTRACT-013 M8 left a loopback-bind
+  enforcement in `src/config.ts` as an interim network-level guarantee.
+  CONTRACT-020 owns the Cloudflare-Access path, since that is the contract that
+  contemplates public traffic.
 - **Factory Live has no server.** Its client calls
   `/api/v1/factory-live/snapshot` and `/api/v1/factory-live/events`; neither
   route exists. Every test feeds it a fixture, so the suite is green while the
