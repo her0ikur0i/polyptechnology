@@ -207,6 +207,14 @@ DATABASE_URL=… PROJECT_WORKSPACES_ROOT=… \
   node --import tsx scripts/generation-drill.ts <label> deep
 ```
 
+**"cleanup protocol"** — when the owner says these words, reset the factory's
+work products. Run `scripts/cleanup-protocol.ts` (needs `DATABASE_URL` and
+`PROJECT_WORKSPACES_ROOT`): it deletes every generated project, conversation,
+task, attempt, contract, milestone, budget scope and blueprint, then removes
+the on-disk workspaces and prunes old release images. Factory config
+(providers, policies, Telegram settings) and the audit/domain-event trail are
+left alone. It is deliberately destructive — invoking it is the confirmation.
+
 ## Next: CONTRACT-018 — chat experience
 
 Charter at
