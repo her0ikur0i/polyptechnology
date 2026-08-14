@@ -82,7 +82,9 @@ test("an ordinary message becomes a stored turn and an acknowledgement", async (
   // The optimistic-concurrency version comes from the conversation that was
   // read, not from a guess.
   assert.equal((sent[0] as { expectedVersion: number }).expectedVersion, 7);
-  assert.equal(calls[0]?.method, "sendMessage");
+  // The acknowledgement is the native typing indicator, not a lingering message.
+  assert.equal(calls[0]?.method, "sendChatAction");
+  assert.equal((calls[0]?.body as { action: string }).action, "typing");
 });
 
 test("a slash message is left entirely to the closed command set", async () => {

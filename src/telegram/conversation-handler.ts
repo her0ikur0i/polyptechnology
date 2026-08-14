@@ -202,9 +202,13 @@ export class TelegramConversationHandler implements TelegramUpdateHandler {
 
   private async acknowledge(chatId: string) {
     try {
-      await this.deps.requester.call("sendMessage", {
+      // The native "typing…" indicator, not a message. It animates on its own
+      // and disappears by itself the moment the reply arrives -- exactly what a
+      // persistent "⏳ Siap Bos, diproses dulu…" text could not do (that line
+      // stayed in the chat forever next to the answer).
+      await this.deps.requester.call("sendChatAction", {
         chat_id: chatId,
-        text: "⏳ Siap Bos, diproses dulu…",
+        action: "typing",
       });
     } catch (error) {
       // The message is already stored and the reply already queued. Failing to
