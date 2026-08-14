@@ -246,6 +246,17 @@ export class PostgresRunFacts {
     if (row.driver === "deterministic_sha256" && event.outcome === "succeeded")
       return false;
 
+    // Per-phase generation and blueprint translation are progress, not a run
+    // verdict. "Patch succeeded" for one of several phases is noise the owner
+    // asked to stop hearing (2026-08-14): the final run summary is the signal.
+    // Failures stay visible -- a phase that dies is actionable.
+    if (
+      event.outcome === "succeeded" &&
+      (row.driver === "blueprint_translation" ||
+        row.driver === "ai_patch_executor")
+    )
+      return false;
+
     return true;
   }
 

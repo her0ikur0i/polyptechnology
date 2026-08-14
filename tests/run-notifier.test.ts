@@ -140,6 +140,33 @@ test("failed deterministic verification tasks still notify", async () => {
   );
 });
 
+test("successful generation progress is silent; its failures are not", async () => {
+  for (const driver of ["blueprint_translation", "ai_patch_executor"]) {
+    const facts = new PostgresRunFacts({
+      query: async () => ({
+        rows: [{ driver, role: "factory-generation", input: {} }],
+      }),
+    } as never);
+    assert.equal(
+      await facts.shouldNotify({
+        taskId: `${driver}-ok`,
+        attemptOrdinal: 1,
+        outcome: "succeeded",
+      }),
+      false,
+    );
+    assert.equal(
+      await facts.shouldNotify({
+        taskId: `${driver}-fail`,
+        attemptOrdinal: 1,
+        outcome: "failed",
+        reason: "verification",
+      }),
+      true,
+    );
+  }
+});
+
 test("database milestone context does not leak raw contract UUIDs", async () => {
   const facts = new PostgresRunFacts({
     query: async () => ({
