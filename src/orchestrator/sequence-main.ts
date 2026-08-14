@@ -42,6 +42,7 @@ import {
 } from "../operations/run-notifier.js";
 import { TelegramHttpTransport } from "../telegram/gateway.js";
 import { TelegramSpinner } from "../telegram/spinner.js";
+import { TelegramPickHandler } from "../telegram/pick-handler.js";
 import {
   PostgresUpdateOffsetStore,
   TelegramUpdatePoller,
@@ -154,6 +155,11 @@ const ttlMs = 30_000,
           new TelegramHttpTransport(telegramBotToken, fetch, 40_000),
           new PostgresUpdateOffsetStore(pool),
           new CompositeUpdateHandler([
+            // First so "pick:*" sample buttons are answered here, not shown as
+            // "this approval no longer exists" by the approval handler.
+            new TelegramPickHandler(
+              new TelegramHttpTransport(telegramBotToken),
+            ),
             new TelegramApprovalUpdateHandler(
               new TelegramHttpTransport(telegramBotToken),
               new PostgresTelegramDecisionService(
