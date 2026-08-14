@@ -332,6 +332,7 @@ export async function createGenerationTask(
   const input = {
     taskId: task.id,
     taskClass: "bulk_code" as const,
+    phaseLabel,
     idempotencyKey: `generate-${project.id}-${phaseLabel}-${task.attemptCount + 1}`,
     attribution: {
       projectId: project.id,

@@ -248,13 +248,15 @@ export class PostgresRunFacts {
       return false;
 
     // Per-phase generation and blueprint translation are progress, not a run
-    // verdict. "Patch succeeded" for one of several phases is noise the owner
-    // asked to stop hearing (2026-08-14): the final run summary is the signal.
-    // Failures stay visible -- a phase that dies is actionable.
+    // verdict. The FINAL generation phase is the signal -- everything before it
+    // is noise the owner asked to stop hearing (2026-08-14). Failures stay
+    // visible -- a phase that dies is actionable.
+    if (event.outcome === "succeeded" && row.driver === "blueprint_translation")
+      return false;
     if (
       event.outcome === "succeeded" &&
-      (row.driver === "blueprint_translation" ||
-        row.driver === "ai_patch_executor")
+      row.driver === "ai_patch_executor" &&
+      !isFinalGenerationPhase(input)
     )
       return false;
 
@@ -326,6 +328,20 @@ function generationPhase(input: Record<string, unknown>): string | undefined {
     if (match?.[1] !== undefined) return match[1].trim();
   }
   return undefined;
+}
+
+// A generation is "the result" when its final phase lands. Intermediate phases
+// are progress, not a verdict, so only the last one (or a single-phase run
+// labelled "complete", or an unlabelled legacy task) notifies the owner.
+function isFinalGenerationPhase(input: Record<string, unknown>): boolean {
+  const label =
+    typeof input.phaseLabel === "string" && input.phaseLabel.length > 0
+      ? input.phaseLabel
+      : generationPhase(input);
+  if (label === undefined || label === "complete") return true;
+  const match = /^phase-(\d+)-of-(\d+)$/.exec(label);
+  if (match === null) return true; // unrecognised label: do not suppress
+  return match[1] === match[2];
 }
 
 const CATEGORY_FOR: Record<string, ReportCategory> = {

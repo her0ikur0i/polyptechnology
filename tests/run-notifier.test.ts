@@ -140,31 +140,87 @@ test("failed deterministic verification tasks still notify", async () => {
   );
 });
 
-test("successful generation progress is silent; its failures are not", async () => {
-  for (const driver of ["blueprint_translation", "ai_patch_executor"]) {
-    const facts = new PostgresRunFacts({
+test("successful generation progress is silent; the final phase and failures are not", async () => {
+  // blueprint_translation is always an intermediate step: silent on success,
+  // visible on failure.
+  const blueprint = new PostgresRunFacts({
+    query: async () => ({
+      rows: [
+        {
+          driver: "blueprint_translation",
+          role: "factory-generation",
+          input: {},
+        },
+      ],
+    }),
+  } as never);
+  assert.equal(
+    await blueprint.shouldNotify({
+      taskId: "bp-ok",
+      attemptOrdinal: 1,
+      outcome: "succeeded",
+    }),
+    false,
+  );
+  assert.equal(
+    await blueprint.shouldNotify({
+      taskId: "bp-fail",
+      attemptOrdinal: 1,
+      outcome: "failed",
+      reason: "verification",
+    }),
+    true,
+  );
+
+  const factsFor = (input: Record<string, unknown>) =>
+    new PostgresRunFacts({
       query: async () => ({
-        rows: [{ driver, role: "factory-generation", input: {} }],
+        rows: [
+          { driver: "ai_patch_executor", role: "factory-generation", input },
+        ],
       }),
     } as never);
-    assert.equal(
-      await facts.shouldNotify({
-        taskId: `${driver}-ok`,
-        attemptOrdinal: 1,
-        outcome: "succeeded",
-      }),
-      false,
-    );
-    assert.equal(
-      await facts.shouldNotify({
-        taskId: `${driver}-fail`,
-        attemptOrdinal: 1,
-        outcome: "failed",
-        reason: "verification",
-      }),
-      true,
-    );
-  }
+
+  // Intermediate generation phases are progress, not a verdict: silent.
+  assert.equal(
+    await factsFor({ phaseLabel: "phase-1-of-6" }).shouldNotify({
+      taskId: "p1",
+      attemptOrdinal: 1,
+      outcome: "succeeded",
+    }),
+    false,
+  );
+
+  // The final phase IS the result the owner asked to receive.
+  assert.equal(
+    await factsFor({ phaseLabel: "phase-6-of-6" }).shouldNotify({
+      taskId: "p6",
+      attemptOrdinal: 1,
+      outcome: "succeeded",
+    }),
+    true,
+  );
+
+  // A single-phase generation (or an unlabelled legacy task) is its own result.
+  assert.equal(
+    await factsFor({ phaseLabel: "complete" }).shouldNotify({
+      taskId: "single",
+      attemptOrdinal: 1,
+      outcome: "succeeded",
+    }),
+    true,
+  );
+
+  // Failures stay visible at any phase -- a phase that dies is actionable.
+  assert.equal(
+    await factsFor({ phaseLabel: "phase-3-of-6" }).shouldNotify({
+      taskId: "p3-fail",
+      attemptOrdinal: 1,
+      outcome: "failed",
+      reason: "verification",
+    }),
+    true,
+  );
 });
 
 test("database milestone context does not leak raw contract UUIDs", async () => {
