@@ -269,8 +269,8 @@ node --import tsx scripts/resume-checkpoint.ts --check  # fail if stale
 | M11       | live end-to-end dashboard drill                                         | not started                            |
 | M12       | security review, README, resume checkpoint, deploy, and close           | not started                            |
 
-- **HEAD:** `138637d feat: milestone-style run summary after the final generation phase`
-- **Working tree:** 1 changed path(s) — expected while a contract is in flight, since this repository commits once per contract
+- **HEAD:** `9b34579 feat: cleanup protocol — one command resets the factory's work products`
+- **Working tree:** clean
 - **Next action:** M7 — runs, attempts, evidence, and model-cost surface
 
 <!-- resume:auto:end -->
