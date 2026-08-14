@@ -207,11 +207,16 @@ export class PostgresRunFacts {
         if (
           row.driver === "ai_patch_executor" &&
           row.role === "factory-generation"
-        )
+        ) {
+          // The final phase is not "one of several phases" -- it is the whole
+          // run's verdict, so it reads as a build summary rather than progress.
+          if (isFinalGenerationPhase(input))
+            return { kind: "Build", subject: name };
           return {
             kind: "Generation phase",
             subject: phase === undefined ? name : `${name} · ${phase}`,
           };
+        }
         return { kind, subject: name };
       }
     }
@@ -404,6 +409,8 @@ function humanSummary(
 ): string {
   const name = description.kind.toLowerCase();
   if (category === "success") {
+    if (description.kind === "Build")
+      return "Summary: generation and verification are complete — the project is ready to demo.";
     if (description.kind === "Generation phase")
       return event.attemptOrdinal > 1
         ? "Summary: generation phase finished after repair; no owner action needed."
