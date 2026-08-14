@@ -108,7 +108,7 @@ const ttlMs = 30_000,
       ? new TelegramRunNotifier(
           new TelegramHttpTransport(telegramBotToken),
           telegramChatId,
-          new PostgresRunFacts(pool),
+          new PostgresRunFacts(pool, process.env.PROJECT_WORKSPACES_ROOT),
           telegramConversationId,
           telegramSpinner,
         )

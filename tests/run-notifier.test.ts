@@ -581,3 +581,57 @@ test("a Telegram outage never propagates into the execution path", async () => {
 
   assert.equal(transport.sent.length, 0);
 });
+
+test("the final generation phase aggregates a run summary", async () => {
+  const facts = new PostgresRunFacts({
+    query: async (text: string) => {
+      if (text.includes("count(*) AS n")) return { rows: [{ n: "6" }] };
+      if (text.includes("FROM generated_projects"))
+        return {
+          rows: [
+            {
+              display_name: "Stockflow",
+              state: "development",
+              blueprint_id: "bp-1",
+              workspace_ref: "workspace://projects/proj-1",
+            },
+          ],
+        };
+      if (text.includes("FROM conversation_proposals"))
+        return { rows: [{ state: "handed_off" }] };
+      return {
+        rows: [
+          {
+            driver: "ai_patch_executor",
+            role: "factory-generation",
+            input: { phaseLabel: "phase-6-of-6" },
+            project_id: "proj-1",
+          },
+        ],
+      };
+    },
+  } as never);
+
+  const summary = await facts.runSummaryFor("task-1");
+  assert.equal(summary?.projectName, "Stockflow");
+  assert.equal(summary?.proposalState, "handed_off");
+  assert.equal(summary?.phaseCount, 6);
+  assert.equal(summary?.commit, undefined);
+});
+
+test("an intermediate generation phase yields no run summary", async () => {
+  const facts = new PostgresRunFacts({
+    query: async () => ({
+      rows: [
+        {
+          driver: "ai_patch_executor",
+          role: "factory-generation",
+          input: { phaseLabel: "phase-1-of-6" },
+          project_id: "proj-1",
+        },
+      ],
+    }),
+  } as never);
+
+  assert.equal(await facts.runSummaryFor("task-1"), undefined);
+});

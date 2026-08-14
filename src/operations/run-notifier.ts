@@ -1,5 +1,13 @@
+import { execFile } from "node:child_process";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import type { Pool } from "pg";
-import { renderReport, splitForTelegram } from "../telegram/report.js";
+import {
+  escapeHtml,
+  formatUsd,
+  renderReport,
+  splitForTelegram,
+} from "../telegram/report.js";
 import type {
   BudgetLine,
   ReportCategory,
@@ -35,8 +43,18 @@ export interface RunNotifier {
 // Attribution is jsonb on the attempt row, so a task's spend is the sum across
 // every attempt it made -- including the ones that failed, which is the number
 // that matters when the report is about a failure.
+export interface RunSummary {
+  projectName: string;
+  proposalState?: string;
+  phaseCount: number;
+  commit?: string;
+}
+
 export class PostgresRunFacts {
-  constructor(private readonly pool: Pool) {}
+  constructor(
+    private readonly pool: Pool,
+    private readonly workspacesRoot?: string,
+  ) {}
 
   async usageFor(
     taskId: string,
@@ -268,6 +286,90 @@ export class PostgresRunFacts {
     return true;
   }
 
+  // For the final generation phase -- the whole run's verdict -- aggregates the
+  // milestone chain into one summary. Returns undefined for any other task, so
+  // callers can fall through to the ordinary per-task report.
+  async runSummaryFor(taskId: string): Promise<RunSummary | undefined> {
+    const spec = (
+      await this.pool.query(
+        `SELECT s.driver, s.role, s.input,
+                s.input->'attribution'->>'projectId' AS project_id
+           FROM operation_task_specs s WHERE s.task_id = $1`,
+        [taskId],
+      )
+    ).rows[0] as
+      | {
+          driver: string;
+          role: string | null;
+          input: unknown;
+          project_id: string | null;
+        }
+      | undefined;
+    if (
+      spec === undefined ||
+      spec.driver !== "ai_patch_executor" ||
+      spec.role !== "factory-generation" ||
+      spec.project_id === null
+    )
+      return undefined;
+    const input =
+      typeof spec.input === "object" && spec.input !== null
+        ? (spec.input as Record<string, unknown>)
+        : {};
+    if (!isFinalGenerationPhase(input)) return undefined;
+    const projectId = spec.project_id;
+
+    const project = (
+      await this.pool.query(
+        `SELECT display_name, state, blueprint_id, workspace_ref
+           FROM generated_projects WHERE id = $1`,
+        [projectId],
+      )
+    ).rows[0] as
+      | {
+          display_name: string;
+          state: string;
+          blueprint_id: string | null;
+          workspace_ref: string | null;
+        }
+      | undefined;
+    if (project === undefined) return undefined;
+
+    const proposal = (
+      await this.pool.query(
+        `SELECT state FROM conversation_proposals
+          WHERE project_id = $1 ORDER BY version DESC LIMIT 1`,
+        [projectId],
+      )
+    ).rows[0] as { state: string } | undefined;
+
+    const phaseCount = Number(
+      (
+        await this.pool.query(
+          `SELECT count(*) AS n FROM operation_task_specs s
+            WHERE s.driver = 'ai_patch_executor'
+              AND s.input->'attribution'->>'projectId' = $1`,
+          [projectId],
+        )
+      ).rows[0]?.n ?? 0,
+    );
+
+    const commit = await readHeadCommit(
+      this.workspacesRoot,
+      projectId,
+      project.workspace_ref,
+    );
+
+    return {
+      projectName: project.display_name,
+      phaseCount,
+      ...(proposal?.state === undefined
+        ? {}
+        : { proposalState: proposal.state }),
+      ...(commit === undefined ? {} : { commit }),
+    };
+  }
+
   async milestoneFor(taskId: string): Promise<string | undefined> {
     const row = (
       await this.pool.query(
@@ -347,6 +449,65 @@ function isFinalGenerationPhase(input: Record<string, unknown>): boolean {
   const match = /^phase-(\d+)-of-(\d+)$/.exec(label);
   if (match === null) return true; // unrecognised label: do not suppress
   return match[1] === match[2];
+}
+
+const run = promisify(execFile);
+
+// Reads the short HEAD sha from the generated project's repository, so the
+// summary can name the commit the factory published. The workspace lives beside
+// the repo at <workspacesRoot>/<projectId>/repo; missing either is not an error
+// worth losing the summary over.
+async function readHeadCommit(
+  workspacesRoot: string | undefined,
+  projectId: string,
+  workspaceRef: string | null,
+): Promise<string | undefined> {
+  if (workspacesRoot === undefined || workspaceRef === null) return undefined;
+  try {
+    const repoPath = join(workspacesRoot, projectId, "repo");
+    const { stdout } = await run("git", [
+      "-C",
+      repoPath,
+      "rev-parse",
+      "--short",
+      "HEAD",
+    ]);
+    const sha = stdout.trim();
+    return sha.length > 0 ? sha : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const PROPOSAL_LABEL: Record<string, string> = {
+  drafted: "drafted",
+  owner_review: "awaiting approval",
+  handed_off: "approved",
+};
+
+// The milestone-style run summary, sent once for the final generation phase.
+function renderRunSummary(summary: RunSummary, usage?: UsageLine): string {
+  const lines: string[] = [
+    `📦 <b>${escapeHtml(summary.projectName)} — build complete</b>`,
+    "",
+    "✅ conversation",
+    `📋 proposal → ${PROPOSAL_LABEL[summary.proposalState ?? ""] ?? summary.proposalState ?? "drafted"}`,
+    "📄 blueprint translated",
+    `🔨 generation (${summary.phaseCount}/${summary.phaseCount} phases)`,
+    "🔒 verification · typecheck / format / test",
+  ];
+  if (summary.commit !== undefined)
+    lines.push(
+      `🚀 publication · commit <code>${escapeHtml(summary.commit)}</code>`,
+    );
+  if (usage !== undefined) {
+    lines.push("");
+    lines.push(
+      `🤖 <code>${escapeHtml(usage.model)}</code> · ${escapeHtml(usage.provider)}`,
+    );
+    lines.push(`💰 ${formatUsd(usage.costUsdMicros)}`);
+  }
+  return lines.join("\n");
 }
 
 const CATEGORY_FOR: Record<string, ReportCategory> = {
@@ -498,6 +659,30 @@ export class TelegramRunNotifier implements RunNotifier {
         this.facts === undefined
           ? {}
           : await this.facts.usageFor(event.taskId).catch(() => ({}));
+
+      // The final generation phase is a run summary, not a task report. It
+      // aggregates the milestone chain into one message and is the thing the
+      // owner asked to receive when the build is done.
+      if (event.outcome === "succeeded" && this.facts !== undefined) {
+        let summary: RunSummary | undefined;
+        try {
+          summary = await this.facts.runSummaryFor(event.taskId);
+        } catch {
+          summary = undefined;
+        }
+        if (summary !== undefined) {
+          await this.spinner?.stop(this.chatId);
+          for (const part of splitForTelegram(
+            renderRunSummary(summary, facts.usage),
+          ))
+            await this.transport.send("sendMessage", {
+              chat_id: this.chatId,
+              text: part,
+              parse_mode: "HTML",
+            });
+          return;
+        }
+      }
 
       // A conversation the owner is having in Telegram gets its answer back,
       // not a task report about it.
