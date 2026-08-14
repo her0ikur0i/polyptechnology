@@ -496,18 +496,18 @@ code {
 .chat-thread {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  max-height: 460px;
+  gap: 18px;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto 16px;
+  max-height: 62vh;
   overflow-y: auto;
-  padding: 4px 4px 16px;
-  margin-bottom: 16px;
+  padding: 8px 4px 20px;
 }
 .chat-bubble {
-  max-width: 80%;
-  padding: 10px 14px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .chat-thread__spacer {
   flex: 0 0 auto;
@@ -611,11 +611,19 @@ code {
 }
 .chat-bubble--owner {
   align-self: flex-end;
-  background: linear-gradient(135deg, var(--cyan) 0%, transparent 140%);
-  background-color: var(--panel);
+  max-width: min(46ch, 88%);
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background:
+    linear-gradient(135deg, rgba(83, 213, 255, 0.12), transparent 170%),
+    var(--panel);
 }
 .chat-bubble--assistant {
-  align-self: flex-start;
+  align-self: stretch;
+}
+.chat-bubble--assistant .chat-bubble__role {
+  display: none;
 }
 .chat-bubble--pending p {
   color: var(--muted);
@@ -628,6 +636,9 @@ code {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.03);
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
 }
 .composer label {
   display: grid;
