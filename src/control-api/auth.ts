@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import type { AppConfig } from "../config.js";
+import { SESSION_COOKIE, readCookie, verifySession } from "./session.js";
 
 export interface OwnerIdentity {
   authenticated: boolean;
@@ -21,10 +22,23 @@ const CLOUDFLARE_ACCESS_EMAIL_HEADER = "cf-access-authenticated-user-email";
 // reads its standard identity header -- this server never performs a login
 // flow itself, matching docs/architecture/adr-0003 ("backend authentication
 // remains authoritative", not this app inventing its own).
-export function identifyOwner(config: AppConfig) {
+// ACCESS_AUTH_MODE=password is the self-contained owner login: the app issues
+// a signed session cookie at /api/v1/auth/login and this middleware checks it.
+export function identifyOwner(config: AppConfig, sessionSecret?: string) {
   return (req: Request, _res: Response, next: NextFunction): void => {
     if (config.accessAuthMode === "disabled") {
       req.owner = { authenticated: true, actorId: "local-owner" };
+      next();
+      return;
+    }
+    if (config.accessAuthMode === "password") {
+      const token = readCookie(req.headers.cookie, SESSION_COOKIE);
+      req.owner =
+        sessionSecret !== undefined &&
+        token !== undefined &&
+        verifySession(sessionSecret, token, Date.now())
+          ? { authenticated: true, actorId: "owner" }
+          : { authenticated: false, actorId: "" };
       next();
       return;
     }

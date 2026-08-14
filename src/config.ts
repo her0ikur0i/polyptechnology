@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
+import { hashPassword } from "./control-api/session.js";
 
 export type Environment = "development" | "test" | "production";
-export type AccessAuthMode = "disabled" | "cloudflare";
+export type AccessAuthMode = "disabled" | "cloudflare" | "password";
 
 export interface AppConfig {
   environment: Environment;
@@ -9,6 +10,9 @@ export interface AppConfig {
   port: number;
   databaseUrl: string;
   accessAuthMode: AccessAuthMode;
+  // Scrypt hash (`salt:hash`, see src/control-api/session.ts) of the owner
+  // password, present only when accessAuthMode === "password".
+  ownerPasswordHash?: string;
   trustedProxyHops: number;
   // Requests per minute per client address. Sized well above what the
   // dashboard itself generates -- the reply poller in
@@ -63,8 +67,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const accessAuthMode = enumValue(
     "ACCESS_AUTH_MODE",
     env.ACCESS_AUTH_MODE ?? "disabled",
-    ["disabled", "cloudflare"] as const,
+    ["disabled", "cloudflare", "password"] as const,
   );
+  let ownerPasswordHash: string | undefined;
+  if (accessAuthMode === "password") {
+    const ownerPassword = env.OWNER_PASSWORD;
+    if (ownerPassword === undefined || ownerPassword.length < 8)
+      throw new Error(
+        "ACCESS_AUTH_MODE=password requires OWNER_PASSWORD of at least 8 characters",
+      );
+    ownerPasswordHash = hashPassword(ownerPassword);
+  }
   if (environment === "production" && accessAuthMode === "disabled") {
     throw new Error("ACCESS_AUTH_MODE cannot be disabled in production");
   }
@@ -126,6 +139,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: integer("PORT", env.PORT ?? "4173", 1, 65535),
     databaseUrl: env.DATABASE_URL ?? "postgresql://polyp@127.0.0.1:5432/polyp",
     accessAuthMode,
+    ...(ownerPasswordHash === undefined ? {} : { ownerPasswordHash }),
     // Raising this above 0 makes Express trust that many leading
     // X-Forwarded-For entries, which are attacker-controlled unless exactly
     // that many *verified* proxies sit in front and each overwrites rather

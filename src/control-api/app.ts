@@ -15,6 +15,12 @@ import { OwnerPolicyService } from "../policy/owner-policy-service.js";
 import { PostgresTelegramSettingsStore } from "./telegram-settings-store.js";
 import { buildDashboardSnapshot } from "./snapshot.js";
 import { identifyOwner, requireCsrf, requireOwner } from "./auth.js";
+import {
+  SESSION_COOKIE,
+  SESSION_TTL_MS,
+  issueSession,
+  verifyPassword,
+} from "./session.js";
 import { NodeWorkspaceProvisioner } from "../factory/workspace-provisioner.js";
 import { createGenerationTask } from "../factory/generation-task.js";
 import { FactoryLifecycleAdvancer } from "../factory/generation-lifecycle.js";
@@ -31,6 +37,72 @@ import {
 } from "./telegram-webhook.js";
 import { TelegramHttpTransport } from "../telegram/gateway.js";
 import { renderReport } from "../telegram/report.js";
+
+const LOGIN_PAGE_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Polyp — Owner sign in</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh; display: grid; place-items: center;
+    background: #011d1c; color: #edfffe;
+    font-family: "Inter", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  }
+  .card {
+    width: min(22rem, calc(100vw - 2rem));
+    background: #012624; border: 1px solid rgba(46,232,199,.15);
+    border-radius: 16px; padding: 2rem 1.8rem;
+  }
+  .logo {
+    width: 2.5rem; height: 2.5rem; border-radius: 10px; margin-bottom: 1.2rem;
+    background: linear-gradient(120deg, #2ce8c7, #9ee8d1 45%, #d3b8f5);
+    display: grid; place-items: center; color: #011d1c; font-weight: 800;
+  }
+  h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: .01em; margin-bottom: .3rem; }
+  p { color: #bbc7c6; font-size: .85rem; margin-bottom: 1.4rem; }
+  label { display: block; font-size: .72rem; text-transform: uppercase; letter-spacing: .12em; color: #7f9492; margin-bottom: .4rem; }
+  input {
+    width: 100%; padding: .65rem .8rem; border-radius: 8px;
+    background: #003734; border: 1px solid rgba(158,232,209,.2); color: #edfffe;
+    font: inherit; margin-bottom: 1rem;
+  }
+  input:focus { outline: 2px solid #d3b8f5; outline-offset: 1px; }
+  button {
+    width: 100%; padding: .65rem; border-radius: 8px; border: none; cursor: pointer;
+    background: linear-gradient(120deg, #2ce8c7, #9ee8d1 45%, #d3b8f5);
+    color: #011d1c; font: inherit; font-weight: 700;
+  }
+  .error { color: #ff9db3; font-size: .8rem; margin-top: .8rem; min-height: 1rem; }
+</style>
+</head>
+<body>
+  <form class="card" id="login">
+    <div class="logo">P</div>
+    <h1>Polyp Factory Console</h1>
+    <p>Owner sign-in required to operate the factory.</p>
+    <label for="password">Owner password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required autofocus />
+    <button type="submit">Sign in</button>
+    <div class="error" role="alert"></div>
+  </form>
+  <script>
+    document.getElementById("login").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const password = document.getElementById("password").value;
+      const response = await fetch("/api/v1/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (response.ok) { window.location.href = "/"; return; }
+      document.querySelector(".error").textContent = "Invalid password.";
+    });
+  </script>
+</body>
+</html>`;
 
 export interface ControlApiDeps {
   pool: Pool;
@@ -117,7 +189,7 @@ export function createControlApi(deps: ControlApiDeps): Express {
   const app = express();
   app.set("trust proxy", config.trustedProxyHops);
   app.use(express.json({ limit: "256kb" }));
-  app.use(identifyOwner(config));
+  app.use(identifyOwner(config, csrfSecret));
 
   // Request throttling (CONTRACT-015 M3). The control plane spends real money
   // per request through AiGateway, so this is a budget control as much as an
@@ -326,6 +398,50 @@ export function createControlApi(deps: ControlApiDeps): Express {
         config.telegramUserId,
       ),
     );
+  }
+
+  if (config.accessAuthMode === "password") {
+    // Owner sign-in is the whole surface here, so brute-force gets a dedicated,
+    // much tighter budget than the general API limiter (which is sized for the
+    // dashboard's own polling traffic). A flood of guesses must not be able to
+    // spend the owner's general allowance or win by volume.
+    const loginLimiter = rateLimit({
+      windowMs: 60_000,
+      limit: 10,
+      standardHeaders: true,
+      legacyHeaders: false,
+      message: { error: "too many login attempts" },
+    });
+    app.get("/login", (_req, res) => {
+      res.type("html").send(LOGIN_PAGE_HTML);
+    });
+    app.post("/api/v1/auth/login", loginLimiter, (req, res) => {
+      const password = req.body?.password;
+      if (
+        typeof password !== "string" ||
+        config.ownerPasswordHash === undefined ||
+        !verifyPassword(password, config.ownerPasswordHash)
+      ) {
+        res.status(401).json({ error: "invalid password" });
+        return;
+      }
+      const token = issueSession(csrfSecret, Date.now() + SESSION_TTL_MS);
+      const secure = config.environment === "production" ? "; Secure" : "";
+      res.setHeader(
+        "Set-Cookie",
+        `${SESSION_COOKIE}=${token}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${Math.floor(
+          SESSION_TTL_MS / 1000,
+        )}${secure}`,
+      );
+      res.json({ ok: true });
+    });
+    app.post("/api/v1/auth/logout", (_req, res) => {
+      res.setHeader(
+        "Set-Cookie",
+        `${SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0`,
+      );
+      res.json({ ok: true });
+    });
   }
 
   app.post(
@@ -1143,6 +1259,22 @@ export function createControlApi(deps: ControlApiDeps): Express {
       }
       next();
     });
+    if (config.accessAuthMode === "password") {
+      // Unauthenticated visitors are redirected to the sign-in page before any
+      // dashboard HTML or asset is served. The login page and the auth API are
+      // the only public paths; everything else requires a valid session.
+      app.use((req, res, next) => {
+        if (req.owner?.authenticated === true) {
+          next();
+          return;
+        }
+        if (req.path === "/login" || req.path.startsWith("/api/v1/auth/")) {
+          next();
+          return;
+        }
+        res.redirect("/login");
+      });
+    }
     app.use(express.static(deps.dashboardDistPath));
     app.get("/*splat", (req, res, next) => {
       if (req.path.startsWith("/api/")) {
