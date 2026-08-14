@@ -41,11 +41,7 @@ import {
   TelegramRunNotifier,
 } from "../operations/run-notifier.js";
 import { TelegramHttpTransport } from "../telegram/gateway.js";
-import {
-  DEFAULT_SPINNER_ANIMATION_URL,
-  TelegramSpinner,
-} from "../telegram/spinner.js";
-import { TelegramPickHandler } from "../telegram/pick-handler.js";
+import { TelegramSpinner } from "../telegram/spinner.js";
 import {
   PostgresUpdateOffsetStore,
   TelegramUpdatePoller,
@@ -100,11 +96,11 @@ const ttlMs = 30_000,
           `${TELEGRAM_ACTOR}:${telegramConversationKey(telegramChatId)}:conversation`,
         ),
   telegramSpinner =
-    telegramBotToken !== undefined
+    telegramBotToken !== undefined &&
+    process.env.SPINNER_STICKER_FILE_ID !== undefined
       ? new TelegramSpinner(
           new TelegramHttpTransport(telegramBotToken),
           process.env.SPINNER_STICKER_FILE_ID,
-          process.env.SPINNER_ANIMATION_URL ?? DEFAULT_SPINNER_ANIMATION_URL,
         )
       : undefined,
   runNotifier =
@@ -162,11 +158,6 @@ const ttlMs = 30_000,
           new TelegramHttpTransport(telegramBotToken, fetch, 40_000),
           new PostgresUpdateOffsetStore(pool),
           new CompositeUpdateHandler([
-            // First so "pick:*" sample buttons are answered here, not shown as
-            // "this approval no longer exists" by the approval handler.
-            new TelegramPickHandler(
-              new TelegramHttpTransport(telegramBotToken),
-            ),
             new TelegramApprovalUpdateHandler(
               new TelegramHttpTransport(telegramBotToken),
               new PostgresTelegramDecisionService(
