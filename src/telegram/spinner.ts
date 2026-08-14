@@ -5,16 +5,14 @@ import type { TelegramRequester } from "./gateway.js";
 // real message whose frame is edited every intervalMs, then deleted when the
 // reply lands -- a spinning icon that disappears the moment the answer is in.
 export const SPINNER_FRAMES = [
-  "⠋",
-  "⠙",
-  "⠹",
-  "⠸",
-  "⠼",
-  "⠴",
-  "⠦",
-  "⠧",
-  "⠇",
-  "⠏",
+  "⠁",
+  "⠂",
+  "⠄",
+  "⡀",
+  "⢀",
+  "⠠",
+  "⠐",
+  "⠈",
 ] as const;
 
 interface ActiveSpinner {
