@@ -426,7 +426,11 @@ export function createControlApi(deps: ControlApiDeps): Express {
         return;
       }
       const token = issueSession(csrfSecret, Date.now() + SESSION_TTL_MS);
-      const secure = config.environment === "production" ? "; Secure" : "";
+      // The tunnel always terminates HTTPS at the Cloudflare edge, so mark the
+      // cookie Secure whenever the request arrived over HTTPS (req.secure is
+      // truthful only because TRUSTED_PROXY_HOPS=1 and the server binds to
+      // loopback, so only cloudflared can set X-Forwarded-Proto).
+      const secure = req.secure ? "; Secure" : "";
       res.setHeader(
         "Set-Cookie",
         `${SESSION_COOKIE}=${token}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${Math.floor(
@@ -435,10 +439,13 @@ export function createControlApi(deps: ControlApiDeps): Express {
       );
       res.json({ ok: true });
     });
-    app.post("/api/v1/auth/logout", (_req, res) => {
+    app.post("/api/v1/auth/logout", (req, res) => {
+      // Clearing must carry the same Secure attribute as the cookie it clears,
+      // or a browser that stored a Secure cookie will not remove it.
+      const secure = req.secure ? "; Secure" : "";
       res.setHeader(
         "Set-Cookie",
-        `${SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0`,
+        `${SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0${secure}`,
       );
       res.json({ ok: true });
     });

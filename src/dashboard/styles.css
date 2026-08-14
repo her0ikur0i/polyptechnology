@@ -70,6 +70,34 @@ textarea {
   display: flex;
   flex-direction: column;
   z-index: 20;
+  transition: width 0.2s ease;
+}
+@media (min-width: 761px) {
+  .sidebar--collapsed {
+    width: 72px;
+    padding: 24px 10px;
+  }
+  .sidebar--collapsed .brand {
+    padding: 4px 2px 28px;
+    justify-content: center;
+  }
+  .sidebar--collapsed .brand span:last-child {
+    display: none;
+  }
+  .sidebar--collapsed nav a {
+    justify-content: center;
+    padding: 0;
+  }
+  .sidebar--collapsed nav a span,
+  .sidebar--collapsed .nav-chevron {
+    display: none;
+  }
+  .sidebar--collapsed .sidebar__foot {
+    display: none;
+  }
+  .sidebar--collapsed + .workspace {
+    padding-left: 72px;
+  }
 }
 .brand {
   display: flex;
@@ -169,6 +197,38 @@ textarea {
   gap: 8px;
   color: var(--green);
   font-size: 13px;
+}
+.rail-toggle {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  cursor: pointer;
+}
+.rail-toggle:hover {
+  color: var(--text);
+  background: #13243a;
+}
+.logout {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 14px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+.logout:hover {
+  color: var(--text);
+  border-color: var(--cyan);
 }
 .eyebrow {
   margin: 0 0 5px;
@@ -908,6 +968,9 @@ code {
   .menu {
     display: grid;
     place-items: center;
+  }
+  .rail-toggle {
+    display: none;
   }
   .nav-close {
     position: absolute;

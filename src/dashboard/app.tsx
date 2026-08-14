@@ -8,9 +8,12 @@ import {
   Factory,
   FolderKanban,
   GitPullRequestArrow,
+  LogOut,
   MessageSquare,
   Menu,
   Network,
+  PanelLeftClose,
+  PanelLeftOpen,
   ServerCog,
   Settings2,
   ShieldCheck,
@@ -72,6 +75,10 @@ const nav = [
 ];
 function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
   const [open, setOpen] = useState(false);
+  // The left rail starts collapsed on every screen (CONTRACT-018 M0): an
+  // icon-only rail by default, expandable on demand. This is independent of
+  // the mobile overlay handled by `compact`/`open` below.
+  const [collapsed, setCollapsed] = useState(true);
   const [compact, setCompact] = useState(
     () =>
       typeof window.matchMedia === "function" &&
@@ -95,6 +102,10 @@ function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
     setOpen(false);
     requestAnimationFrame(() => menuRef.current?.focus());
   };
+  const logout = async () => {
+    await fetch("/api/v1/auth/logout", { method: "POST" }).catch(() => {});
+    window.location.href = "/login";
+  };
   return (
     <div className="shell">
       <a className="skip-link" href="#main-content">
@@ -102,7 +113,11 @@ function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
       </a>
       <aside
         id="primary-sidebar"
-        className={open ? "sidebar sidebar--open" : "sidebar"}
+        className={
+          "sidebar" +
+          (collapsed ? " sidebar--collapsed" : "") +
+          (open ? " sidebar--open" : "")
+        }
         inert={compact && !open}
         aria-hidden={compact && !open}
         onKeyDown={(event) => {
@@ -132,6 +147,7 @@ function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
               key={to}
               to={to}
               end={to === "/"}
+              title={label}
               onClick={() => setOpen(false)}
             >
               <Icon size={18} />
@@ -165,6 +181,13 @@ function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
           >
             <Menu />
           </button>
+          <button
+            className="rail-toggle"
+            aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
+            onClick={() => setCollapsed((value) => !value)}
+          >
+            {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+          </button>
           <div>
             <p className="eyebrow">CONTROL PLANE</p>
             <strong>Master Dashboard</strong>
@@ -172,6 +195,10 @@ function Shell({ snapshot }: { snapshot: DashboardSnapshot }) {
           <div className="topbar__status">
             <ShieldCheck />
             <span>Owner session</span>
+            <button className="logout" onClick={() => void logout()}>
+              <LogOut />
+              <span>Log out</span>
+            </button>
           </div>
         </header>
         <main id="main-content">
