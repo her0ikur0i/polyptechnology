@@ -103,6 +103,7 @@ const ttlMs = 30_000,
     telegramBotToken !== undefined
       ? new TelegramSpinner(
           new TelegramHttpTransport(telegramBotToken),
+          process.env.SPINNER_STICKER_FILE_ID,
           process.env.SPINNER_ANIMATION_URL ?? DEFAULT_SPINNER_ANIMATION_URL,
         )
       : undefined,

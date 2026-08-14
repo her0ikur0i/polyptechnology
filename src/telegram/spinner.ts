@@ -23,6 +23,7 @@ export class TelegramSpinner {
 
   constructor(
     private readonly requester: TelegramRequester,
+    private readonly stickerFileId?: string,
     private readonly animationUrl?: string,
     private readonly frames: readonly string[] = SPINNER_FRAMES,
     private readonly intervalMs = 160,
@@ -33,6 +34,18 @@ export class TelegramSpinner {
   async start(chatId: string): Promise<void> {
     await this.stop(chatId);
     try {
+      // Preferred: an animated sticker the owner's Lottie was converted to.
+      // Telegram renders it natively as a looping animation; delete on stop().
+      if (this.stickerFileId !== undefined) {
+        const sent = (await this.requester.call("sendSticker", {
+          chat_id: chatId,
+          sticker: this.stickerFileId,
+        })) as { result?: { message_id?: number } };
+        const messageId = sent?.result?.message_id;
+        if (messageId !== undefined) this.active.set(chatId, { messageId });
+        return;
+      }
+
       if (this.animationUrl !== undefined) {
         const sent = (await this.requester.call("sendAnimation", {
           chat_id: chatId,
