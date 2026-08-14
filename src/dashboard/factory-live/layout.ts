@@ -1,5 +1,14 @@
 import type { LiveLayout, LiveNode, LiveSnapshot, Point } from "./types.js";
 const quantize = (value: number) => Math.round(value * 1000) / 1000;
+// A stable pseudo-depth per node (hash of id, widened by hierarchy depth) so
+// the mesh is deterministic across renders yet reads as three-dimensional.
+function zFor(id: string, depth: number): number {
+  let hash = 0;
+  for (let index = 0; index < id.length; index++)
+    hash = (hash * 31 + id.charCodeAt(index)) | 0;
+  const spread = 70 + depth * 45;
+  return ((Math.abs(hash) % 1000) / 1000 - 0.5) * 2 * spread;
+}
 export function layoutTopology(
   snapshot: LiveSnapshot,
   width: number,
@@ -30,6 +39,7 @@ export function layoutTopology(
       y: quantize(y),
       depth,
       radius: Math.max(4, 12 - depth * 1.4),
+      z: quantize(zFor(node.id, depth)),
     });
     const nested = children.get(node.id) ?? [],
       ring = Math.min(w, h) * (0.12 + depth * 0.035);
@@ -95,12 +105,45 @@ export class LayoutCache {
     return this.topologyBuilds;
   }
 }
-export function hitTest(layout: LiveLayout, x: number, y: number) {
+export interface ProjectedPoint {
+  x: number;
+  y: number;
+  depth: number;
+  radius: number;
+}
+// Rotates a node's (x, z) plane around the vertical axis and applies a light
+// perspective scale. Depth is returned so the renderer can sort back-to-front.
+export function projectPoint(
+  point: Point,
+  centerX: number,
+  rotation: number,
+): ProjectedPoint {
+  const dx = point.x - centerX;
+  const cos = Math.cos(rotation),
+    sin = Math.sin(rotation);
+  const rotX = dx * cos - point.z * sin;
+  const rotZ = dx * sin + point.z * cos;
+  const scale = 1 + rotZ / 1600;
+  return {
+    x: centerX + rotX,
+    y: point.y,
+    depth: rotZ,
+    radius: Math.max(3, point.radius * scale),
+  };
+}
+export function hitTest(
+  layout: LiveLayout,
+  x: number,
+  y: number,
+  rotation = 0,
+) {
+  const centerX = layout.width / 2;
   let match: string | undefined,
     distance = Infinity;
   for (const [id, point] of layout.positions) {
-    const candidate = Math.hypot(point.x - x, point.y - y);
-    if (candidate <= point.radius + 8 && candidate < distance) {
+    const projected = projectPoint(point, centerX, rotation);
+    const candidate = Math.hypot(projected.x - x, projected.y - y);
+    if (candidate <= projected.radius + 8 && candidate < distance) {
       match = id;
       distance = candidate;
     }

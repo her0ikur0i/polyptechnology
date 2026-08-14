@@ -4,6 +4,7 @@ import {
   type LiveLayout,
   type LiveSnapshot,
 } from "./types.js";
+import { projectPoint, type ProjectedPoint } from "./layout.js";
 import { resolvedState } from "./events.js";
 const colors = {
   idle: "#8fa3ba",
@@ -29,6 +30,10 @@ export function sizeCanvas(
   context.setTransform(ratio, 0, 0, ratio, 0, 0);
   return context;
 }
+// Renders the factory as a pseudo-3D mesh: the layout's (x, z) plane is rotated
+// around the vertical axis by `rotation`, every node is projected through
+// projectPoint, and edges/nodes are drawn back-to-front by that projection's
+// depth. Canvas 2D only -- no 3D library (system spec §21).
 export function drawFactory(
   context: CanvasRenderingContext2D,
   snapshot: LiveSnapshot,
@@ -36,6 +41,7 @@ export function drawFactory(
   projection: EventProjection,
   nowMs: number,
   motion: boolean,
+  rotation = 0,
 ) {
   context.clearRect(0, 0, layout.width, layout.height);
   const gradient = context.createRadialGradient(
@@ -50,14 +56,51 @@ export function drawFactory(
   gradient.addColorStop(1, "#07101d");
   context.fillStyle = gradient;
   context.fillRect(0, 0, layout.width, layout.height);
-  context.lineWidth = 1;
-  for (const edge of snapshot.edges) {
-    const source = layout.positions.get(edge.sourceId),
-      target = layout.positions.get(edge.targetId);
-    if (!source || !target) continue;
+
+  const centerX = layout.width / 2;
+  const projected = new Map<string, ProjectedPoint>();
+  for (const node of snapshot.nodes) {
+    const point = layout.positions.get(node.id);
+    if (point) projected.set(node.id, projectPoint(point, centerX, rotation));
+  }
+
+  // The orchestrator is a bright core the clusters radiate from.
+  const factory = snapshot.nodes.find((node) => node.kind === "factory");
+  const core = factory ? projected.get(factory.id) : undefined;
+  if (core) {
+    const glow = context.createRadialGradient(
+      core.x,
+      core.y,
+      0,
+      core.x,
+      core.y,
+      core.radius * 7,
+    );
+    glow.addColorStop(0, "rgba(83,213,255,0.5)");
+    glow.addColorStop(0.35, "rgba(83,213,255,0.14)");
+    glow.addColorStop(1, "rgba(83,213,255,0)");
+    context.fillStyle = glow;
     context.beginPath();
-    context.moveTo(source.x, source.y);
-    context.lineTo(target.x, target.y);
+    context.arc(core.x, core.y, core.radius * 7, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  // Edges first, depth-sorted back-to-front so nearer trunks draw over farther
+  // ones rather than the flat crossings a single pass produces.
+  context.lineWidth = 1;
+  const edgesByDepth = snapshot.edges.map((edge) => {
+    const a = projected.get(edge.sourceId),
+      b = projected.get(edge.targetId);
+    return { edge, depth: a && b ? (a.depth + b.depth) / 2 : 0 };
+  });
+  edgesByDepth.sort((a, b) => a.depth - b.depth);
+  for (const { edge } of edgesByDepth) {
+    const a = projected.get(edge.sourceId),
+      b = projected.get(edge.targetId);
+    if (!a || !b) continue;
+    context.beginPath();
+    context.moveTo(a.x, a.y);
+    context.lineTo(b.x, b.y);
     context.strokeStyle =
       edge.relation === "returns"
         ? "#45d49a66"
@@ -66,9 +109,19 @@ export function drawFactory(
           : "#526a8544";
     context.stroke();
   }
-  for (const node of snapshot.nodes) {
-    const point = layout.positions.get(node.id);
-    if (!point) continue;
+
+  const nodesByDepth = snapshot.nodes
+    .map((node) => ({ node, point: projected.get(node.id) }))
+    .filter(
+      (
+        entry,
+      ): entry is {
+        node: (typeof snapshot.nodes)[number];
+        point: ProjectedPoint;
+      } => entry.point !== undefined,
+    )
+    .sort((a, b) => b.point.depth - a.point.depth);
+  for (const { node, point } of nodesByDepth) {
     const state = resolvedState(node.id, node.state, projection);
     context.beginPath();
     context.arc(
@@ -84,7 +137,8 @@ export function drawFactory(
     context.shadowBlur = state === "idle" || state === "stale" ? 0 : 14;
     context.fill();
     context.shadowBlur = 0;
-    if (point.depth < 3) {
+    const hierarchyDepth = layout.positions.get(node.id)?.depth ?? 0;
+    if (hierarchyDepth < 3) {
       context.fillStyle = "#dce8f5";
       context.font = "11px system-ui";
       context.fillText(
@@ -94,6 +148,7 @@ export function drawFactory(
       );
     }
   }
+
   if (motion) {
     for (const [index, flow] of projection.flows
       .slice(-LIVE_CAPS.particles)
@@ -101,10 +156,10 @@ export function drawFactory(
       if (!flow.edgeId) continue;
       const edge = snapshot.edges.find((value) => value.id === flow.edgeId);
       if (!edge) continue;
-      const a = layout.positions.get(
+      const a = projected.get(
           flow.direction === "out" ? edge.sourceId : edge.targetId,
         ),
-        b = layout.positions.get(
+        b = projected.get(
           flow.direction === "out" ? edge.targetId : edge.sourceId,
         );
       if (!a || !b) continue;

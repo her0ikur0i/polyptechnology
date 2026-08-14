@@ -27,6 +27,12 @@ export function FactoryLive({
     hostRef = useRef<HTMLDivElement>(null),
     cache = useRef(new LayoutCache()),
     budget = useRef(new FrameBudget()),
+    // Pseudo-3D rotation, drag-to-rotate with inertia (DESIGN.md §6).
+    rotationRef = useRef(0),
+    velocityRef = useRef(0),
+    dragRef = useRef<
+      { startX: number; startRotation: number; lastX: number } | undefined
+    >(undefined),
     [selected, setSelected] = useState(snapshot.nodes[0]?.id),
     [inViewport, setInViewport] = useState(true),
     [documentVisible, setDocumentVisible] = useState(!document.hidden),
@@ -79,6 +85,11 @@ export function FactoryLive({
       stopped = false;
     const render = (time: number) => {
       if (stopped) return;
+      // Inertia: after a drag ends, keep the mesh rotating, decaying to rest.
+      if (!dragRef.current && Math.abs(velocityRef.current) > 0.0001) {
+        rotationRef.current += velocityRef.current;
+        velocityRef.current *= 0.95;
+      }
       const rect = host.getBoundingClientRect(),
         width = Math.max(320, Math.floor(rect.width)),
         height = Math.max(360, Math.floor(Math.min(720, width * 0.62)));
@@ -93,6 +104,7 @@ export function FactoryLive({
           projection,
           time,
           !reduced && !stale && replaySequence === undefined,
+          rotationRef.current,
         );
         budget.current.record(performance.now() - start);
         last = time;
@@ -114,8 +126,29 @@ export function FactoryLive({
       layout,
       event.clientX - rect.left,
       event.clientY - rect.top,
+      rotationRef.current,
     );
     if (id) setSelected(id);
+  };
+  const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    dragRef.current = {
+      startX: event.clientX,
+      startRotation: rotationRef.current,
+      lastX: event.clientX,
+    };
+    velocityRef.current = 0;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const onPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    rotationRef.current =
+      drag.startRotation + (event.clientX - drag.startX) / 220;
+    velocityRef.current = (event.clientX - drag.lastX) / 220;
+    drag.lastX = event.clientX;
+  };
+  const onPointerUp = () => {
+    dragRef.current = undefined;
   };
   return (
     <div className="live-grid">
@@ -146,14 +179,19 @@ export function FactoryLive({
         <canvas
           ref={canvasRef}
           onClick={choose}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
           aria-label="Factory topology visualization"
+          style={{ cursor: "grab", touchAction: "pan-y" }}
         >
-          Factory topology. The adjacent semantic hierarchy contains the same
-          nodes and states.
+          Factory topology. Drag to rotate; the adjacent semantic hierarchy
+          contains the same nodes and states.
         </canvas>
         <p className="live-caption">
-          Canvas selection changes inspection only. Workflow actions remain in
-          authoritative records.
+          Drag to rotate the mesh. Canvas selection changes inspection only;
+          workflow actions remain in authoritative records.
         </p>
       </section>
       <aside

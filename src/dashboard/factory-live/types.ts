@@ -53,6 +53,10 @@ export interface Point {
   y: number;
   depth: number;
   radius: number;
+  // Pseudo-depth for the Y-axis rotation: a stable value per node so the mesh
+  // reads as three-dimensional (clusters radiate on their own axes) without a
+  // 3D library -- Canvas 2D only, per the system specification.
+  z: number;
 }
 export interface LiveLayout {
   structureVersion: number;
