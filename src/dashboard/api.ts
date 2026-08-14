@@ -333,6 +333,9 @@ export interface ConversationMessage {
     requestedModelId: string;
     resolvedModelId?: string;
     costUsdMicros: number;
+    inputTokens: number;
+    outputTokens: number;
+    elapsedMs: number;
   };
 }
 export interface ConversationAttachment {

@@ -310,6 +310,9 @@ type ConversationMessagePayload = {
     requestedModelId: string;
     resolvedModelId?: string;
     costUsdMicros: number;
+    inputTokens: number;
+    outputTokens: number;
+    elapsedMs: number;
   };
 };
 const messageRoles = new Set(["owner", "assistant", "system"]);
@@ -321,7 +324,10 @@ function messageAttribution(
     string(value.provider) &&
     string(value.requestedModelId) &&
     (value.resolvedModelId === undefined || string(value.resolvedModelId)) &&
-    finite(value.costUsdMicros)
+    finite(value.costUsdMicros) &&
+    finite(value.inputTokens) &&
+    finite(value.outputTokens) &&
+    finite(value.elapsedMs)
   );
 }
 function conversationMessage(

@@ -67,11 +67,19 @@ function formatCost(costUsdMicros: number) {
   return `$${(costUsdMicros / 1_000_000).toFixed(6)}`;
 }
 
+function formatElapsed(elapsedMs: number) {
+  if (elapsedMs < 1000) return `${elapsedMs}ms`;
+  if (elapsedMs < 60_000) return `${(elapsedMs / 1000).toFixed(1)}s`;
+  return `${(elapsedMs / 60_000).toFixed(1)}m`;
+}
+
 function modelLabel(message: ConversationMessage) {
   const attribution = message.modelAttribution;
   if (attribution === undefined) return undefined;
   const model = attribution.resolvedModelId ?? attribution.requestedModelId;
-  return `${attribution.provider} · ${model} · ${formatCost(attribution.costUsdMicros)}`;
+  const tokens = `${attribution.inputTokens.toLocaleString()} in · ${attribution.outputTokens.toLocaleString()} out`;
+  const elapsed = formatElapsed(attribution.elapsedMs);
+  return `${attribution.provider} · ${model} · ${tokens} · ${formatCost(attribution.costUsdMicros)} · ${elapsed}`;
 }
 
 function virtualWindowFor(

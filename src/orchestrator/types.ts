@@ -23,6 +23,9 @@ export interface Message {
     requestedModelId: string;
     resolvedModelId?: string;
     costUsdMicros: number;
+    inputTokens: number;
+    outputTokens: number;
+    elapsedMs: number;
   };
 }
 export type AttachmentState =

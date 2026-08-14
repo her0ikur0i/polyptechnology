@@ -43,6 +43,9 @@ const message = (row: {
   requested_model_id?: string | null;
   resolved_model_id?: string | null;
   cost_usd_micros?: string | null;
+  input_tokens?: string | null;
+  output_tokens?: string | null;
+  elapsed_ms?: string | null;
 }): Message => ({
   id: row.id,
   conversationId: row.conversation_id,
@@ -63,6 +66,9 @@ const message = (row: {
             ? { resolvedModelId: row.resolved_model_id }
             : {}),
           costUsdMicros: Number(row.cost_usd_micros ?? 0),
+          inputTokens: Number(row.input_tokens ?? 0),
+          outputTokens: Number(row.output_tokens ?? 0),
+          elapsedMs: Number(row.elapsed_ms ?? 0),
         },
       }
     : {}),
@@ -256,7 +262,10 @@ export class PostgresConversationStore implements ConversationStore {
               ledger.provider_id,
               ledger.requested_model_id,
               ledger.resolved_model_id,
-              ledger.cost_usd_micros
+              ledger.cost_usd_micros,
+              ledger.input_tokens,
+              ledger.output_tokens,
+              ledger.elapsed_ms
          FROM conversation_messages m
          JOIN conversations c
            ON c.id=m.conversation_id AND c.project_id=m.project_id
@@ -264,7 +273,13 @@ export class PostgresConversationStore implements ConversationStore {
            SELECT a.provider_id,
                   a.requested_model_id,
                   a.resolved_model_id,
-                  COALESCE(SUM(u.cost_usd_micros), 0) AS cost_usd_micros
+                  COALESCE(SUM(u.cost_usd_micros), 0) AS cost_usd_micros,
+                  COALESCE(SUM(u.input_tokens), 0) AS input_tokens,
+                  COALESCE(SUM(u.output_tokens), 0) AS output_tokens,
+                  COALESCE(
+                    (EXTRACT(EPOCH FROM (a.finalized_at - a.dispatched_at)) * 1000)::bigint,
+                    0
+                  ) AS elapsed_ms
              FROM ai_gateway_attempts a
              LEFT JOIN ai_usage_events u ON u.attempt_id=a.id
             WHERE a.attribution->>'taskId' = m.source_task_id::text

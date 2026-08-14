@@ -363,6 +363,9 @@ describe("dashboard", () => {
                   requestedModelId: "deepseek-v4-pro",
                   resolvedModelId: "deepseek-v4-pro",
                   costUsdMicros: 12_345,
+                  inputTokens: 500,
+                  outputTokens: 120,
+                  elapsedMs: 2100,
                 },
               },
             ],
@@ -381,7 +384,9 @@ describe("dashboard", () => {
       await screen.findByRole("button", { name: "Vendor invoice tracker" }),
     );
     expect(
-      await screen.findByText("deepseek · deepseek-v4-pro · $0.012345"),
+      await screen.findByText(
+        "deepseek · deepseek-v4-pro · 500 in · 120 out · $0.012345 · 2.1s",
+      ),
     ).toBeInTheDocument();
   });
   it("offers clarify-goals mode without exposing a raw model override", async () => {

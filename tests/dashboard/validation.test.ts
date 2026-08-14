@@ -263,6 +263,9 @@ describe("conversation start and message responses", () => {
       requestedModelId: "deepseek-v4-pro",
       resolvedModelId: "deepseek-v4-pro",
       costUsdMicros: 12_345,
+      inputTokens: 500,
+      outputTokens: 120,
+      elapsedMs: 2100,
     },
   };
   it("accepts a realistic conversation-start response", () => {
