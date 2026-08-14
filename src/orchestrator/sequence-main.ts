@@ -41,6 +41,7 @@ import {
   TelegramRunNotifier,
 } from "../operations/run-notifier.js";
 import { TelegramHttpTransport } from "../telegram/gateway.js";
+import { TelegramSpinner } from "../telegram/spinner.js";
 import {
   PostgresUpdateOffsetStore,
   TelegramUpdatePoller,
@@ -94,6 +95,10 @@ const ttlMs = 30_000,
         deterministicUuid(
           `${TELEGRAM_ACTOR}:${telegramConversationKey(telegramChatId)}:conversation`,
         ),
+  telegramSpinner =
+    telegramBotToken !== undefined
+      ? new TelegramSpinner(new TelegramHttpTransport(telegramBotToken))
+      : undefined,
   runNotifier =
     telegramBotToken !== undefined && telegramChatId !== undefined
       ? new TelegramRunNotifier(
@@ -101,6 +106,7 @@ const ttlMs = 30_000,
           telegramChatId,
           new PostgresRunFacts(pool),
           telegramConversationId,
+          telegramSpinner,
         )
       : undefined,
   sequence = new PostgresSequenceStore(pool),
@@ -177,6 +183,9 @@ const ttlMs = 30_000,
               attachmentStorageRoot:
                 process.env.ATTACHMENT_STORAGE_ROOT ??
                 "/var/lib/polyp/attachments",
+              ...(telegramSpinner === undefined
+                ? {}
+                : { spinner: telegramSpinner }),
             }),
             // Last in the chain, and it only answers slash messages. The
             // conversation handler ignores those, so exactly one of the two

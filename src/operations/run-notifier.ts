@@ -6,6 +6,7 @@ import type {
   UsageLine,
 } from "../telegram/report.js";
 import type { TelegramTransport } from "../telegram/gateway.js";
+import type { TelegramSpinner } from "../telegram/spinner.js";
 import {
   kindOf,
   subjectLine,
@@ -419,6 +420,9 @@ export class TelegramRunNotifier implements RunNotifier {
     // A run report is the right thing for work; for a conversation the answer
     // *is* the report, and prefixing it with task machinery would bury it.
     private readonly telegramConversationId?: string,
+    // Stops the animated spinner right before the answer lands, so the icon
+    // disappears exactly when the reply replaces it.
+    private readonly spinner?: TelegramSpinner,
   ) {}
 
   // Exercises the HTTP stack once at startup so a broken transport surfaces at
@@ -483,6 +487,9 @@ export class TelegramRunNotifier implements RunNotifier {
           .replyFor(event.taskId, this.telegramConversationId)
           .catch(() => undefined);
         if (reply !== undefined) {
+          // Remove the spinner before the answer arrives, so the icon and the
+          // reply never sit next to each other.
+          await this.spinner?.stop(this.chatId);
           // Split, not truncated. Cutting at 4,000 characters loses the end of
           // an answer, which is usually where it concludes something.
           for (const part of splitForTelegram(reply))

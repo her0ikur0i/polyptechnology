@@ -6,6 +6,7 @@ import type { OwnerCommandService } from "../operations/owner-commands.js";
 import type { ConversationStore } from "../orchestrator/types.js";
 import { acceptAttachmentUpload } from "../control-api/attachment-upload.js";
 import type { TelegramFileDownloader, TelegramRequester } from "./gateway.js";
+import type { TelegramSpinner } from "./spinner.js";
 import type { TelegramUpdateHandler, UpdateOrigin } from "./poller.js";
 
 // Every Telegram message lands in one long-running conversation per chat rather
@@ -41,6 +42,8 @@ export interface TelegramConversationDeps {
   // neither is configured, degrading to a text-only surface.
   downloader?: TelegramFileDownloader;
   attachmentStorageRoot?: string;
+  // Animated processing icon. Optional so the handler still works without it.
+  spinner?: TelegramSpinner;
 }
 
 // Turns a Telegram message into a real conversation turn.
@@ -201,11 +204,14 @@ export class TelegramConversationHandler implements TelegramUpdateHandler {
   }
 
   private async acknowledge(chatId: string) {
+    // The animated spinner icon is the primary signal; it disappears when the
+    // reply lands (TelegramRunNotifier stops it). Fall back to the native
+    // typing indicator only when no spinner is wired.
+    if (this.deps.spinner !== undefined) {
+      await this.deps.spinner.start(chatId);
+      return;
+    }
     try {
-      // The native "typing…" indicator, not a message. It animates on its own
-      // and disappears by itself the moment the reply arrives -- exactly what a
-      // persistent "⏳ Siap Bos, diproses dulu…" text could not do (that line
-      // stayed in the chat forever next to the answer).
       await this.deps.requester.call("sendChatAction", {
         chat_id: chatId,
         action: "typing",
